@@ -7,6 +7,8 @@ import socket
 import os
 from typing import Any, Dict, Set
 
+from config import OpenTelemetryCollectorConfig
+
 from ops import CharmBase, main
 from ops.model import ActiveStatus, Port
 from ops.pebble import Layer
@@ -24,7 +26,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         self._name = "opentelemetry-collector"
         self._container = self.unit.get_container(self._name)
-        self._set_ports(ports=PORTS)
+        self._config_manager = OpenTelemetryCollectorConfig()
         self.reconcile()
 
     def reconcile(self):
@@ -33,8 +35,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             # TODO:: set MaintenceStatus ?
             return
 
+        self._set_ports(ports=PORTS)
+
+        self._container.push("/etc/otelcol/config.yaml", self._config_manager.build_config())
+
         self._container.add_layer(self._name, self._pebble_layer, combine=True)
         self._container.replan()
+
         self.unit.status = ActiveStatus()
 
     @property
@@ -57,6 +64,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                         },
                     }
                 },
+                "checks": self._pebble_checks,
             }
         )
 
@@ -66,17 +74,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _pebble_checks(self) -> Dict[str, Any]:
         """Pebble checks to run in the charm."""
         checks = {
-            "health": {
+            "up": {
                 "override": "replace",
                 "level": "alive",
                 "period": "30s",
                 "http": {"url": f"http://{socket.getfqdn()}:13133/health"},
-            },
-            "metrics": {
-                "override": "replace",
-                "level": "health",
-                "period": "30s",
-                "http": {"url": f"http://{socket.getfqdn()}:8888/metrics"},
             },
         }
         return checks

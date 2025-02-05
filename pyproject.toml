@@ -26,6 +26,7 @@ dev = [
   "coverage[toml]",
   # Integration
   "juju<=3.3.0,>=3.0",
+  "websockets<14.0",
   "pytest-operator>=0.39",
   "ops[testing]",
   "sh",
