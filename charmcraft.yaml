@@ -1,0 +1,60 @@
+# This file configures Charmcraft.
+# See https://juju.is/docs/sdk/charmcraft-config for guidance.
+
+name: opentelemetry-collector-k8s
+type: charm
+assumes:
+  - k8s-api
+  - juju >= 3.0.3 # Juju 3.0.3+ needed for secrets and open-port
+
+summary: Vendor-agnostic way to receive, process and export telemetry data.
+description: |
+  The OpenTelemetry Collector offers a vendor-agnostic implementation on how to receive, 
+  process and export telemetry data. In addition, it removes the need to run, operate and 
+  maintain multiple agents/collectors in order to support open-source telemetry data formats 
+  (e.g. Jaeger, Prometheus, etc.) to multiple open-source or commercial back-ends.
+
+links:
+  website: https://charmhub.io/opentelemetry-collector-k8s
+  source: https://github.com/canonical/opentelemetry-collector-k8s-operator
+  issues: https://github.com/canonical/opentelemetry-collector-k8s-operator/issues
+  documentation: https://discourse.charmhub.io/
+
+platforms:
+  ubuntu@24.04:amd64:
+  ubuntu@24.04:arm64:
+
+parts:
+  charm:
+    charm-binary-python-packages: [cryptography, jsonschema, pydantic, pydantic-core, maturin]
+    build-packages: [git]
+    build-snaps: [astral-uv]
+    override-build: |
+      uv export --frozen --no-hashes --format=requirements-txt -o requirements.txt
+      git describe --always > version
+      craftctl default
+    charm-requirements: [requirements.txt]
+  cos-tool:
+    plugin: dump
+    source: .
+    build-packages:
+      - curl
+    override-pull: |
+      curl -L -O https://github.com/canonical/cos-tool/releases/latest/download/cos-tool-${CRAFT_TARGET_ARCH}
+      chmod 755 cos-tool-*
+
+containers:
+  opentelemetry-collector:
+    resource: opentelemetry-collector-image
+
+resources:
+  opentelemetry-collector-image:
+    type: oci-image
+    description: OCI image for opentelemetry-collector
+    upstream-source: ghcr.io/canonical/opentelemetry-collector:dev
+
+actions:
+  reconcile:
+    description: >
+      Regenerate the world state from scratch. This includes the configuration file,
+      but also relation data set by the charm.
