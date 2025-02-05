@@ -33,7 +33,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "summary": "opentelemetry-collector-k8s layer",
                 "description": "opentelemetry-collector-k8s layer",
                 "services": {
-                    self._name: {
+                    "otelcol": {
                         "override": "replace",
                         "summary": "opentelemetry-collector-k8s service",
                         "command": "/usr/bin/otelcol --config=/etc/otelcol/config.yaml",
