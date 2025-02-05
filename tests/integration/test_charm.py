@@ -27,6 +27,9 @@ async def test_pebble_checks(ops_test: OpsTest, charm: str):
     await ops_test.model.deploy(charm, app_name, resources=_charm_resources())
     await ops_test.model.wait_for_idle(apps=[app_name], status="active", raise_on_error=False)
     pebble_checks = sh.juju.ssh(
-        "--container", "opentelemetry-collector", f"{app_name}-0", "pebble checks"
+        f"--model={ops_test.model.name}",
+        "--container=opentelemetry-collector",
+        f"{app_name}/leader",
+        "pebble checks",
     )
     assert "down" not in pebble_checks
