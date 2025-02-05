@@ -5,7 +5,7 @@
 
 import os
 
-from ops import CharmBase
+from ops import CharmBase, main
 from ops.model import ActiveStatus
 from ops.pebble import Layer
 
@@ -47,3 +47,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
 
         return layer
+
+
+if __name__ == "__main__":
+    main(OpenTelemetryCollectorK8sCharm)
