@@ -14,6 +14,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
     def __init__(self, *args):
+        super().__init__(*args)
+
         self._name = "opentelemetry-collector"
         self._container = self.unit.get_container(self._name)
         self.reconcile()
