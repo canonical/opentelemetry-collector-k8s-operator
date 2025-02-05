@@ -8,5 +8,6 @@ from ops import CharmBase
 
 class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
-    def __init__(self, *args):
 
+    def __init__(self, *args):
+        pass
