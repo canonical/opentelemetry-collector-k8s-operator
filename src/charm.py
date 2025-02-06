@@ -6,17 +6,29 @@
 import socket
 import os
 from typing import Any, Dict, Set
+from pathlib import Path
+import yaml
+import logging
 
 from config import OpenTelemetryCollectorConfig
 
 from ops import CharmBase, main
 from ops.model import ActiveStatus, Port
 from ops.pebble import Layer
+from charms.prometheus_k8s.v0.prometheus_scrape import (
+    MetricsEndpointConsumer,
+)
+from charms.prometheus_k8s.v1.prometheus_remote_write import (
+    PrometheusRemoteWriteConsumer,
+    PrometheusRemoteWriteProvider,
+    DEFAULT_RELATION_NAME as DEFAULT_REMOTE_WRITE_RELATION_NAME,
+)
 
 PORTS: Set[Port] = {
     Port(protocol="tcp", port=8888),  # for self-monitoring metrics
 }
 
+logger = logging.getLogger(__name__)
 
 class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
@@ -41,6 +53,28 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         self._container.add_layer(self._name, self._pebble_layer, combine=True)
         self._container.replan()
+
+        for job in self.metrics_consumer.jobs:
+            self._config_manager.add_scrape_job(job)
+
+        # Receive alert rules and scrape jobs
+        self.metrics_consumer = MetricsEndpointConsumer(self)
+
+        # Receive metrics via remote-write and forward alert rules to prometheus/mimir
+        self.remote_write_provider = PrometheusRemoteWriteProvider(
+            charm=self,
+            relation_name=DEFAULT_REMOTE_WRITE_RELATION_NAME,
+            server_url_func=lambda: f"http://{socket.getfqdn()}:{self.get_port()}",
+            endpoint_path="/api/v1/write",
+        )
+        alert_rules_path = "/tmp/aggregated_prometheus_alert_rules"
+        for topology_identifier, rule in self.metrics_consumer.alerts.items():
+            file_handle = Path(alert_rules_path, f"juju_{topology_identifier}.rules")
+            file_handle.write_text(yaml.dump(rule))
+            logger.debug("updated alert rules file {}".format(file_handle.absolute()))
+        # Receive alert rules
+        self.remote_write = PrometheusRemoteWriteConsumer(self, alert_rules_path=alert_rules_path)
+        self.remote_write.reload_alerts()
 
         self.unit.status = ActiveStatus()
 

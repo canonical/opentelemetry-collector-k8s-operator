@@ -35,6 +35,12 @@ receivers:
         scrape_interval: 10s
         static_configs:
         - targets: ['0.0.0.0:8888']
+      - job_name: 'node-exporter'
+        metrics_path: "/metrics"
+        static_configs:
+          - targets: ['node-exporter:9100']
+      # remote_write:
+        # https://github.com/prometheus/prometheus/blob/v2.28.1/docs/configuration/configuration.md#remote_write
 
   jaeger:
     protocols:
@@ -56,6 +62,8 @@ processors:
 exporters:
   debug:
     verbosity: detailed
+  prometheusremotewrite:
+    endpoint: "http://prometheus:9090/api/v1/write"
 
 service:
 
@@ -69,7 +77,7 @@ service:
     metrics:
       receivers: [otlp, opencensus, prometheus]
       processors: [batch]
-      exporters: [debug]
+      exporters: [debug, prometheusremotewrite]
 
     logs:
       receivers: [otlp]
