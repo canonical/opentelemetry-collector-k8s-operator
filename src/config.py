@@ -63,6 +63,7 @@ class ConfigManager:
             .add_receiver("zipkin", {"endpoint": "0.0.0.0:9411"})
             .add_processor("batch", {})
             .add_exporter("debug", {"verbosity": "detailed"})
+            .add_exporter("prometheusremotewrite", {"endpoint": "http://prometheus:9090/api/v1/write"})
             .add_pipeline(
                 "metrics",
                 {
