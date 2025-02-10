@@ -3,14 +3,13 @@
 # See LICENSE file for licensing details.
 """A Juju charm for OpenTelemetry Collector on Kubernetes."""
 
-import socket
 import os
-from typing import Any, Dict, Set
+from typing import Any, Dict
 
-from config import OpenTelemetryCollectorConfig
+from config import ConfigManager
 
 from ops import CharmBase, main
-from ops.model import ActiveStatus, Port
+from ops.model import ActiveStatus
 from ops.pebble import Layer
 
 
@@ -27,11 +26,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """Recreate the world state for the charm."""
         name = "opentelemetry-collector"
         container = self.unit.get_container(name)
-        config_manager = OpenTelemetryCollectorConfig()
+        config_manager = ConfigManager().default_config()
 
         self.unit.set_ports(*config_manager.ports)
 
-        container.push("/etc/otelcol/config.yaml", config_manager.build_config())
+        container.push("/etc/otelcol/config.yaml", config_manager.yaml)
 
         container.add_layer(name, self._pebble_layer, combine=True)
         container.replan()
