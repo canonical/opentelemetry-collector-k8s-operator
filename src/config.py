@@ -1,92 +1,129 @@
 """Helper module to build the configuration for OpenTelemetry Collector."""
 
+import yaml
+from typing import Any, Dict, List
 
-class OpenTelemetryCollectorConfig:
-    """class."""  # TODO: add docstring
 
-    config = """
-# To limit exposure to denial of service attacks, change the host in endpoints below from 0.0.0.0 to a specific network interface.
-# See https://github.com/open-telemetry/opentelemetry-collector/blob/main/docs/security-best-practices.md#safeguards-against-denial-of-service-attacks
+class ConfigManager:
+    """Configuration manager for OpenTelemetry Collector."""
 
-extensions:
-  health_check:
-    endpoint: 0.0.0.0:13133
-  pprof:
-    endpoint: 0.0.0.0:1777
-  zpages:
-    endpoint: 0.0.0.0:55679
+    _config = {
+        "extensions": None,
+        "receivers": None,
+        "processors": None,
+        "exporters": None,
+        "service": {"extensions": [], "pipelines": None},
+    }
 
-receivers:
-  otlp:
-    protocols:
-      grpc:
-        endpoint: 0.0.0.0:4317
-      http:
-        endpoint: 0.0.0.0:4318
+    @property
+    def yaml(self) -> str:
+        """Return the config as a string."""
+        return yaml.dump(self._config)
 
-  opencensus:
-    endpoint: 0.0.0.0:55678
+    @classmethod
+    def default_config(cls) -> "ConfigManager":
+        """Return the default config for OpenTelemetry Collector."""
+        return (
+            cls()
+            .add_receiver(
+                "otlp",
+                {
+                    "protocols": {
+                        "grpc": {"endpoint": "0.0.0.0:4317"},
+                        "http": {"endpoint": "0.0.0.0:4318"},
+                    }
+                },
+            )
+            .add_receiver("opencensus", {"endpoint": "0.0.0.0:55678"})
+            .add_receiver(
+                "prometheus",
+                {
+                    "config": {
+                        "scrape_configs": [
+                            {
+                                "job_name": "otel-collector",
+                                "scrape_interval": "1m",
+                                "static_configs": [{"targets": ["0.0.0.0:8888"]}],
+                            }
+                        ]
+                    }
+                },
+            )
+            .add_receiver(
+                "jaeger",
+                {
+                    "protocols": {
+                        "grpc": {"endpoint": "0.0.0.0:14250"},
+                        "thrift_binary": {"endpoint": "0.0.0.0:6832"},
+                        "thrift_compact": {"endpoint": "0.0.0.06831"},
+                        "thrift_http": {"endpoint": "0.0.0.0:14268"},
+                    }
+                },
+            )
+            .add_receiver("zipkin", {"endpoint": "0.0.0.0:9411"})
+            .add_processor("batch", {})
+            .add_exporter("debug", {"verbosity": "detailed"})
+            .add_pipeline(
+                "metrics",
+                {
+                    "receivers": ["otlp", "opencensus", "prometheus"],
+                    "processors": ["batch"],
+                    "exporters": ["debug"],
+                },
+            )
+            .add_pipeline(
+                "logs",
+                {
+                    "receivers": ["otlp"],
+                    "processors": ["batch"],
+                    "exporters": ["debug"],
+                },
+            )
+            .add_pipeline(
+                "traces",
+                {
+                    "receivers": ["otlp", "opencensus", "jaeger", "zipkin"],
+                    "processors": ["batch"],
+                    "exporters": ["debug"],
+                },
+            )
+            .add_extension("health_check", {"endpoint": "0.0.0.0:13133"})
+            .add_extension("pprof", {"endpoint": "0.0.0.0:1777"})
+            .add_extension("zpages", {"endpoint": "0.0.0.0:55679"})
+        )
 
-  # Collect own metrics
-  prometheus:
-    config:
-      scrape_configs:
-      - job_name: 'otel-collector'
-        scrape_interval: 10s
-        static_configs:
-        - targets: ['0.0.0.0:8888']
-      - job_name: 'node-exporter'
-        metrics_path: "/metrics"
-        static_configs:
-          - targets: ['node-exporter:9100']
-      # remote_write:
-        # https://github.com/prometheus/prometheus/blob/v2.28.1/docs/configuration/configuration.md#remote_write
+    def add_receiver(self, name: str, receiver_config: Dict[str, Any]) -> "ConfigManager":
+        """Add a receiver to the config."""
+        self._config["receivers"][name] = receiver_config
+        return self
 
-  jaeger:
-    protocols:
-      grpc:
-        endpoint: 0.0.0.0:14250
-      thrift_binary:
-        endpoint: 0.0.0.0:6832
-      thrift_compact:
-        endpoint: 0.0.0.0:6831
-      thrift_http:
-        endpoint: 0.0.0.0:14268
+    def add_processor(self, name: str, processor_config: Dict[str, Any]):
+        """Add a processor to the config."""
+        self._config["processors"][name] = processor_config
+        return self
 
-  zipkin:
-    endpoint: 0.0.0.0:9411
+    def add_exporter(self, name: str, exporter_config: Dict[str, Any]):
+        """Add an exporter to the config."""
+        self._config["exporters"][name] = exporter_config
+        return self
 
-processors:
-  batch:
+    def add_pipeline(self, name: str, pipeline_config: Dict[str, Any]):
+        """Add a pipeline to the config."""
+        self._config["service"][name] = pipeline_config
+        return self
 
-exporters:
-  debug:
-    verbosity: detailed
-  prometheusremotewrite:
-    endpoint: "http://prometheus:9090/api/v1/write"
+    def add_extension(self, name: str, extension_config: Dict[str, Any]):
+        """Add an extension to the config."""
+        if name not in self._config["service"]["extensions"]:
+            self._config["service"]["extensions"].append(name)
+        self._config["extensions"][name] = extension_config
+        return self
 
-service:
-
-  pipelines:
-
-    traces:
-      receivers: [otlp, opencensus, jaeger, zipkin]
-      processors: [batch]
-      exporters: [debug]
-
-    metrics:
-      receivers: [otlp, opencensus, prometheus]
-      processors: [batch]
-      exporters: [debug, prometheusremotewrite]
-
-    logs:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [debug]
-
-  extensions: [health_check, pprof, zpages]
-    """
-
-    def build_config(self) -> str:
-        """String."""
-        return self.config
+    @property
+    def ports(self) -> List[int]:
+        """Return the ports that are used in the Collector config."""
+        ports = [
+            8888,  # self-monitoring metrics,
+            13133,  # health check
+        ]
+        return ports
