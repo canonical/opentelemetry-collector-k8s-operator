@@ -12,7 +12,7 @@ class ConfigManager:
         "receivers": {},
         "processors": {},
         "exporters": {},
-        "service": {"extensions": [], "pipelines": None},
+        "service": {"extensions": [], "pipelines": {}},
     }
 
     @property
@@ -109,7 +109,7 @@ class ConfigManager:
 
     def add_pipeline(self, name: str, pipeline_config: Dict[str, Any]):
         """Add a pipeline to the config."""
-        self._config["service"][name] = pipeline_config
+        self._config["service"]["pipelines"][name] = pipeline_config
         return self
 
     def add_extension(self, name: str, extension_config: Dict[str, Any]):
