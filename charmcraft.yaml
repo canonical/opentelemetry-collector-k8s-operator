@@ -40,9 +40,9 @@ parts:
     build-packages:
       - curl
     override-pull: |
-      curl -L -O https://github.com/canonical/cos-tool/releases/latest/download/cos-tool-${CRAFT_TARGET_ARCH}
+      curl -L -O https://github.com/canonical/cos-tool/releases/latest/download/cos-tool-${CRAFT_ARCH_BUILD_FOR}
     permissions:
-      - path: cos-tool-${CRAFT_TARGET_ARCH}
+      - path: cos-tool-${CRAFT_ARCH_BUILD_FOR}
         mode: "755"
 
 containers:
