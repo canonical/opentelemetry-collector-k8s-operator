@@ -5,7 +5,7 @@ name: opentelemetry-collector-k8s
 type: charm
 assumes:
   - k8s-api
-  - juju >= 3.0.3 # Juju 3.0.3+ needed for secrets and open-port
+  - juju >= 3.6 # Juju 3.0.3+ needed for secrets and open-port
 
 summary: Vendor-agnostic way to receive, process and export telemetry data.
 description: |
@@ -18,7 +18,7 @@ links:
   website: https://charmhub.io/opentelemetry-collector-k8s
   source: https://github.com/canonical/opentelemetry-collector-k8s-operator
   issues: https://github.com/canonical/opentelemetry-collector-k8s-operator/issues
-  documentation: https://discourse.charmhub.io/
+  # documentation: https://discourse.charmhub.io/
 
 platforms:
   ubuntu@24.04:amd64:
@@ -26,7 +26,7 @@ platforms:
 
 parts:
   charm:
-    charm-binary-python-packages: [cryptography, jsonschema, pydantic, pydantic-core, maturin]
+    charm-binary-python-packages: [cryptography, jsonschema, pydantic, pydantic-core]
     build-packages: [git]
     build-snaps: [astral-uv]
     override-build: |
@@ -41,7 +41,9 @@ parts:
       - curl
     override-pull: |
       curl -L -O https://github.com/canonical/cos-tool/releases/latest/download/cos-tool-${CRAFT_TARGET_ARCH}
-      chmod 755 cos-tool-*
+    permissions:
+      - path: cos-tool-${CRAFT_TARGET_ARCH}
+        mode: "755"
 
 containers:
   opentelemetry-collector:

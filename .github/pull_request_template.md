@@ -15,4 +15,4 @@
 
 
 ## Upgrade Notes
-<!-- To upgrade from an older revision of charmed prometheus, ... -->
+<!-- To upgrade from an older revision of the charm, ... -->
