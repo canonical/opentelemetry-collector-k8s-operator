@@ -8,10 +8,10 @@ class ConfigManager:
     """Configuration manager for OpenTelemetry Collector."""
 
     _config = {
-        "extensions": None,
-        "receivers": None,
-        "processors": None,
-        "exporters": None,
+        "extensions": {},
+        "receivers": {},
+        "processors": {},
+        "exporters": {},
         "service": {"extensions": [], "pipelines": None},
     }
 
