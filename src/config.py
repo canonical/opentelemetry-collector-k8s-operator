@@ -55,7 +55,7 @@ class ConfigManager:
                     "protocols": {
                         "grpc": {"endpoint": "0.0.0.0:14250"},
                         "thrift_binary": {"endpoint": "0.0.0.0:6832"},
-                        "thrift_compact": {"endpoint": "0.0.0.06831"},
+                        "thrift_compact": {"endpoint": "0.0.0.0:6831"},
                         "thrift_http": {"endpoint": "0.0.0.0:14268"},
                     }
                 },
