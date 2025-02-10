@@ -60,3 +60,20 @@ actions:
     description: >
       Regenerate the world state from scratch. This includes the configuration file,
       but also relation data set by the charm.
+
+provides:
+  # TODO consider renaming the interfaces to something more generic since its agnostic to collectors
+  self-metrics-endpoint:
+    interface: prometheus_scrape
+  receive-remote-write:
+    interface: prometheus_remote_write
+  grafana-source:
+    interface: grafana_datasource
+  grafana-dashboard:
+    interface: grafana_dashboard
+
+requires:
+  metrics-endpoint:
+    interface: prometheus_scrape
+  send-remote-write:
+    interface: prometheus_remote_write

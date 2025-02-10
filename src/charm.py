@@ -43,32 +43,34 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         self.unit.set_ports(*config_manager.ports)
 
-        container.push("/etc/otelcol/config.yaml", config_manager.yaml)
-
-        container.add_layer(name, self._pebble_layer, combine=True)
-        container.replan()
-
-        for job in self.metrics_consumer.jobs:
-            self._config_manager.add_scrape_job(job)
 
         # Receive alert rules and scrape jobs
         self.metrics_consumer = MetricsEndpointConsumer(self)
+        for job in self.metrics_consumer.jobs():
+            config_manager = config_manager.add_scrape_job(job)
 
         # Receive metrics via remote-write and forward alert rules to prometheus/mimir
+        # https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/dcc223ecdf413318c33728cc712b1230903fb22d/CHANGELOG-API.md#-enhancements--4
+        # TODO v0.113.0 - remote-write was added but not implemented yet, see above
         self.remote_write_provider = PrometheusRemoteWriteProvider(
             charm=self,
             relation_name=DEFAULT_REMOTE_WRITE_RELATION_NAME,
-            server_url_func=lambda: f"http://{socket.getfqdn()}:{self.get_port()}",
+            server_url_func=lambda: f"http://{socket.getfqdn()}:8888",
             endpoint_path="/api/v1/write",
         )
-        alert_rules_path = "/tmp/aggregated_prometheus_alert_rules"
+
+        alert_rules_path = "/etc/otelcol/aggregated_prometheus_alert_rules"
         for topology_identifier, rule in self.metrics_consumer.alerts.items():
-            file_handle = Path(alert_rules_path, f"juju_{topology_identifier}.rules")
-            file_handle.write_text(yaml.dump(rule))
-            logger.debug("updated alert rules file {}".format(file_handle.absolute()))
+            rule_file = Path(alert_rules_path) / f"juju_{topology_identifier}.rules"
+            container.push(rule_file, yaml.safe_dump(rule))
+            logger.debug(f"updated alert rules file {rule_file.as_posix()}")
         # Receive alert rules
         self.remote_write = PrometheusRemoteWriteConsumer(self, alert_rules_path=alert_rules_path)
         self.remote_write.reload_alerts()
+
+        container.push("/etc/otelcol/config.yaml", config_manager.yaml)
+        container.add_layer(name, self._pebble_layer, combine=True)
+        container.replan()
 
         self.unit.status = ActiveStatus()
 

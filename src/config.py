@@ -63,7 +63,9 @@ class ConfigManager:
             .add_receiver("zipkin", {"endpoint": "0.0.0.0:9411"})
             .add_processor("batch", {})
             .add_exporter("debug", {"verbosity": "detailed"})
-            .add_exporter("prometheusremotewrite", {"endpoint": "http://prometheus:9090/api/v1/write"})
+            .add_exporter(
+                "prometheusremotewrite", {"endpoint": "http://prometheus:9090/api/v1/write"}
+            )
             .add_pipeline(
                 "metrics",
                 {
@@ -92,6 +94,14 @@ class ConfigManager:
             .add_extension("pprof", {"endpoint": "0.0.0.0:1777"})
             .add_extension("zpages", {"endpoint": "0.0.0.0:55679"})
         )
+
+    def add_scrape_job(self, scrape_job: Dict):
+        """Update the Prometheus receiver config."""
+        # Create the scrape_configs key path if it does not exist
+        self._config["receivers"].setdefault("prometheus", {}).setdefault("config", {}).setdefault("scrape_configs", [])
+        # TODO Consider checking if already in scrape_configs before appending
+        self._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(scrape_job)
+        return self
 
     def add_receiver(self, name: str, receiver_config: Dict[str, Any]) -> "ConfigManager":
         """Add a receiver to the config."""
