@@ -92,19 +92,72 @@ class ConfigManager:
             .add_extension("zpages", {"endpoint": "0.0.0.0:55679"})
         )
 
-    def add_receiver(self, name: str, receiver_config: Dict[str, Any]) -> "ConfigManager":
-        """Add a receiver to the config."""
+    def add_receiver(self, name: str, receiver_config: Dict[str, Any], pipelines: List[str]=[]) -> "ConfigManager":
+        """Add a receiver to the config.
+
+        Receivers are enabled by adding them to the appropriate pipelines within the service section.
+
+        Args:
+            name: a string representing the pre-defined receiver name.
+            receiver_config: a (potentially nested) dict representing the config contents.
+            pipelines: a list of strings for which service pipelines (logs, metrics, traces) the receiver should be added to.
+
+        Returns:
+            ConfigManager since this is a builder method.
+        """
         self._config["receivers"][name] = receiver_config
+        self._add_to_pipeline(name, "receivers", pipelines)
         return self
 
-    def add_processor(self, name: str, processor_config: Dict[str, Any]):
-        """Add a processor to the config."""
+    def add_processor(self, name: str, processor_config: Dict[str, Any], pipelines: List[str]=[]):
+        """Add a processor to the config.
+
+        Processors are enabled by adding them to the appropriate pipelines within the service section.
+
+        Args:
+            name: a string representing the pre-defined processor name.
+            processor_config: a (potentially nested) dict representing the config contents.
+            pipelines: a list of strings for which service pipelines (logs, metrics, traces) the processor should be added to.
+
+        Returns:
+            ConfigManager since this is a builder method.
+        """
         self._config["processors"][name] = processor_config
+        self._add_to_pipeline(name, "processors", pipelines)
         return self
 
-    def add_exporter(self, name: str, exporter_config: Dict[str, Any]):
-        """Add an exporter to the config."""
+    def add_exporter(self, name: str, exporter_config: Dict[str, Any], pipelines: List[str]=[]):
+        """Add an exporter to the config.
+
+        Exporters are enabled by adding them to the appropriate pipelines within the service section.
+
+        Args:
+            name: a string representing the pre-defined exporter name.
+            exporter_config: a (potentially nested) dict representing the config contents.
+            pipelines: a list of strings for which service pipelines (logs, metrics, traces) the exporter should be added to.
+
+        Returns:
+            ConfigManager since this is a builder method.
+        """
         self._config["exporters"][name] = exporter_config
+        self._add_to_pipeline(name, "exporters", pipelines)
+        return self
+
+    def add_connector(self, name: str, connector_config: Dict[str, Any], pipelines: List[str]=[]):
+        """Add a connector to the config.
+
+        Connectors are enabled by adding them to the appropriate pipelines within the service section.
+
+        Args:
+            name: a string representing the pre-defined connector name.
+            connector_config: a (potentially nested) dict representing the config contents.
+            pipelines: a list of strings for which service pipelines (logs, metrics, traces) the connector should be added to.
+
+        Returns:
+            ConfigManager since this is a builder method.
+        """
+        self._config["connectors"][name] = connector_config
+        self._add_to_pipeline(name, "connectors", pipelines)
         return self
 
     def add_pipeline(self, name: str, pipeline_config: Dict[str, Any]):
@@ -127,3 +180,8 @@ class ConfigManager:
             13133,  # health check
         ]
         return ports
+
+    def _add_to_pipeline(self, name: str, category: str, pipelines: List[str]):
+        for pipeline in pipelines:
+            if name not in self._config["service"]["pipelines"][pipeline][category]:
+                self._config["service"]["pipelines"][pipeline][category].append(name)
