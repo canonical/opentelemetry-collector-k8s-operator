@@ -183,5 +183,15 @@ class ConfigManager:
 
     def _add_to_pipeline(self, name: str, category: str, pipelines: List[str]):
         for pipeline in pipelines:
+            # Create the pipeline dict key chain if it doesn't exist
+            self._config["service"]["pipelines"].setdefault(
+                pipeline,
+                {
+                    "receivers": [],
+                    "processors": [],
+                    "exporters": [],
+                },
+            )
+            # Add to pipeline if it doesn't exist in the list already
             if name not in self._config["service"]["pipelines"][pipeline][category]:
                 self._config["service"]["pipelines"][pipeline][category].append(name)
