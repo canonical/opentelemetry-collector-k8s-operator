@@ -10,8 +10,9 @@ class ConfigManager:
     _config = {
         "extensions": {},
         "receivers": {},
-        "processors": {},
         "exporters": {},
+        "connectors": {},
+        "processors": {},
         "service": {"extensions": [], "pipelines": {}},
     }
 
@@ -92,7 +93,9 @@ class ConfigManager:
             .add_extension("zpages", {"endpoint": "0.0.0.0:55679"})
         )
 
-    def add_receiver(self, name: str, receiver_config: Dict[str, Any], pipelines: List[str]=[]) -> "ConfigManager":
+    def add_receiver(
+        self, name: str, receiver_config: Dict[str, Any], pipelines: List[str] = []
+    ) -> "ConfigManager":
         """Add a receiver to the config.
 
         Receivers are enabled by adding them to the appropriate pipelines within the service section.
@@ -109,24 +112,7 @@ class ConfigManager:
         self._add_to_pipeline(name, "receivers", pipelines)
         return self
 
-    def add_processor(self, name: str, processor_config: Dict[str, Any], pipelines: List[str]=[]):
-        """Add a processor to the config.
-
-        Processors are enabled by adding them to the appropriate pipelines within the service section.
-
-        Args:
-            name: a string representing the pre-defined processor name.
-            processor_config: a (potentially nested) dict representing the config contents.
-            pipelines: a list of strings for which service pipelines (logs, metrics, traces) the processor should be added to.
-
-        Returns:
-            ConfigManager since this is a builder method.
-        """
-        self._config["processors"][name] = processor_config
-        self._add_to_pipeline(name, "processors", pipelines)
-        return self
-
-    def add_exporter(self, name: str, exporter_config: Dict[str, Any], pipelines: List[str]=[]):
+    def add_exporter(self, name: str, exporter_config: Dict[str, Any], pipelines: List[str] = []):
         """Add an exporter to the config.
 
         Exporters are enabled by adding them to the appropriate pipelines within the service section.
@@ -143,7 +129,9 @@ class ConfigManager:
         self._add_to_pipeline(name, "exporters", pipelines)
         return self
 
-    def add_connector(self, name: str, connector_config: Dict[str, Any], pipelines: List[str]=[]):
+    def add_connector(
+        self, name: str, connector_config: Dict[str, Any], pipelines: List[str] = []
+    ):
         """Add a connector to the config.
 
         Connectors are enabled by adding them to the appropriate pipelines within the service section.
@@ -158,6 +146,25 @@ class ConfigManager:
         """
         self._config["connectors"][name] = connector_config
         self._add_to_pipeline(name, "connectors", pipelines)
+        return self
+
+    def add_processor(
+        self, name: str, processor_config: Dict[str, Any], pipelines: List[str] = []
+    ):
+        """Add a processor to the config.
+
+        Processors are enabled by adding them to the appropriate pipelines within the service section.
+
+        Args:
+            name: a string representing the pre-defined processor name.
+            processor_config: a (potentially nested) dict representing the config contents.
+            pipelines: a list of strings for which service pipelines (logs, metrics, traces) the processor should be added to.
+
+        Returns:
+            ConfigManager since this is a builder method.
+        """
+        self._config["processors"][name] = processor_config
+        self._add_to_pipeline(name, "processors", pipelines)
         return self
 
     def add_pipeline(self, name: str, pipeline_config: Dict[str, Any]):
@@ -188,8 +195,9 @@ class ConfigManager:
                 pipeline,
                 {
                     "receivers": [],
-                    "processors": [],
                     "exporters": [],
+                    "connectors": [],
+                    "processors": [],
                 },
             )
             # Add to pipeline if it doesn't exist in the list already
