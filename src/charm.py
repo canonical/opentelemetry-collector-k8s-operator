@@ -56,13 +56,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self, alert_rules_path=self.metrics_rules_paths.dest
         )
         config_manager = config_manager.add_exporter(
-            "prometheus",
-            {"endpoint": "0.0.0.0:8889", "namespace": "default"},  # Data sources: metrics
-        ).add_exporter(
             "prometheusremotewrite",  # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/prometheusremotewriteexporter
             {
                 "endpoint": self.remote_write.endpoints[0]["url"],  # TODO Fix this for scalability
-                "tls": {"insecure": True},
+                "tls": {"insecure": True},  # TODO This is temporary
             },
         )
 
