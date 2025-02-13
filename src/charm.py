@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 import logging
 
-from config import ConfigManager
+from config import Config
 
 from ops import CharmBase, main
 from ops.model import ActiveStatus
@@ -22,6 +22,7 @@ from charms.prometheus_k8s.v1.prometheus_remote_write import (
 )
 from collections import namedtuple
 import shutil
+from cosl import JujuTopology
 
 logger = logging.getLogger(__name__)
 RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
@@ -47,49 +48,14 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """Recreate the world state for the charm."""
         name = "opentelemetry-collector"
         container = self.unit.get_container(name)
-        config_manager = ConfigManager().default_config()
+        config = Config.default_config()
 
-        self.unit.set_ports(*config_manager.ports)
+        self.unit.set_ports(*config.ports)
 
-        # Receive metrics via remote-write and forward alert rules to prometheus/mimir
-        self.remote_write = PrometheusRemoteWriteConsumer(
-            self, alert_rules_path=self.metrics_rules_paths.dest
-        )
-        config_manager = config_manager.add_exporter(
-            "prometheusremotewrite",  # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/prometheusremotewriteexporter
-            {
-                "endpoint": self.remote_write.endpoints[0]["url"],  # TODO Fix this for scalability
-                "tls": {"insecure": True},  # TODO This is temporary
-            },
-        )
+        config = self._prometheus_remote_write(config)
+        config = self._prometheus_scrape(config)
 
-        # Receive alert rules and scrape jobs
-        # TODO We are not scraping otel-collector so we do not get an `up` metric for generic alert rules
-        self.metrics_consumer = MetricsEndpointConsumer(self)
-        # add self-monitoring
-        self._update_alerts_rules()  # TODO This method relies on self.remote_write which is a bit weird
-        for job in self.metrics_consumer.jobs():
-            config_manager = config_manager.add_scrape_job(
-                job
-            )  # TODO Is this doing anything besides writing the otel config
-        # TODO metrics_consumer.jobs() come from relations so we can get av jobs to otel from relations
-        #   but then this is not transferred to prom bc prom is not receiving jobs (only alerts) from otel
-
-        # Receive alert rules
-        # config_manager.add_receiver(
-        #     "prometheusremotewritereceiver",  # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusremotewritereceiver
-        #     {
-        #         # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
-        #     },
-        # )
-        # self.remote_write_provider = PrometheusRemoteWriteProvider(
-        #     charm=self,
-        #     relation_name=DEFAULT_REMOTE_WRITE_RELATION_NAME,
-        #     server_url_func=lambda: "http://10.152.183.136:9090",
-        #     endpoint_path="/api/v1/write",
-        # )
-
-        container.push("/etc/otelcol/config.yaml", config_manager.yaml)
+        container.push("/etc/otelcol/config.yaml", config.yaml)
         container.add_layer(name, self._pebble_layer, combine=True)
         container.replan()
 
@@ -133,6 +99,57 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             },
         }
         return checks
+
+    def _prometheus_scrape(self, config):
+        """Configure alert rules and scrape jobs."""
+        # add self-monitoring
+        config.add_receiver(
+            "prometheus",
+            {
+                "config": {
+                    "scrape_configs": [
+                        {
+                            "job_name": "opentelemetry-collector",
+                            "scrape_interval": "1m",
+                            "static_configs": [
+                                {
+                                    "targets": ["0.0.0.0:8888"],
+                                    "labels": JujuTopology.from_charm(self).alert_expression_dict,
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
+            pipelines=["metrics"],
+        )
+        # Receive alert rules and scrape jobs
+        self.metrics_consumer = MetricsEndpointConsumer(self)
+        self._update_alerts_rules()
+        for job in self.metrics_consumer.jobs():
+            config.add_scrape_job(job)
+        return config
+
+    def _prometheus_remote_write(self, config):
+        """Configure forwarding alert rules to prometheus/mimir via remote-write."""
+        self.remote_write = PrometheusRemoteWriteConsumer(
+            self, alert_rules_path=self.metrics_rules_paths.dest
+        )
+        if self.remote_write.endpoints:
+            config.add_exporter(
+                "prometheusremotewrite",
+                {
+                    "endpoint": self.remote_write.endpoints[0][
+                        "url"
+                    ],  # TODO Fix this for scalability
+                    "tls": {"insecure": True},
+                },
+                pipelines=["metrics"],
+            )
+
+        # TODO Receive alert rules via remote write
+        # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
+        return config
 
     def _update_alerts_rules(
         self,

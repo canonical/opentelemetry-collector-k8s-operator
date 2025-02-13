@@ -12,6 +12,7 @@ dependencies = [
   "jsonschema",
   "cryptography",
   "lightkube>=0.11",
+  "cosl",
 ]
 
 [project.optional-dependencies]

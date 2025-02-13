@@ -5,72 +5,71 @@
 
 import pytest
 
-from src.config import ConfigManager
+from src.config import Config
 
 
+@pytest.mark.parametrize("pipelines", ([], ["logs", "metrics", "traces"]))
 @pytest.mark.parametrize("pipeline_component", ("receiver", "exporter", "connector", "processor"))
-def test_add_pipeline_component(pipeline_component):
+def test_add_pipeline_component(pipelines, pipeline_component):
     """All pipeline components (receiver, exporter, connector, processor) behave the same.
+
+    Pipeline names can follow the type[/name] format, valid for e.g. logs, metrics, traces, logs/2, ...
 
     https://opentelemetry.io/docs/collector/configuration/#basics
     """
     method_name = f"add_{pipeline_component}"
-    cfg_mgr = ConfigManager()
-    # GIVEN a default ConfigManager
-    callable_method = getattr(cfg_mgr, method_name)  # Dynamically get the method from the object
+    category = f"{pipeline_component}s"
+    # GIVEN a default Config
+    cfg = Config()
     # WHEN adding a pipeline component with a nested config
     sample_config = {"a": {"b": "c"}}
-    cfg_mgr = callable_method("foo", sample_config)  # Execute the method
-    # THEN the nested config is added to the ConfigManager's config
-    assert "foo" in cfg_mgr._config[f"{pipeline_component}s"]
-    assert sample_config == cfg_mgr._config[f"{pipeline_component}s"]["foo"]
+    callable_method = getattr(cfg, method_name)  # Dynamically get the add_* method from Config
+    callable_method("foo", sample_config, pipelines)  # Execute the add_* method
+    # THEN the nested config is added to the config
+    assert "foo" in cfg._config[category]
+    assert sample_config == cfg._config[category]["foo"]
+    # AND the pipeline is not added if none were specified
+    if not pipelines:
+        assert not cfg._config["service"]["pipelines"]
+    # AND the pipelines are added to the services:pipelines config if specified
+    for pipeline in pipelines:
+        assert "foo" in cfg._config["service"]["pipelines"][pipeline][category]
 
 
-@pytest.mark.parametrize("pipeline", ("logs", "metrics", "traces"))
+@pytest.mark.parametrize("pipelines", ([], ["logs", "metrics", "traces"]))
 @pytest.mark.parametrize("pipeline_component", ("receiver", "exporter", "connector", "processor"))
-def test_add_to_pipeline_component(pipeline, pipeline_component):
+def test_add_to_pipeline(pipelines, pipeline_component):
     """All pipeline components (receiver, exporter, connector, processor) behave the same.
 
     https://opentelemetry.io/docs/collector/configuration/#basics
     """
-    # GIVEN a default ConfigManager
-    cfg_mgr = ConfigManager()
+    category = f"{pipeline_component}s"
+    # GIVEN a default Config
+    cfg = Config()
     # WHEN adding a pipeline component
-    cfg_mgr = cfg_mgr.add_to_pipeline_component("foo", [pipeline], f"{pipeline_component}s")
-    # THEN the pipeline component is added to the ConfigManager's pipeline config
-    assert "foo" in cfg_mgr._config["service"]["pipelines"][pipeline][f"{pipeline_component}s"]
-
-
-@pytest.mark.parametrize("pipeline", ("logs", "metrics", "traces"))
-def test_add_pipeline(pipeline):
-    # GIVEN a default ConfigManager
-    cfg_mgr = ConfigManager()
-    # WHEN adding a pipeline with a config
-    sample_config = {
-        "receivers": ["a"],
-        "exporters": ["b"],
-        "connectors": ["c"],
-        "processors": ["d"],
-    }
-    cfg_mgr = cfg_mgr.add_pipeline(pipeline, sample_config)
-    # THEN the pipeline is added to the ConfigManager's pipeline config
-    assert sample_config == cfg_mgr._config["service"]["pipelines"][pipeline]
+    cfg._add_to_pipeline("foo", category, pipelines)
+    # THEN the pipeline component is added to the pipeline config
+    if not pipelines:
+        assert not cfg._config["service"]["pipelines"]
+    for pipeline in pipelines:
+        assert "foo" in cfg._config["service"]["pipelines"][pipeline][category]
 
 
 def test_add_extension():
-    # GIVEN a default ConfigManager
-    cfg_mgr = ConfigManager()
+    # GIVEN a default Config
+    cfg = Config()
     # WHEN adding a pipeline with a config
     sample_config = {"a": {"b": "c"}}
-    cfg_mgr = cfg_mgr.add_extension("foo", sample_config)
-    # THEN the pipeline is added to the ConfigManager's pipeline config
-    assert "foo" in cfg_mgr._config["service"]["extensions"]
-    assert sample_config == cfg_mgr._config["extensions"]["foo"]
+    cfg.add_extension("foo", sample_config)
+    # THEN the extension is added to the top-level extensions config
+    assert sample_config == cfg._config["extensions"]["foo"]
+    # AND the extension is added to the services:extensions config
+    assert "foo" in cfg._config["service"]["extensions"]
 
 
 def test_add_scrape_job():
-    # GIVEN a default ConfigManager
-    cfg_mgr = ConfigManager()
+    # GIVEN a default Config
+    cfg = Config()
     # WHEN adding a scrape job config
     sample_config = {
         "job_name": "foo",
@@ -78,14 +77,14 @@ def test_add_scrape_job():
         "relabel_configs": [{}],
         "static_configs": [{}],
     }
-    cfg_mgr = cfg_mgr.add_scrape_job(sample_config)
-    # THEN the scrape job is added to the ConfigManager's prometheus:receiver:scrape_configs
-    assert [sample_config] == cfg_mgr._config["receivers"]["prometheus"]["config"][
+    cfg.add_scrape_job(sample_config)
+    # THEN the scrape job is added to the prometheus:receiver:scrape_configs
+    assert [sample_config] == cfg._config["receivers"]["prometheus"]["config"][
         "scrape_configs"
     ]
     # AND add another scrape job
-    cfg_mgr = cfg_mgr.add_scrape_job(sample_config)
-    # THEN both scrape jobs exist in the ConfigManager's prometheus:receiver:scrape_configs
-    assert [sample_config, sample_config] == cfg_mgr._config["receivers"]["prometheus"]["config"][
+    cfg.add_scrape_job(sample_config)
+    # THEN both scrape jobs exist in the prometheus:receiver:scrape_configs
+    assert [sample_config, sample_config] == cfg._config["receivers"]["prometheus"]["config"][
         "scrape_configs"
     ]
