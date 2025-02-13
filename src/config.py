@@ -34,8 +34,11 @@ class ConfigManager:
                         "http": {"endpoint": "0.0.0.0:4318"},
                     }
                 },
+                pipelines=["metrics", "logs", "traces"],
             )
-            .add_receiver("opencensus", {"endpoint": "0.0.0.0:55678"})
+            .add_receiver(
+                "opencensus", {"endpoint": "0.0.0.0:55678"}, pipelines=["metrics", "traces"]
+            )
             .add_receiver(
                 "prometheus",
                 {
@@ -49,6 +52,7 @@ class ConfigManager:
                         ]
                     }
                 },
+                pipelines=["metrics"],
             )
             .add_receiver(
                 "jaeger",
@@ -60,33 +64,12 @@ class ConfigManager:
                         "thrift_http": {"endpoint": "0.0.0.0:14268"},
                     }
                 },
+                pipelines=["traces"],
             )
-            .add_receiver("zipkin", {"endpoint": "0.0.0.0:9411"})
-            .add_processor("batch", {})
-            .add_exporter("debug", {"verbosity": "detailed"})
-            .add_pipeline(
-                "metrics",
-                {
-                    "receivers": ["otlp", "opencensus", "prometheus"],
-                    "processors": ["batch"],
-                    "exporters": ["debug"],
-                },
-            )
-            .add_pipeline(
-                "logs",
-                {
-                    "receivers": ["otlp"],
-                    "processors": ["batch"],
-                    "exporters": ["debug"],
-                },
-            )
-            .add_pipeline(
-                "traces",
-                {
-                    "receivers": ["otlp", "opencensus", "jaeger", "zipkin"],
-                    "processors": ["batch"],
-                    "exporters": ["debug"],
-                },
+            .add_receiver("zipkin", {"endpoint": "0.0.0.0:9411"}, pipelines=["traces"])
+            .add_processor("batch", {}, pipelines=["metrics", "logs", "traces"])
+            .add_exporter(
+                "debug", {"verbosity": "detailed"}, pipelines=["metrics", "logs", "traces"]
             )
             .add_extension("health_check", {"endpoint": "0.0.0.0:13133"})
             .add_extension("pprof", {"endpoint": "0.0.0.0:1777"})
