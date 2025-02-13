@@ -5,18 +5,19 @@
 
 import pytest
 
+from src.config import ConfigManager
+
 
 @pytest.mark.parametrize("pipeline_component", ("receiver", "exporter", "connector", "processor"))
-def test_add_pipeline_component(default_config_mgr, pipeline_component):
+def test_add_pipeline_component(pipeline_component):
     """All pipeline components (receiver, exporter, connector, processor) behave the same.
 
     https://opentelemetry.io/docs/collector/configuration/#basics
     """
     method_name = f"add_{pipeline_component}"
+    cfg_mgr = ConfigManager()
     # GIVEN a default ConfigManager
-    callable_method = getattr(
-        default_config_mgr, method_name
-    )  # Dynamically get the method from the object
+    callable_method = getattr(cfg_mgr, method_name)  # Dynamically get the method from the object
     # WHEN adding a pipeline component with a nested config
     sample_config = {"a": {"b": "c"}}
     cfg_mgr = callable_method("foo", sample_config)  # Execute the method
@@ -27,13 +28,13 @@ def test_add_pipeline_component(default_config_mgr, pipeline_component):
 
 @pytest.mark.parametrize("pipeline", ("logs", "metrics", "traces"))
 @pytest.mark.parametrize("pipeline_component", ("receiver", "exporter", "connector", "processor"))
-def test_add_to_pipeline_component(default_config_mgr, pipeline, pipeline_component):
+def test_add_to_pipeline_component(pipeline, pipeline_component):
     """All pipeline components (receiver, exporter, connector, processor) behave the same.
 
     https://opentelemetry.io/docs/collector/configuration/#basics
     """
     # GIVEN a default ConfigManager
-    cfg_mgr = default_config_mgr
+    cfg_mgr = ConfigManager()
     # WHEN adding a pipeline component
     cfg_mgr = cfg_mgr.add_to_pipeline_component("foo", [pipeline], f"{pipeline_component}s")
     # THEN the pipeline component is added to the ConfigManager's pipeline config
@@ -41,9 +42,9 @@ def test_add_to_pipeline_component(default_config_mgr, pipeline, pipeline_compon
 
 
 @pytest.mark.parametrize("pipeline", ("logs", "metrics", "traces"))
-def test_add_pipeline(default_config_mgr, pipeline):
+def test_add_pipeline(pipeline):
     # GIVEN a default ConfigManager
-    cfg_mgr = default_config_mgr
+    cfg_mgr = ConfigManager()
     # WHEN adding a pipeline with a config
     sample_config = {
         "receivers": ["a"],
@@ -56,19 +57,20 @@ def test_add_pipeline(default_config_mgr, pipeline):
     assert sample_config == cfg_mgr._config["service"]["pipelines"][pipeline]
 
 
-def test_add_extension(default_config_mgr):
+def test_add_extension():
     # GIVEN a default ConfigManager
-    cfg_mgr = default_config_mgr
+    cfg_mgr = ConfigManager()
     # WHEN adding a pipeline with a config
     sample_config = {"a": {"b": "c"}}
     cfg_mgr = cfg_mgr.add_extension("foo", sample_config)
     # THEN the pipeline is added to the ConfigManager's pipeline config
-    assert sample_config == cfg_mgr._config["service"]["extensions"]["foo"]
+    assert "foo" in cfg_mgr._config["service"]["extensions"]
+    assert sample_config == cfg_mgr._config["extensions"]["foo"]
 
 
-def test_add_scrape_job(default_config_mgr):
+def test_add_scrape_job():
     # GIVEN a default ConfigManager
-    cfg_mgr = default_config_mgr
+    cfg_mgr = ConfigManager()
     # WHEN adding a scrape job config
     sample_config = {
         "job_name": "foo",

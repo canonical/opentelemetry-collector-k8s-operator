@@ -2,23 +2,20 @@
 
 import yaml
 from typing import Any, Dict, List
-import copy
-
-
-DEFAULT_CONFIG = {
-    "extensions": {},
-    "receivers": {},
-    "exporters": {},
-    "connectors": {},
-    "processors": {},
-    "service": {"extensions": [], "pipelines": {}},
-}
 
 
 class ConfigManager:
     """Configuration manager for OpenTelemetry Collector."""
 
-    _config = copy.deepcopy(DEFAULT_CONFIG)
+    def __init__(self):
+        self._config = {
+            "extensions": {},
+            "receivers": {},
+            "exporters": {},
+            "connectors": {},
+            "processors": {},
+            "service": {"extensions": [], "pipelines": {}},
+        }
 
     @property
     def yaml(self) -> str:
