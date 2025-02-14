@@ -26,7 +26,7 @@ platforms:
 
 parts:
   charm:
-    charm-binary-python-packages: [cryptography, jsonschema, pydantic, pydantic-core]
+    charm-binary-python-packages: [cryptography, jsonschema, pydantic, pydantic-core, maturin]
     build-packages: [git]
     build-snaps: [astral-uv]
     override-build: |
@@ -61,15 +61,20 @@ actions:
       Regenerate the world state from scratch. This includes the configuration file,
       but also relation data set by the charm.
 
-provides:
-  # TODO consider renaming the interfaces to something more generic since its agnostic to collectors
-  self-metrics-endpoint:
-    interface: prometheus_scrape
-  receive-remote-write:
-    interface: prometheus_remote_write
+# provides:
+  # receive-remote-write:
+  #   interface: prometheus_remote_write
 
 requires:
   metrics-endpoint:
     interface: prometheus_scrape
   send-remote-write:
     interface: prometheus_remote_write
+
+config:
+  options:
+    self_scrape_interval:
+      description: |
+        How frequently otel-collector will be scraped.
+      type: string
+      default: 1m

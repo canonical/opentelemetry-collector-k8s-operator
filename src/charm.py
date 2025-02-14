@@ -35,13 +35,18 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         super().__init__(*args)
         if not self.unit.get_container("opentelemetry-collector").can_connect():
             return
+
+        # Metrics setup
         charm_root = self.charm_dir.absolute()
+        self.metrics_consumer = MetricsEndpointConsumer(self)
         self.metrics_rules_paths = RulesMapping(
-            # TODO how to inject topology only for this charm's own rules?
-            # FIXED: this is already handled by reusing the *Rules classes
             src=charm_root.joinpath(*"src/prometheus_alert_rules".split("/")),
             dest=charm_root.joinpath(*"prometheus_alert_rules".split("/")),
         )
+        self.remote_write = PrometheusRemoteWriteConsumer(
+            self, alert_rules_path=self.metrics_rules_paths.dest
+        )
+
         self.reconcile()
 
     def reconcile(self):
@@ -102,7 +107,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     def _prometheus_scrape(self, config):
         """Configure alert rules and scrape jobs."""
-        # add self-monitoring
+        # Add self-monitoring
         config.add_receiver(
             "prometheus",
             {
@@ -110,7 +115,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     "scrape_configs": [
                         {
                             "job_name": "opentelemetry-collector",
-                            "scrape_interval": "1m",
+                            "scrape_interval": self.model.config.get("self_scrape_interval"),
                             "static_configs": [
                                 {
                                     "targets": ["0.0.0.0:8888"],
@@ -124,7 +129,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             pipelines=["metrics"],
         )
         # Receive alert rules and scrape jobs
-        self.metrics_consumer = MetricsEndpointConsumer(self)
         self._update_alerts_rules()
         for job in self.metrics_consumer.jobs():
             config.add_scrape_job(job)
@@ -132,9 +136,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     def _prometheus_remote_write(self, config):
         """Configure forwarding alert rules to prometheus/mimir via remote-write."""
-        self.remote_write = PrometheusRemoteWriteConsumer(
-            self, alert_rules_path=self.metrics_rules_paths.dest
-        )
         if self.remote_write.endpoints:
             config.add_exporter(
                 "prometheusremotewrite",
@@ -161,9 +162,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if copy_files:
             shutil.copytree(self.metrics_rules_paths.src, self.metrics_rules_paths.dest)
         else:
-            os.mkdir(
-                self.metrics_rules_paths.dest
-            )  # This dir gets created in gagent and should be created in otel as well
+            os.mkdir(self.metrics_rules_paths.dest)
         for topology_identifier, rule in self.metrics_consumer.alerts.items():
             rule_file = Path(self.metrics_rules_paths.dest) / f"juju_{topology_identifier}.rules"
             rule_file.write_text(yaml.safe_dump(rule))
