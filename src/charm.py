@@ -6,7 +6,7 @@
 import os
 from typing import Any, Dict
 
-from config import ConfigManager
+from config import Config
 
 from ops import CharmBase, main
 from ops.model import ActiveStatus
@@ -16,23 +16,25 @@ from ops.pebble import Layer
 class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
+    _config_path = "/etc/otelcol/config.yaml"
+    _container_name = "otelcol"
+
     def __init__(self, *args):
         super().__init__(*args)
-        if not self.unit.get_container("opentelemetry-collector").can_connect():
+        if not self.unit.get_container("otelcol").can_connect():
             return
         self.reconcile()
 
     def reconcile(self):
         """Recreate the world state for the charm."""
-        name = "opentelemetry-collector"
-        container = self.unit.get_container(name)
-        config_manager = ConfigManager().default_config()
+        container = self.unit.get_container(self._container_name)
+        config_manager = Config().default_config()
 
         self.unit.set_ports(*config_manager.ports)
 
-        container.push("/etc/otelcol/config.yaml", config_manager.yaml)
+        container.push(self._config_path, config_manager.yaml)
 
-        container.add_layer(name, self._pebble_layer, combine=True)
+        container.add_layer(self._container_name, self._pebble_layer, combine=True)
         container.replan()
 
         self.unit.status = ActiveStatus()
@@ -48,7 +50,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     "otelcol": {
                         "override": "replace",
                         "summary": "opentelemetry-collector-k8s service",
-                        "command": "/usr/bin/otelcol --config=/etc/otelcol/config.yaml",
+                        "command": f"/usr/bin/otelcol --config={self._config_path}",
                         "startup": "enabled",
                         "environment": {
                             "https_proxy": os.environ.get("JUJU_CHARM_HTTPS_PROXY", ""),

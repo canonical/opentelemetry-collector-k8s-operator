@@ -1,10 +1,18 @@
 """Helper module to build the configuration for OpenTelemetry Collector."""
 
 import yaml
+from enum import Enum
 from typing import Any, Dict, List
 
 
-class ConfigManager:
+class Ports(Enum):
+    """Helper enum for OpenTelemetry Collector ports."""
+
+    METRICS = 8888
+    HEALTH = 13133
+
+
+class Config:
     """Configuration manager for OpenTelemetry Collector."""
 
     _config = {
@@ -13,7 +21,11 @@ class ConfigManager:
         "exporters": {},
         "connectors": {},
         "processors": {},
-        "service": {"extensions": [], "pipelines": {}},
+        "service": {
+            "extensions": [],
+            "pipelines": {},
+            "telemetry": {"metrics": {"address": "0.0.0.0:8888", "level": "basic"}},
+        },
     }
 
     @property
@@ -22,23 +34,10 @@ class ConfigManager:
         return yaml.dump(self._config)
 
     @classmethod
-    def default_config(cls) -> "ConfigManager":
+    def default_config(cls) -> "Config":
         """Return the default config for OpenTelemetry Collector."""
         return (
             cls()
-            .add_receiver(
-                "otlp",
-                {
-                    "protocols": {
-                        "grpc": {"endpoint": "0.0.0.0:4317"},
-                        "http": {"endpoint": "0.0.0.0:4318"},
-                    }
-                },
-                pipelines=["metrics", "logs", "traces"],
-            )
-            .add_receiver(
-                "opencensus", {"endpoint": "0.0.0.0:55678"}, pipelines=["metrics", "traces"]
-            )
             .add_receiver(
                 "prometheus",
                 {
@@ -47,38 +46,19 @@ class ConfigManager:
                             {
                                 "job_name": "otel-collector",
                                 "scrape_interval": "1m",
-                                "static_configs": [{"targets": ["0.0.0.0:8888"]}],
+                                "static_configs": [{"targets": [f"0.0.0.0:{Ports.METRICS}"]}],
                             }
                         ]
                     }
                 },
                 pipelines=["metrics"],
             )
-            .add_receiver(
-                "jaeger",
-                {
-                    "protocols": {
-                        "grpc": {"endpoint": "0.0.0.0:14250"},
-                        "thrift_binary": {"endpoint": "0.0.0.0:6832"},
-                        "thrift_compact": {"endpoint": "0.0.0.0:6831"},
-                        "thrift_http": {"endpoint": "0.0.0.0:14268"},
-                    }
-                },
-                pipelines=["traces"],
-            )
-            .add_receiver("zipkin", {"endpoint": "0.0.0.0:9411"}, pipelines=["traces"])
-            .add_processor("batch", {}, pipelines=["metrics", "logs", "traces"])
-            .add_exporter(
-                "debug", {"verbosity": "detailed"}, pipelines=["metrics", "logs", "traces"]
-            )
-            .add_extension("health_check", {"endpoint": "0.0.0.0:13133"})
-            .add_extension("pprof", {"endpoint": "0.0.0.0:1777"})
-            .add_extension("zpages", {"endpoint": "0.0.0.0:55679"})
+            .add_extension("health_check", {"endpoint": f"0.0.0.0:{Ports.HEALTH}"})
         )
 
     def add_receiver(
         self, name: str, receiver_config: Dict[str, Any], pipelines: List[str] = []
-    ) -> "ConfigManager":
+    ) -> "Config":
         """Add a receiver to the config.
 
         Receivers are enabled by adding them to the appropriate pipelines within the service section.
@@ -89,13 +69,15 @@ class ConfigManager:
             pipelines: a list of strings for which service pipelines (logs, metrics, traces) the receiver should be added to.
 
         Returns:
-            ConfigManager since this is a builder method.
+            Config since this is a builder method.
         """
         self._config["receivers"][name] = receiver_config
-        self._add_to_pipeline(name, "receivers", pipelines)
+        self._add_to_pipeline(name=name, category="receivers", pipelines=pipelines)
         return self
 
-    def add_exporter(self, name: str, exporter_config: Dict[str, Any], pipelines: List[str] = []):
+    def add_exporter(
+        self, name: str, exporter_config: Dict[str, Any], pipelines: List[str] = []
+    ) -> "Config":
         """Add an exporter to the config.
 
         Exporters are enabled by adding them to the appropriate pipelines within the service section.
@@ -106,15 +88,15 @@ class ConfigManager:
             pipelines: a list of strings for which service pipelines (logs, metrics, traces) the exporter should be added to.
 
         Returns:
-            ConfigManager since this is a builder method.
+            Config since this is a builder method.
         """
         self._config["exporters"][name] = exporter_config
-        self._add_to_pipeline(name, "exporters", pipelines)
+        self._add_to_pipeline(name=name, category="exporters", pipelines=pipelines)
         return self
 
     def add_connector(
         self, name: str, connector_config: Dict[str, Any], pipelines: List[str] = []
-    ):
+    ) -> "Config":
         """Add a connector to the config.
 
         Connectors are enabled by adding them to the appropriate pipelines within the service section.
@@ -125,15 +107,15 @@ class ConfigManager:
             pipelines: a list of strings for which service pipelines (logs, metrics, traces) the connector should be added to.
 
         Returns:
-            ConfigManager since this is a builder method.
+            Config since this is a builder method.
         """
         self._config["connectors"][name] = connector_config
-        self._add_to_pipeline(name, "connectors", pipelines)
+        self._add_to_pipeline(name=name, category="connectors", pipelines=pipelines)
         return self
 
     def add_processor(
         self, name: str, processor_config: Dict[str, Any], pipelines: List[str] = []
-    ):
+    ) -> "Config":
         """Add a processor to the config.
 
         Processors are enabled by adding them to the appropriate pipelines within the service section.
@@ -144,18 +126,18 @@ class ConfigManager:
             pipelines: a list of strings for which service pipelines (logs, metrics, traces) the processor should be added to.
 
         Returns:
-            ConfigManager since this is a builder method.
+            Config since this is a builder method.
         """
         self._config["processors"][name] = processor_config
-        self._add_to_pipeline(name, "processors", pipelines)
+        self._add_to_pipeline(name=name, category="processors", pipelines=pipelines)
         return self
 
-    def add_pipeline(self, name: str, pipeline_config: Dict[str, Any]):
+    def add_pipeline(self, name: str, pipeline_config: Dict[str, Any]) -> "Config":
         """Add a pipeline to the config."""
         self._config["service"]["pipelines"][name] = pipeline_config
         return self
 
-    def add_extension(self, name: str, extension_config: Dict[str, Any]):
+    def add_extension(self, name: str, extension_config: Dict[str, Any]) -> "Config":
         """Add an extension to the config."""
         if name not in self._config["service"]["extensions"]:
             self._config["service"]["extensions"].append(name)
@@ -165,11 +147,7 @@ class ConfigManager:
     @property
     def ports(self) -> List[int]:
         """Return the ports that are used in the Collector config."""
-        ports = [
-            8888,  # self-monitoring metrics,
-            13133,  # health check
-        ]
-        return ports
+        return [port.value for port in Ports]
 
     def _add_to_pipeline(self, name: str, category: str, pipelines: List[str]):
         for pipeline in pipelines:
