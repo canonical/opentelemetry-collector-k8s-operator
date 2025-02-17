@@ -26,7 +26,7 @@ platforms:
 
 parts:
   charm:
-    charm-binary-python-packages: [cryptography, jsonschema, pydantic, pydantic-core]
+    charm-binary-python-packages: [cryptography, jsonschema, pydantic, pydantic-core, maturin]
     build-packages: [git]
     build-snaps: [astral-uv]
     override-build: |
@@ -46,7 +46,7 @@ parts:
         mode: "755"
 
 containers:
-  opentelemetry-collector:
+  otelcol:
     resource: opentelemetry-collector-image
 
 resources:
