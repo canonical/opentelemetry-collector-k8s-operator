@@ -137,10 +137,22 @@ class Config:
             self._add_to_pipeline(name=name, category="processors", pipelines=pipelines)
         return self
 
-    def add_pipeline(self, name: str, pipeline_config: Dict[str, Any]) -> "Config":
-        """Add a pipeline to the config."""
-        self._config["service"]["pipelines"][name] = pipeline_config
-        return self
+    def _add_to_pipeline(self, name: str, category: str, pipelines: List[str]):
+        """Add a pipeline component to the pipelines config."""
+        # Create the pipeline dict key chain if it doesn't exist
+        for pipeline in pipelines:
+            self._config["service"]["pipelines"].setdefault(
+                pipeline,
+                {
+                    category: [name],
+                },
+            )
+            # Add to pipeline if it doesn't exist in the list already
+            if name not in self._config["service"]["pipelines"][pipeline].setdefault(
+                category,
+                [],
+            ):
+                self._config["service"]["pipelines"][pipeline][category].append(name)
 
     def add_extension(self, name: str, extension_config: Dict[str, Any]) -> "Config":
         """Add an extension to the config."""
@@ -153,19 +165,3 @@ class Config:
     def ports(self) -> List[int]:
         """Return the ports that are used in the Collector config."""
         return [port.value for port in Ports]
-
-    def _add_to_pipeline(self, name: str, category: str, pipelines: List[str]):
-        for pipeline in pipelines:
-            # Create the pipeline dict key chain if it doesn't exist
-            self._config["service"]["pipelines"].setdefault(
-                pipeline,
-                {
-                    "receivers": [],
-                    "exporters": [],
-                    "connectors": [],
-                    "processors": [],
-                },
-            )
-            # Add to pipeline if it doesn't exist in the list already
-            if name not in self._config["service"]["pipelines"][pipeline][category]:
-                self._config["service"]["pipelines"][pipeline][category].append(name)
