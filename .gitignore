@@ -1,0 +1,14 @@
+build
+*.charm
+.idea
+__pycache__
+.venv
+.tox
+.coverage
+venv
+cos-tool*
+sqlite-static
+
+# Charm-specific
+requirements*.txt
+version
