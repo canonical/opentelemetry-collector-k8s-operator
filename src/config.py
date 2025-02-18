@@ -2,7 +2,7 @@
 
 import yaml
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class Ports(Enum):
@@ -15,18 +15,19 @@ class Ports(Enum):
 class Config:
     """Configuration manager for OpenTelemetry Collector."""
 
-    _config = {
-        "extensions": {},
-        "receivers": {},
-        "exporters": {},
-        "connectors": {},
-        "processors": {},
-        "service": {
-            "extensions": [],
-            "pipelines": {},
-            "telemetry": {"metrics": {"address": "0.0.0.0:8888", "level": "basic"}},
-        },
-    }
+    def __init__(self):
+        self._config = {
+            "extensions": {},
+            "receivers": {},
+            "exporters": {},
+            "connectors": {},
+            "processors": {},
+            "service": {
+                "extensions": [],
+                "pipelines": {},
+                "telemetry": {"metrics": {"address": "0.0.0.0:8888", "level": "basic"}},
+            },
+        }
 
     @property
     def yaml(self) -> str:
@@ -57,7 +58,7 @@ class Config:
         )
 
     def add_receiver(
-        self, name: str, receiver_config: Dict[str, Any], pipelines: List[str] = []
+        self, name: str, receiver_config: Dict[str, Any], pipelines: Optional[List[str]] = None
     ) -> "Config":
         """Add a receiver to the config.
 
@@ -72,11 +73,12 @@ class Config:
             Config since this is a builder method.
         """
         self._config["receivers"][name] = receiver_config
-        self._add_to_pipeline(name=name, category="receivers", pipelines=pipelines)
+        if pipelines:
+            self._add_to_pipeline(name=name, category="receivers", pipelines=pipelines)
         return self
 
     def add_exporter(
-        self, name: str, exporter_config: Dict[str, Any], pipelines: List[str] = []
+        self, name: str, exporter_config: Dict[str, Any], pipelines: Optional[List[str]] = None
     ) -> "Config":
         """Add an exporter to the config.
 
@@ -91,11 +93,12 @@ class Config:
             Config since this is a builder method.
         """
         self._config["exporters"][name] = exporter_config
-        self._add_to_pipeline(name=name, category="exporters", pipelines=pipelines)
+        if pipelines:
+            self._add_to_pipeline(name=name, category="exporters", pipelines=pipelines)
         return self
 
     def add_connector(
-        self, name: str, connector_config: Dict[str, Any], pipelines: List[str] = []
+        self, name: str, connector_config: Dict[str, Any], pipelines: Optional[List[str]] = None
     ) -> "Config":
         """Add a connector to the config.
 
@@ -110,11 +113,12 @@ class Config:
             Config since this is a builder method.
         """
         self._config["connectors"][name] = connector_config
-        self._add_to_pipeline(name=name, category="connectors", pipelines=pipelines)
+        if pipelines:
+            self._add_to_pipeline(name=name, category="connectors", pipelines=pipelines)
         return self
 
     def add_processor(
-        self, name: str, processor_config: Dict[str, Any], pipelines: List[str] = []
+        self, name: str, processor_config: Dict[str, Any], pipelines: Optional[List[str]] = None
     ) -> "Config":
         """Add a processor to the config.
 
@@ -129,7 +133,8 @@ class Config:
             Config since this is a builder method.
         """
         self._config["processors"][name] = processor_config
-        self._add_to_pipeline(name=name, category="processors", pipelines=pipelines)
+        if pipelines:
+            self._add_to_pipeline(name=name, category="processors", pipelines=pipelines)
         return self
 
     def add_pipeline(self, name: str, pipeline_config: Dict[str, Any]) -> "Config":
