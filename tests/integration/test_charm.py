@@ -25,7 +25,7 @@ def _get_pebble_checks(ops_test: OpsTest, app_name: str):
     assert ops_test.model
     return sh.juju.ssh(
         f"--model={ops_test.model.name}",
-        "--container=opentelemetry-collector",
+        "--container=otelcol",
         f"{app_name}/leader",
         "pebble checks",
     )

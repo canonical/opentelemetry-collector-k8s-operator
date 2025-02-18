@@ -31,37 +31,42 @@ RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
 class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
+    _config_path = "/etc/otelcol/config.yaml"
+    _container_name = "otelcol"
+    _rules_source_path = "src/prometheus_alert_rules"
+    _rules_destination_path = "prometheus_alert_rules"
+
     def __init__(self, *args):
         super().__init__(*args)
-        if not self.unit.get_container("opentelemetry-collector").can_connect():
+        if not self.unit.get_container(self._container_name).can_connect():
             return
 
+        self.otel_config = Config.default_config()
         # Metrics setup
         charm_root = self.charm_dir.absolute()
         self.metrics_consumer = MetricsEndpointConsumer(self)
         self.metrics_rules_paths = RulesMapping(
-            src=charm_root.joinpath(*"src/prometheus_alert_rules".split("/")),
-            dest=charm_root.joinpath(*"prometheus_alert_rules".split("/")),
+            src=charm_root.joinpath(*self._rules_source_path.split("/")),
+            dest=charm_root.joinpath(*self._rules_destination_path.split("/")),
         )
         self.remote_write = PrometheusRemoteWriteConsumer(
             self, alert_rules_path=self.metrics_rules_paths.dest
         )
 
-        self.reconcile()
+        self._reconcile()
 
-    def reconcile(self):
+    def _reconcile(self):
         """Recreate the world state for the charm."""
-        name = "opentelemetry-collector"
-        container = self.unit.get_container(name)
-        config = Config.default_config()
+        container = self.unit.get_container(self._container_name)
 
-        self.unit.set_ports(*config.ports)
+        self.unit.set_ports(*self.otel_config.ports)
 
-        config = self._prometheus_remote_write(config)
-        config = self._prometheus_scrape(config)
+        self._configure_prometheus_remote_write()
+        self._configure_prometheus_scrape()
 
-        container.push("/etc/otelcol/config.yaml", config.yaml)
-        container.add_layer(name, self._pebble_layer, combine=True)
+        container.push(self._config_path, self.otel_config.yaml)
+
+        container.add_layer(self._container_name, self._pebble_layer, combine=True)
         container.replan()
 
         self.unit.status = ActiveStatus()
@@ -77,7 +82,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     "otelcol": {
                         "override": "replace",
                         "summary": "opentelemetry-collector-k8s service",
-                        "command": "/usr/bin/otelcol --config=/etc/otelcol/config.yaml",
+                        "command": f"/usr/bin/otelcol --config={self._config_path}",
                         "startup": "enabled",
                         "environment": {
                             "https_proxy": os.environ.get("JUJU_CHARM_HTTPS_PROXY", ""),
@@ -102,13 +107,18 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "period": "30s",
                 "http": {"url": "http://localhost:13133/health"},
             },
+            "valid-config": {
+                "override": "replace",
+                "level": "alive",
+                "exec": {"command": f"otelcol validate --config={self._config_path}"},
+            },
         }
         return checks
 
-    def _prometheus_scrape(self, config):
+    def _configure_prometheus_scrape(self):
         """Configure alert rules and scrape jobs."""
         # Add self-monitoring
-        config.add_receiver(
+        self.otel_config.add_receiver(  # TODO Determine if service:telemetry:metrics:... internal metrics replaces this
             "prometheus",
             {
                 "config": {
@@ -131,13 +141,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Receive alert rules and scrape jobs
         self._update_alerts_rules()
         for job in self.metrics_consumer.jobs():
-            config.add_scrape_job(job)
-        return config
+            self.otel_config.add_scrape_job(job)
 
-    def _prometheus_remote_write(self, config):
+    def _configure_prometheus_remote_write(self):
         """Configure forwarding alert rules to prometheus/mimir via remote-write."""
         if self.remote_write.endpoints:
-            config.add_exporter(
+            self.otel_config.add_exporter(
                 "prometheusremotewrite",
                 {
                     "endpoint": self.remote_write.endpoints[0][
@@ -150,7 +159,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # TODO Receive alert rules via remote write
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
-        return config
 
     def _update_alerts_rules(
         self,

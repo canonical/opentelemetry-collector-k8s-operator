@@ -1,7 +1,15 @@
 """Helper module to build the configuration for OpenTelemetry Collector."""
 
 import yaml
+from enum import Enum
 from typing import Any, Dict, List, Optional
+
+
+class Ports(Enum):
+    """Helper enum for OpenTelemetry Collector ports."""
+
+    METRICS = 8888
+    HEALTH = 13133
 
 
 class Config:
@@ -14,7 +22,11 @@ class Config:
             "exporters": {},
             "connectors": {},
             "processors": {},
-            "service": {"extensions": [], "pipelines": {}},
+            "service": {
+                "extensions": [],
+                "pipelines": {},
+                "telemetry": {"metrics": {"address": "0.0.0.0:8888", "level": "basic"}},
+            },
         }
 
     @property
@@ -28,22 +40,22 @@ class Config:
         return (
             cls()
             .add_receiver(
-                "otlp",
+                "prometheus",
                 {
-                    "protocols": {
-                        "grpc": {"endpoint": "0.0.0.0:4317"},
-                        "http": {"endpoint": "0.0.0.0:4318"},
+                    "config": {
+                        "scrape_configs": [
+                            {
+                                "job_name": "otel-collector",
+                                "scrape_interval": "1m",
+                                "static_configs": [{"targets": [f"0.0.0.0:{Ports.METRICS.value}"]}],
+                            }
+                        ]
                     }
                 },
-                pipelines=["metrics", "logs", "traces"],
+                pipelines=["metrics"],
             )
-            .add_processor("batch", {}, pipelines=["metrics", "logs", "traces"])
-            .add_exporter(
-                "debug", {"verbosity": "detailed"}, pipelines=["metrics", "logs", "traces"]
-            )
-            .add_extension("health_check", {"endpoint": "0.0.0.0:13133"})
-            .add_extension("pprof", {"endpoint": "0.0.0.0:1777"})
-            .add_extension("zpages", {"endpoint": "0.0.0.0:55679"})
+            .add_exporter("debug", {"verbosity": "detailed"}, pipelines=["metrics"])  # TODO otel
+            .add_extension("health_check", {"endpoint": f"0.0.0.0:{Ports.HEALTH.value}"})
         )
 
     def add_receiver(
@@ -68,7 +80,7 @@ class Config:
 
     def add_exporter(
         self, name: str, exporter_config: Dict[str, Any], pipelines: Optional[List[str]] = None
-    ):
+    ) -> "Config":
         """Add an exporter to the config.
 
         Exporters are enabled by adding them to the appropriate pipelines within the service section.
@@ -88,7 +100,7 @@ class Config:
 
     def add_connector(
         self, name: str, connector_config: Dict[str, Any], pipelines: Optional[List[str]] = None
-    ):
+    ) -> "Config":
         """Add a connector to the config.
 
         Connectors are enabled by adding them to the appropriate pipelines within the service section.
@@ -108,7 +120,7 @@ class Config:
 
     def add_processor(
         self, name: str, processor_config: Dict[str, Any], pipelines: Optional[List[str]] = None
-    ):
+    ) -> "Config":
         """Add a processor to the config.
 
         Processors are enabled by adding them to the appropriate pipelines within the service section.
@@ -143,7 +155,7 @@ class Config:
             ):
                 self._config["service"]["pipelines"][pipeline][category].append(name)
 
-    def add_extension(self, name: str, extension_config: Dict[str, Any]):
+    def add_extension(self, name: str, extension_config: Dict[str, Any]) -> "Config":
         """Add an extension to the config."""
         if name not in self._config["service"]["extensions"]:
             self._config["service"]["extensions"].append(name)
@@ -153,11 +165,7 @@ class Config:
     @property
     def ports(self) -> List[int]:
         """Return the ports that are used in the Collector config."""
-        ports = [
-            8888,  # self-monitoring metrics,
-            13133,  # health check
-        ]
-        return ports
+        return [port.value for port in Ports]
 
     def add_scrape_job(self, scrape_job: Dict):
         """Update the Prometheus receiver config."""

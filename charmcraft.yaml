@@ -5,7 +5,7 @@ name: opentelemetry-collector-k8s
 type: charm
 assumes:
   - k8s-api
-  - juju >= 3.6 # Juju 3.0.3+ needed for secrets and open-port
+  - juju >= 3.6
 
 summary: Vendor-agnostic way to receive, process and export telemetry data.
 description: |
@@ -46,7 +46,7 @@ parts:
         mode: "755"
 
 containers:
-  opentelemetry-collector:
+  otelcol:
     resource: opentelemetry-collector-image
 
 resources:

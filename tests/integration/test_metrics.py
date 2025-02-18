@@ -5,11 +5,11 @@
 
 import sh
 import yaml
-import time
 import json
 from typing import Dict
 from pytest_operator.plugin import OpsTest
 from helpers import get_application_ip
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 # pyright: reportAttributeAccessIssue = false
 
@@ -49,22 +49,18 @@ async def test_metrics_pipeline(ops_test: OpsTest, charm: str):
     )
 
     prom_ip = await get_application_ip(ops_test, prom_app_name)
-    # TODO This is flaky, we need a way to ensure that all the scrape jobs have made it to Prom before asserting
-    #   Also, waiting 70 seconds isnt great, we should either tenacity retry until ready or have a health check
-    time.sleep(70)  # The default scrape_interval is 60 seconds
-    # THEN rules arrive in prometheus
-    rules = json.loads(sh.curl(f"{prom_ip}:9090/api/v1/rules"))
-    group_names = [group["name"] for group in rules["data"]["groups"]]
-    assert any('_avalanche_k8s_' in item for item in group_names)
-    # AND alerts arrive in prometheus
-    alerts = json.loads(sh.curl(f"{prom_ip}:9090/api/v1/alerts"))
-    charm_names = [alert["labels"]["juju_charm"] for alert in alerts["data"]["alerts"]]
-    assert any('avalanche-k8s' in item for item in charm_names)
 
-    # import pytest
-    # from tenacity import retry, stop_after_delay, wait_fixed
-    # @retry(stop=stop_after_delay(10), wait=wait_fixed(7))  # The default scrape_interval is 60 seconds
-    # def check_curl(endpoint: str, key: str):
-    #     assert sh.curl(endpoint)["data"][key]
-    # check_curl(f"{prom_ip}:9090/api/v1/rules")
-    # check_curl(f"{prom_ip}:9090/api/v1/alerts", "alerts")
+    # THEN rules arrive in prometheus
+    @retry(stop=stop_after_attempt(10), wait=wait_fixed(5))
+    async def _retry_rules_api():
+        data = json.loads(sh.curl(f"{prom_ip}:9090/api/v1/rules"))["data"]
+        group_names = [group["name"] for group in data["groups"]]
+        assert any("_avalanche_k8s_" in item for item in group_names)
+    await _retry_rules_api()
+    # AND alerts arrive in prometheus
+    @retry(stop=stop_after_attempt(10), wait=wait_fixed(5))
+    async def _retry_alerts_api():
+        data = json.loads(sh.curl(f"{prom_ip}:9090/api/v1/alerts"))["data"]
+        charm_names = [alert["labels"]["juju_charm"] for alert in data["alerts"]]
+        assert any("avalanche-k8s" in item for item in charm_names)
+    await _retry_alerts_api()
