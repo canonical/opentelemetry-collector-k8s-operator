@@ -47,14 +47,15 @@ class Config:
                             {
                                 "job_name": "otel-collector",
                                 "scrape_interval": "1m",
-                                "static_configs": [{"targets": [f"0.0.0.0:{Ports.METRICS}"]}],
+                                "static_configs": [{"targets": [f"0.0.0.0:{Ports.METRICS.value}"]}],
                             }
                         ]
                     }
                 },
                 pipelines=["metrics"],
             )
-            .add_extension("health_check", {"endpoint": f"0.0.0.0:{Ports.HEALTH}"})
+            .add_exporter("debug", {"verbosity": "detailed"}, pipelines=["metrics"])
+            .add_extension("health_check", {"endpoint": f"0.0.0.0:{Ports.HEALTH.value}"})
         )
 
     def add_receiver(
