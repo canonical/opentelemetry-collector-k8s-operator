@@ -75,6 +75,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "period": "30s",
                 "http": {"url": "http://localhost:13133/health"},
             },
+            "valid-config": {
+                "override": "replace",
+                "level": "alive",
+                "exec": {"command": f"otelcol validate --config={self._config_path}"},
+            },
         }
         return checks
 
