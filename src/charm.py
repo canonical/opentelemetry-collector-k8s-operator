@@ -139,8 +139,17 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             },
             pipelines=["metrics"],
         )
-        # Receive alert rules and scrape jobs
-        self._update_alerts_rules()
+        # Receive and update alert rules
+        if os.path.exists(self.metrics_rules_paths.dest):
+            shutil.rmtree(self.metrics_rules_paths.dest)
+        else:
+            os.mkdir(self.metrics_rules_paths.dest)
+        for topology_identifier, rule in self.metrics_consumer.alerts.items():
+            rule_file = Path(self.metrics_rules_paths.dest) / f"juju_{topology_identifier}.rules"
+            rule_file.write_text(yaml.safe_dump(rule))
+            logger.debug(f"updated alert rules file {rule_file.as_posix()}")
+        self.remote_write.reload_alerts()
+        # Receive scrape jobs and add them to the otel config
         for job in self.metrics_consumer.jobs():
             self.otel_config.add_scrape_job(job)
 
@@ -160,23 +169,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # TODO Receive alert rules via remote write
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
-
-    def _update_alerts_rules(
-        self,
-        copy_files: bool = False,
-    ):
-        """Copy alert rules from relations and save them to disk."""
-        if os.path.exists(self.metrics_rules_paths.dest):
-            shutil.rmtree(self.metrics_rules_paths.dest)
-        if copy_files:
-            shutil.copytree(self.metrics_rules_paths.src, self.metrics_rules_paths.dest)
-        else:
-            os.mkdir(self.metrics_rules_paths.dest)
-        for topology_identifier, rule in self.metrics_consumer.alerts.items():
-            rule_file = Path(self.metrics_rules_paths.dest) / f"juju_{topology_identifier}.rules"
-            rule_file.write_text(yaml.safe_dump(rule))
-            logger.debug(f"updated alert rules file {rule_file.as_posix()}")
-        self.remote_write.reload_alerts()
 
 
 if __name__ == "__main__":
