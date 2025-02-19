@@ -68,6 +68,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         container.add_layer(self._container_name, self._pebble_layer, combine=True)
         container.replan()
+        container.restart("otelcol")  # TODO How can the otel binary obtain a new config file without restarting (replan is not enough) the container?
 
         self.unit.status = ActiveStatus()
 

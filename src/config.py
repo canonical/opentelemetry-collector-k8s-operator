@@ -49,7 +49,7 @@ class Config:
                 "otlp", {"endpoint": f"otelcol:{Ports.OTLP_GRPC.value}"}, pipelines=["metrics"]
             )
             .add_extension("health_check", {"endpoint": f"0.0.0.0:{Ports.HEALTH.value}"})
-            # .add_telemetry("metrics", "level", "normal")  # TODO This line stops the exporter from writing to Prom??? This is supposed to overwrite the default can be removed if default is desired.
+            .add_telemetry("metrics", "level", "normal")
         )
 
     def add_receiver(
