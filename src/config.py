@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 class Ports(Enum):
     """Helper enum for OpenTelemetry Collector ports."""
 
+    OTLP_GRPC = 4317
     METRICS = 8888
     HEALTH = 13133
 
@@ -25,7 +26,7 @@ class Config:
             "service": {
                 "extensions": [],
                 "pipelines": {},
-                "telemetry": {"metrics": {"address": "0.0.0.0:8888", "level": "basic"}},
+                "telemetry": {},
             },
         }
 
@@ -40,22 +41,15 @@ class Config:
         return (
             cls()
             .add_receiver(
-                "prometheus",
-                {
-                    "config": {
-                        "scrape_configs": [
-                            {
-                                "job_name": "otel-collector",
-                                "scrape_interval": "1m",
-                                "static_configs": [{"targets": [f"0.0.0.0:{Ports.METRICS.value}"]}],
-                            }
-                        ]
-                    }
-                },
+                "otlp",
+                {"protocols": {"grpc": {"endpoint": f"0.0.0.0:{Ports.OTLP_GRPC.value}"}}},
                 pipelines=["metrics"],
             )
-            .add_exporter("debug", {"verbosity": "detailed"}, pipelines=["metrics"])  # TODO otel
+            .add_exporter(
+                "otlp", {"endpoint": f"otelcol:{Ports.OTLP_GRPC.value}"}, pipelines=["metrics"]
+            )
             .add_extension("health_check", {"endpoint": f"0.0.0.0:{Ports.HEALTH.value}"})
+            # .add_telemetry("metrics", "level", "normal")  # TODO This line stops the exporter from writing to Prom??? This is supposed to overwrite the default can be removed if default is desired.
         )
 
     def add_receiver(
@@ -138,8 +132,45 @@ class Config:
             self._add_to_pipeline(name, "processors", pipelines)
         return self
 
+    def add_extension(self, name: str, extension_config: Dict[str, Any]) -> "Config":
+        """Add an extension to the config.
+
+        Extensions are enabled by adding them to the appropriate service section.
+
+        Args:
+            name: a string representing the pre-defined extension name.
+            extension_config: a (potentially nested) dict representing the config contents.
+
+        Returns:
+            Config since this is a builder method.
+        """
+        if name not in self._config["service"]["extensions"]:
+            self._config["service"]["extensions"].append(name)
+        self._config["extensions"][name] = extension_config
+        return self
+
+    def add_telemetry(
+        self, category: str, option: str, telem_config: Any
+    ) -> "Config":
+        """Add internal telemetry to the config.
+
+        Telemetry is enabled by adding it to the appropriate service section.
+
+        Args:
+            category: a string representing the pre-defined internal-telemetry.
+            option: a string representing the config key within the specified category to configure.
+            telem_config: a list of (potentially nested) dict(s) representing the config contents.
+
+        Returns:
+            Config since this is a builder method.
+        """
+        # https://opentelemetry.io/docs/collector/internal-telemetry
+        self._config["service"]["telemetry"].setdefault(category, {})
+        self._config["service"]["telemetry"][category][option] = telem_config
+        return self
+
     def _add_to_pipeline(self, name: str, category: str, pipelines: List[str]):
-        """Add a pipeline component to the pipelines config."""
+        """Add a pipeline component to the service::pipelines config."""
         # Create the pipeline dict key chain if it doesn't exist
         for pipeline in pipelines:
             self._config["service"]["pipelines"].setdefault(
@@ -154,13 +185,6 @@ class Config:
                 [],
             ):
                 self._config["service"]["pipelines"][pipeline][category].append(name)
-
-    def add_extension(self, name: str, extension_config: Dict[str, Any]) -> "Config":
-        """Add an extension to the config."""
-        if name not in self._config["service"]["extensions"]:
-            self._config["service"]["extensions"].append(name)
-        self._config["extensions"][name] = extension_config
-        return self
 
     @property
     def ports(self) -> List[int]:

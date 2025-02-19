@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 import logging
 
-from config import Config
+from config import Config, Ports
 
 from ops import CharmBase, main
 from ops.model import ActiveStatus
@@ -105,7 +105,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "override": "replace",
                 "level": "alive",
                 "period": "30s",
-                "http": {"url": "http://localhost:13133/health"},
+                "http": {"url": f"http://localhost:{Ports.HEALTH.value}/health"},
             },
             "valid-config": {
                 "override": "replace",
@@ -118,17 +118,17 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _configure_prometheus_scrape(self):
         """Configure alert rules and scrape jobs."""
         # Add self-monitoring
-        self.otel_config.add_receiver(  # TODO Determine if service:telemetry:metrics:... internal metrics replaces this
+        self.otel_config.add_receiver(
             "prometheus",
             {
                 "config": {
                     "scrape_configs": [
                         {
-                            "job_name": "opentelemetry-collector",
-                            "scrape_interval": self.model.config.get("self_scrape_interval"),
+                            "job_name": JujuTopology.from_charm(self).identifier,
+                            "scrape_interval": "5s",
                             "static_configs": [
                                 {
-                                    "targets": ["0.0.0.0:8888"],
+                                    "targets": [f"0.0.0.0:{Ports.METRICS.value}"],
                                     "labels": JujuTopology.from_charm(self).alert_expression_dict,
                                 }
                             ],

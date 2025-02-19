@@ -70,11 +70,3 @@ requires:
     interface: prometheus_scrape
   send-remote-write:
     interface: prometheus_remote_write
-
-config:
-  options:
-    self_scrape_interval:
-      description: |
-        How frequently otel-collector will be scraped.
-      type: string
-      default: 1m

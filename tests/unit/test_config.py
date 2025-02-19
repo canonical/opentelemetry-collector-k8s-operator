@@ -31,7 +31,7 @@ def test_add_pipeline_component(pipelines, pipeline_component):
     # AND the pipeline is not added if none were specified
     if not pipelines:
         assert not cfg._config["service"]["pipelines"]
-    # AND the pipelines are added to the services:pipelines config if specified
+    # AND the pipelines are added to the service::pipelines config if specified
     for pipeline in pipelines:
         assert "foo" in cfg._config["service"]["pipelines"][pipeline][category]
 
@@ -63,5 +63,44 @@ def test_add_extension():
     cfg.add_extension("foo", sample_config)
     # THEN the extension is added to the top-level extensions config
     assert sample_config == cfg._config["extensions"]["foo"]
-    # AND the extension is added to the services:extensions config
+    # AND the extension is added to the service::extensions config
     assert "foo" in cfg._config["service"]["extensions"]
+
+
+def test_add_telemetry():
+    # GIVEN a default Config
+    cfg = Config()
+    # WHEN adding a pipeline with a config
+    sample_config = [{"a": {"b": "c"}}]
+    cfg.add_telemetry("logs", "level", "INFO")
+    cfg.add_telemetry("metrics", "level", "normal")
+    cfg.add_telemetry("metrics", "some_config", sample_config)
+    # THEN the respective telemetry sections are added to the service::telemetry config
+    assert ["logs", "metrics"] == list(cfg._config["service"]["telemetry"].keys())
+    # AND the telemetry is added to the service::telemetry config
+    assert cfg._config["service"]["telemetry"]["metrics"] == {
+        "level": "normal",
+        "some_config": sample_config,
+    }
+    assert cfg._config["service"]["telemetry"]["logs"] == {"level": "INFO"}
+
+
+def test_add_scrape_job():
+    # GIVEN a default Config
+    cfg = Config()
+    # WHEN adding a scrape job config
+    sample_config = {
+        "job_name": "foo",
+        "metrics_path": "/metrics",
+        "relabel_configs": [{}],
+        "static_configs": [{}],
+    }
+    cfg.add_scrape_job(sample_config)
+    # THEN the scrape job is added to the prometheus::receiver::scrape_configs
+    assert [sample_config] == cfg._config["receivers"]["prometheus"]["config"]["scrape_configs"]
+    # AND add another scrape job
+    cfg.add_scrape_job(sample_config)
+    # THEN both scrape jobs exist in the prometheus::receiver::scrape_configs
+    assert [sample_config, sample_config] == cfg._config["receivers"]["prometheus"]["config"][
+        "scrape_configs"
+    ]
