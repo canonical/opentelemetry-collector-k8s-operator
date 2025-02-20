@@ -36,6 +36,6 @@ async def test_pebble_checks(ops_test: OpsTest, charm: str):
     assert ops_test.model
     app_name = "otel-collector-k8s"
     await ops_test.model.deploy(charm, app_name, resources=_charm_resources())
-    await ops_test.model.wait_for_idle(apps=[app_name], status="active", raise_on_error=False)
+    await ops_test.model.wait_for_idle(apps=[app_name], status="active")
     pebble_checks = _get_pebble_checks(ops_test=ops_test, app_name=app_name)
     assert "down" not in pebble_checks

@@ -22,7 +22,7 @@ async def _retry_curl_alerts(endpoint: str):
     assert any("avalanche-k8s" in item for item in charm_names)
 
 
-@retry(stop=stop_after_attempt(15), wait=wait_fixed(5))
+@retry(stop=stop_after_attempt(5), wait=wait_fixed(5))
 async def _retry_curl_jobs(endpoint: str):
     job_names = json.loads(sh.curl(endpoint))["data"]
     assert any("avalanche-k8s" in item for item in job_names)
@@ -55,13 +55,13 @@ async def test_metrics_pipeline(ops_test: OpsTest, charm: str):
     await ops_test.model.integrate(
         f"{otel_app_name}:send-remote-write", f"{prom_app_name}:receive-remote-write"
     )
-    await ops_test.model.wait_for_idle(status="active", raise_on_error=False)
+    await ops_test.model.wait_for_idle(status="active", idle_period=15)
     # THEN rules arrive in prometheus
     prom_ip = await get_application_ip(ops_test, prom_app_name)
     data = json.loads(sh.curl(f"{prom_ip}:9090/api/v1/rules"))["data"]
     group_names = [group["name"] for group in data["groups"]]
     assert any("_avalanche_k8s_" in item for item in group_names)
-    # AND alerts arrive in prometheus
+    # AND the AlwaysFiring alerts from Avalanche arrive in prometheus
     await _retry_curl_alerts(f"{prom_ip}:9090/api/v1/alerts")
     # AND job labels in prometheus contain otel and avalanche
     await _retry_curl_jobs(f"{prom_ip}:9090/api/v1/label/job/values")
