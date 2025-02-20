@@ -166,14 +166,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     def _configure_prometheus_remote_write(self):
         """Configure forwarding alert rules to prometheus/mimir via remote-write."""
-        if self.remote_write.endpoints:
+        for idx, endpoint in enumerate(self.remote_write.endpoints):
             self.otel_config.add_exporter(
-                "prometheusremotewrite",
+                f"prometheusremotewrite/{idx}",
                 {
-                    "endpoint": self.remote_write.endpoints[0][
-                        "url"
-                    ],  # TODO Fix this for scalability
-                    "tls": {"insecure": True},
+                    "endpoint": endpoint["url"],
+                    "tls": {"insecure": True},  # TODO Add TLS support
                 },
                 pipelines=["metrics"],
             )
