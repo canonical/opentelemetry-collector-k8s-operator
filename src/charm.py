@@ -59,7 +59,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """Recreate the world state for the charm."""
         container = self.unit.get_container(self._container_name)
 
-
         self._configure_prometheus_remote_write()
         self._configure_prometheus_scrape()
 
@@ -85,7 +84,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                         "command": f"/usr/bin/otelcol --config={self._config_path}",
                         "startup": "enabled",
                         "environment": {
-                            "config_hash": self.otel_config.hash,  # Restarts the service on config change via pebble replan
+                            "_config_hash": self.otel_config.hash,  # Restarts the service on config change via pebble replan
                             "https_proxy": os.environ.get("JUJU_CHARM_HTTPS_PROXY", ""),
                             "http_proxy": os.environ.get("JUJU_CHARM_HTTP_PROXY", ""),
                             "no_proxy": os.environ.get("JUJU_CHARM_NO_PROXY", ""),
