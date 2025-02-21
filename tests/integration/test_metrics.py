@@ -66,10 +66,7 @@ async def test_metrics_pipeline(ops_test: OpsTest, charm: str):
     # AND juju_application labels in prometheus contain otel-collector and avalanche
     await _retry_curl_jobs(f"{prom_ip}:9090/api/v1/label/juju_application/values")
     # AND avalanche metrics arrive in prometheus
-    data = json.loads(
-        sh.curl(
-            f"{prom_ip}:9090/api/v1/query", data="query=count({__name__=~'avalanche_metric_.+'})"
-        )
-    )
-    avalanche_metric_count = data["result"][0]["value"][1]
+    encoded_query = "count%28%7B__name__%3D~%22avalanche_metric_.%2B%22%7D%29"  # count({__name__=~"avalanche_metric_.+"})
+    data = json.loads(sh.curl(f"{prom_ip}:9090/api/v1/query?query={encoded_query}"))["data"]
+    avalanche_metric_count = int(data["result"][0]["value"][1])
     assert avalanche_metric_count > 0
