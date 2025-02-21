@@ -114,7 +114,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "override": "replace",
                 "level": "alive",
                 "period": "30s",
-                "http": {"url": f"http://localhost:{Ports.HEALTH.value}/health"},
+                "http": {"url": f"http://localhost:{Ports.HEALTH.value}/health"},  # TODO: TLS
             },
             "valid-config": {
                 "override": "replace",

@@ -68,5 +68,7 @@ actions:
 requires:
   metrics-endpoint:
     interface: prometheus_scrape
+    description: To scrape other charms' metrics endpoints.
   send-remote-write:
     interface: prometheus_remote_write
+    description: To forward collected metrics to a prometheus backend.
