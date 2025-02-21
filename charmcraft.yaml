@@ -60,3 +60,15 @@ actions:
     description: >
       Regenerate the world state from scratch. This includes the configuration file,
       but also relation data set by the charm.
+
+# provides:
+  # receive-remote-write:
+  #   interface: prometheus_remote_write
+
+requires:
+  metrics-endpoint:
+    interface: prometheus_scrape
+    description: To scrape other charms' metrics endpoints.
+  send-remote-write:
+    interface: prometheus_remote_write
+    description: To forward collected metrics to a prometheus backend.
