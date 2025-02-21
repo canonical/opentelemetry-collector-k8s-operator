@@ -8,7 +8,6 @@ from typing import Any, Dict
 from pathlib import Path
 import yaml
 import logging
-import hashlib
 
 from config import Config, Ports
 
@@ -27,13 +26,6 @@ from cosl import JujuTopology
 
 logger = logging.getLogger(__name__)
 RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
-
-
-def sha256(hashable) -> str:
-    """Use instead of the builtin hash() for repeatable values."""
-    if isinstance(hashable, str):
-        hashable = hashable.encode("utf-8")
-    return hashlib.sha256(hashable).hexdigest()
 
 
 class OpenTelemetryCollectorK8sCharm(CharmBase):
@@ -67,7 +59,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """Recreate the world state for the charm."""
         container = self.unit.get_container(self._container_name)
 
-        self.unit.set_ports(*self.otel_config.ports)
 
         self._configure_prometheus_remote_write()
         self._configure_prometheus_scrape()
@@ -77,6 +68,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container.add_layer(self._container_name, self._pebble_layer, combine=True)
         container.replan()
 
+        self.unit.set_ports(*self.otel_config.ports)
         self.unit.status = ActiveStatus()
 
     @property
@@ -93,7 +85,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                         "command": f"/usr/bin/otelcol --config={self._config_path}",
                         "startup": "enabled",
                         "environment": {
-                            "config_hash": self._otel_config_hash,  # This restarts the service on config change via pebble replan
+                            "config_hash": self.otel_config.hash,  # Restarts the service on config change via pebble replan
                             "https_proxy": os.environ.get("JUJU_CHARM_HTTPS_PROXY", ""),
                             "http_proxy": os.environ.get("JUJU_CHARM_HTTP_PROXY", ""),
                             "no_proxy": os.environ.get("JUJU_CHARM_NO_PROXY", ""),
@@ -123,10 +115,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             },
         }
         return checks
-
-    @property
-    def _otel_config_hash(self):
-        return sha256(yaml.safe_dump(self.otel_config.yaml))
 
     def _configure_prometheus_scrape(self):
         """Configure alert rules and scrape jobs."""
@@ -171,7 +159,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 f"prometheusremotewrite/{idx}",
                 {
                     "endpoint": endpoint["url"],
-                    "tls": {"insecure": True},  # TODO Add TLS support
+                    "tls": {"insecure": True},  # TODO TLS
                 },
                 pipelines=["metrics"],
             )

@@ -3,6 +3,14 @@
 import yaml
 from enum import Enum
 from typing import Any, Dict, List, Optional
+import hashlib
+
+
+def sha256(hashable) -> str:
+    """Use instead of the builtin hash() for repeatable values."""
+    if isinstance(hashable, str):
+        hashable = hashable.encode("utf-8")
+    return hashlib.sha256(hashable).hexdigest()
 
 
 class Ports(Enum):
@@ -34,6 +42,11 @@ class Config:
     def yaml(self) -> str:
         """Return the config as a string."""
         return yaml.dump(self._config)
+
+    @property
+    def hash(self):
+        """Return the config as a SHA256 hash."""
+        return sha256(yaml.safe_dump(self.yaml))
 
     @classmethod
     def default_config(cls) -> "Config":
