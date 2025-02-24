@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
 
 
-def _aggregate_alerts(self, alerts: Dict, rule_path_map: RulesMapping):
+def _aggregate_alerts(alerts: Dict, rule_path_map: RulesMapping):
     if os.path.exists(rule_path_map.dest):
         shutil.rmtree(rule_path_map.dest)
     shutil.copytree(rule_path_map.src, rule_path_map.dest)
@@ -74,7 +74,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self._add_remote_write()
         self._add_self_scrape()
         # Receive and update alert rules
-        _aggregate_alerts(self.metrics_consumer.alerts)
+        _aggregate_alerts(self.metrics_consumer.alerts, self.metrics_rules_paths)
         self.remote_write.reload_alerts()
         # Receive scrape jobs and add them to the otel config
         self.otel_config.add_prometheus_scrape(self.metrics_consumer.jobs())
