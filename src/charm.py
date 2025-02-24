@@ -118,6 +118,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _configure_prometheus_scrape(self):
         """Configure alert rules and scrape jobs."""
         # Add self-monitoring
+        # TODO Add a way to conditionally set if related to metrics-endpoint
+        #   if metrics-endpoint in [relation for relation in self._charm.model.relations[self._relation_name]]
+        #   What is our current best practice? Do we move this setup logic to libs?
         self.otel_config.add_receiver(
             "prometheus",
             {
