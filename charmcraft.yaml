@@ -61,7 +61,9 @@ actions:
       Regenerate the world state from scratch. This includes the configuration file,
       but also relation data set by the charm.
 
-# provides:
+provides:
+  logging:
+    interface: loki_push_api
   # receive-remote-write:
   #   interface: prometheus_remote_write
 
