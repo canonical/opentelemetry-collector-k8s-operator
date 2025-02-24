@@ -14,6 +14,7 @@ from config import Config, Ports
 from ops import CharmBase, main
 from ops.model import ActiveStatus
 from ops.pebble import Layer
+from charms.loki_k8s.v1.loki_push_api import LogForwarder
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
 )
@@ -51,7 +52,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if not self.unit.get_container(self._container_name).can_connect():
             return
 
+        self.topology = JujuTopology.from_charm(self)
         self.otel_config = Config.default_config()
+
+        # Logs setup
+        self._log_forwarder = LogForwarder(self, relation_name=self._endpoints["logging"])
+
         # Metrics setup
         charm_root = self.charm_dir.absolute()
         self.metrics_consumer = MetricsEndpointConsumer(self)
@@ -72,10 +78,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self._add_remote_write()
         self._add_self_scrape()
         # Receive and update alert rules
-        _aggregate_alerts()
+        _aggregate_alerts(self.metrics_consumer.alerts)
         self.remote_write.reload_alerts()
         # Receive scrape jobs and add them to the otel config
-        self.otel_config.add_prometheus_scrape()
+        self.otel_config.add_prometheus_scrape(self.metrics_consumer.jobs())
 
         container.push(self._config_path, self.otel_config.yaml)
 
@@ -138,12 +144,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "config": {
                     "scrape_configs": [
                         {
-                            "job_name": JujuTopology.from_charm(self).identifier,
+                            "job_name": self.topology.identifier,
                             "scrape_interval": "60s",
                             "static_configs": [
                                 {
                                     "targets": [f"0.0.0.0:{Ports.METRICS.value}"],
-                                    "labels": JujuTopology.from_charm(self).alert_expression_dict,
+                                    "labels": self.topology.alert_expression_dict,
                                 }
                             ],
                         }
@@ -167,6 +173,21 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # TODO Receive alert rules via remote write
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
+
+    def _add_log_forwarding(self):
+        # The Loki receiver implements the Loki push api.
+        # It allows Promtail instances to specify the open telemetry collector as their lokiAddress.
+        self.otel_config.add_receiver(
+            "loki",
+            {
+                "protocols": {
+                    "http": {"endpoint": f"0.0.0.0:{Ports.LOKI_HTTP.value}"},
+                    "grpc": {"endpoint": f"0.0.0.0:{Ports.LOKI_GRPC.value}"},
+                },
+                "use_incoming_timestamp": True,  # if set true the timestamp from Loki log entry is used
+            },
+            pipelines=["logs"],
+        )
 
 
 if __name__ == "__main__":

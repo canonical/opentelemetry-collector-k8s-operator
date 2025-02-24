@@ -4,6 +4,9 @@ import yaml
 from enum import Enum
 from typing import Any, Dict, List, Optional
 import hashlib
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def sha256(hashable) -> str:
@@ -19,6 +22,8 @@ class Ports(Enum):
     OTLP_GRPC = 4317
     METRICS = 8888
     HEALTH = 13133
+    LOKI_HTTP = 3500
+    LOKI_GRPC = 3600
 
 
 class Config:
