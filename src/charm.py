@@ -51,7 +51,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if not self.unit.get_container(self._container_name).can_connect():
             return
 
+        self.topology = JujuTopology.from_charm(self)
         self.otel_config = Config.default_config()
+
         # Metrics setup
         charm_root = self.charm_dir.absolute()
         self.metrics_consumer = MetricsEndpointConsumer(self)
@@ -72,10 +74,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self._add_remote_write()
         self._add_self_scrape()
         # Receive and update alert rules
-        _aggregate_alerts()
+        _aggregate_alerts(self.metrics_consumer.alerts)
         self.remote_write.reload_alerts()
         # Receive scrape jobs and add them to the otel config
-        self.otel_config.add_prometheus_scrape()
+        self.otel_config.add_prometheus_scrape(self.metrics_consumer.jobs())
 
         container.push(self._config_path, self.otel_config.yaml)
 
@@ -138,12 +140,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "config": {
                     "scrape_configs": [
                         {
-                            "job_name": JujuTopology.from_charm(self).identifier,
+                            "job_name": self.topology.identifier,
                             "scrape_interval": "60s",
                             "static_configs": [
                                 {
                                     "targets": [f"0.0.0.0:{Ports.METRICS.value}"],
-                                    "labels": JujuTopology.from_charm(self).alert_expression_dict,
+                                    "labels": self.topology.alert_expression_dict,
                                 }
                             ],
                         }
