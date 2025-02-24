@@ -204,11 +204,12 @@ class Config:
         """Return the ports that are used in the Collector config."""
         return [port.value for port in Ports]
 
-    def add_scrape_job(self, scrape_job: Dict):
+    def add_prometheus_scrape(self, jobs: List):
         """Update the Prometheus receiver config."""
         # Create the scrape_configs key path if it does not exist
-        self._config["receivers"].setdefault("prometheus", {}).setdefault("config", {}).setdefault(
-            "scrape_configs", []
-        )
-        self._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(scrape_job)
+        for scrape_job in jobs:
+            self._config["receivers"].setdefault("prometheus", {}).setdefault("config", {}).setdefault(
+                "scrape_configs", []
+            )
+            self._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(scrape_job)
         return self

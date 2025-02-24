@@ -28,6 +28,16 @@ logger = logging.getLogger(__name__)
 RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
 
 
+def _aggregate_alerts(self, alerts: Dict, rule_path_map: RulesMapping):
+    if os.path.exists(rule_path_map.dest):
+        shutil.rmtree(rule_path_map.dest)
+    shutil.copytree(rule_path_map.src, rule_path_map.dest)
+    for topology_identifier, rule in alerts.items():
+        rule_file = Path(rule_path_map.dest) / f"juju_{topology_identifier}.rules"
+        rule_file.write_text(yaml.safe_dump(rule))
+        logger.debug(f"updated alert rules file {rule_file.as_posix()}")
+
+
 class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
@@ -59,8 +69,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """Recreate the world state for the charm."""
         container = self.unit.get_container(self._container_name)
 
-        self._configure_prometheus_remote_write()
-        self._configure_prometheus_scrape()
+        self._add_remote_write()
+        self._add_self_scrape()
+        # Receive and update alert rules
+        _aggregate_alerts()
+        self.remote_write.reload_alerts()
+        # Receive scrape jobs and add them to the otel config
+        self.otel_config.add_prometheus_scrape()
 
         container.push(self._config_path, self.otel_config.yaml)
 
@@ -115,12 +130,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         }
         return checks
 
-    def _configure_prometheus_scrape(self):
-        """Configure alert rules and scrape jobs."""
-        # Add self-monitoring
-        # TODO Add a way to conditionally set if related to metrics-endpoint
-        #   if metrics-endpoint in [relation for relation in self._charm.model.relations[self._relation_name]]
-        #   What is our current best practice? Do we move this setup logic to libs?
+    def _add_self_scrape(self):
+        """Configure self-monitoring scrape jobs."""
         self.otel_config.add_receiver(
             "prometheus",
             {
@@ -128,7 +139,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     "scrape_configs": [
                         {
                             "job_name": JujuTopology.from_charm(self).identifier,
-                            "scrape_interval": "5s",
+                            "scrape_interval": "60s",
                             "static_configs": [
                                 {
                                     "targets": [f"0.0.0.0:{Ports.METRICS.value}"],
@@ -141,25 +152,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             },
             pipelines=["metrics"],
         )
-        # TODO Can this be moved to the lib? Can I add a method called write_rules?
-        #   self.remote_write.write_rules()
-        #   self.remote_write.reload_alerts()
-        # Then we could move it all to reconcile
 
-        # Receive and update alert rules
-        if os.path.exists(self.metrics_rules_paths.dest):
-            shutil.rmtree(self.metrics_rules_paths.dest)
-        shutil.copytree(self.metrics_rules_paths.src, self.metrics_rules_paths.dest)
-        for topology_identifier, rule in self.metrics_consumer.alerts.items():
-            rule_file = Path(self.metrics_rules_paths.dest) / f"juju_{topology_identifier}.rules"
-            rule_file.write_text(yaml.safe_dump(rule))
-            logger.debug(f"updated alert rules file {rule_file.as_posix()}")
-        self.remote_write.reload_alerts()
-        # Receive scrape jobs and add them to the otel config
-        for job in self.metrics_consumer.jobs():
-            self.otel_config.add_scrape_job(job)
-
-    def _configure_prometheus_remote_write(self):
+    def _add_remote_write(self):
         """Configure forwarding alert rules to prometheus/mimir via remote-write."""
         for idx, endpoint in enumerate(self.remote_write.endpoints):
             self.otel_config.add_exporter(
