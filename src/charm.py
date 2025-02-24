@@ -141,6 +141,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             },
             pipelines=["metrics"],
         )
+        # TODO Can this be moved to the lib? Can I add a method called write_rules?
+        #   self.remote_write.write_rules()
+        #   self.remote_write.reload_alerts()
+        # Then we could move it all to reconcile
+
         # Receive and update alert rules
         if os.path.exists(self.metrics_rules_paths.dest):
             shutil.rmtree(self.metrics_rules_paths.dest)
