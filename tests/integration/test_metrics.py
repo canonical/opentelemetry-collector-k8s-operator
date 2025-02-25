@@ -3,7 +3,6 @@
 # See LICENSE file for licensing details.
 """Test that otel-collector can integrate with Prometheus."""
 
-import sh
 import yaml
 import json
 from typing import Dict
