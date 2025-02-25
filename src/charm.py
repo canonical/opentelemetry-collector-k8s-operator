@@ -4,7 +4,7 @@
 """A Juju charm for OpenTelemetry Collector on Kubernetes."""
 
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 from pathlib import Path
 import yaml
 import logging
@@ -54,30 +54,32 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self.topology = JujuTopology.from_charm(self)
         self.otel_config = Config.default_config()
 
-        # Metrics setup
-        charm_root = self.charm_dir.absolute()
-        self.metrics_consumer = MetricsEndpointConsumer(self)
-        self.metrics_rules_paths = RulesMapping(
-            src=charm_root.joinpath(*self._rules_source_path.split("/")),
-            dest=charm_root.joinpath(*self._rules_destination_path.split("/")),
-        )
-        self.remote_write = PrometheusRemoteWriteConsumer(
-            self, alert_rules_path=self.metrics_rules_paths.dest
-        )
-
         self._reconcile()
 
     def _reconcile(self):
         """Recreate the world state for the charm."""
         container = self.unit.get_container(self._container_name)
+        charm_root = self.charm_dir.absolute()
 
-        self._add_remote_write()
+        # Metrics setup
+        metrics_rules_paths = RulesMapping(
+            src=charm_root.joinpath(*self._rules_source_path.split("/")),
+            dest=charm_root.joinpath(*self._rules_destination_path.split("/")),
+        )
+        # Forward alert rules and scrape jobs to Prometheus
+        remote_write = PrometheusRemoteWriteConsumer(
+            self, alert_rules_path=metrics_rules_paths.dest
+        )
+        remote_write.reload_alerts()
+        # Update the otel config
+        self._add_remote_write(remote_write.endpoints)
+
+        # Receive alert rules and scrape jobs
+        metrics_consumer = MetricsEndpointConsumer(self)
+        _aggregate_alerts(metrics_consumer.alerts, metrics_rules_paths)
+        # Update the otel config
         self._add_self_scrape()
-        # Receive and update alert rules
-        _aggregate_alerts(self.metrics_consumer.alerts, self.metrics_rules_paths)
-        self.remote_write.reload_alerts()
-        # Receive scrape jobs and add them to the otel config
-        self.otel_config.add_prometheus_scrape(self.metrics_consumer.jobs())
+        self.otel_config.add_prometheus_scrape(metrics_consumer.jobs())
 
         container.push(self._config_path, self.otel_config.yaml)
 
@@ -155,9 +157,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             pipelines=["metrics"],
         )
 
-    def _add_remote_write(self):
+    def _add_remote_write(self, endpoints: List[Dict[str, str]]):
         """Configure forwarding alert rules to prometheus/mimir via remote-write."""
-        for idx, endpoint in enumerate(self.remote_write.endpoints):
+        for idx, endpoint in enumerate(endpoints):
             self.otel_config.add_exporter(
                 f"prometheusremotewrite/{idx}",
                 {
