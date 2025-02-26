@@ -1,10 +1,12 @@
 """Helper module to build the configuration for OpenTelemetry Collector."""
 
 import yaml
-from enum import Enum
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 import hashlib
+import logging
 
+logger = logging.getLogger(__name__)
 
 def sha256(hashable) -> str:
     """Use instead of the builtin hash() for repeatable values."""
@@ -13,16 +15,17 @@ def sha256(hashable) -> str:
     return hashlib.sha256(hashable).hexdigest()
 
 
-class Ports(Enum):
-    """Helper enum for OpenTelemetry Collector ports."""
-
-    OTLP_GRPC = 4317
-    METRICS = 8888
-    HEALTH = 13133
+PORTS = SimpleNamespace(
+    OTLP_GRPC=4317,
+    METRICS=8888,
+    HEALTH=13133,
+)
 
 
 class Config:
     """Configuration manager for OpenTelemetry Collector."""
+
+    used_ports = set()
 
     def __init__(self):
         self._config = {
@@ -55,15 +58,34 @@ class Config:
             cls()
             .add_receiver(
                 "otlp",
-                {"protocols": {"grpc": {"endpoint": f"0.0.0.0:{Ports.OTLP_GRPC.value}"}}},
+                {"protocols": {"grpc": {"endpoint": f"0.0.0.0:{cls.assign_port(PORTS.OTLP_GRPC)}"}}},
                 pipelines=["metrics"],
             )
             .add_exporter(
-                "otlp", {"endpoint": f"otelcol:{Ports.OTLP_GRPC.value}"}, pipelines=["metrics"]
+                "otlp", {"endpoint": f"otelcol:{cls.assign_port(PORTS.OTLP_GRPC)}"}, pipelines=["metrics"]
             )
-            .add_extension("health_check", {"endpoint": f"0.0.0.0:{Ports.HEALTH.value}"})
+            .add_extension("health_check", {"endpoint": f"0.0.0.0:{cls.assign_port(PORTS.HEALTH)}"})
             .add_telemetry("metrics", "level", "normal")
         )
+
+    @classmethod
+    def active_ports(cls) -> List[int]:
+        """Return the ports that are used in the Collector config."""
+        return list(cls.used_ports)
+
+    @classmethod
+    def clear_ports(cls):
+        """Reset the ports that are used in the Collector config."""
+        cls.used_ports = set()
+
+    @classmethod
+    def assign_port(cls, port: int) -> int:
+        """Track assigned ports."""
+        if port not in cls.used_ports:
+            cls.used_ports.add(port)
+        else:
+            logger.warn(f"Port {port} is already in use.")
+        return port
 
     def add_receiver(
         self, name: str, receiver_config: Dict[str, Any], pipelines: Optional[List[str]] = None
@@ -162,9 +184,7 @@ class Config:
         self._config["extensions"][name] = extension_config
         return self
 
-    def add_telemetry(
-        self, category: str, option: str, telem_config: Any
-    ) -> "Config":
+    def add_telemetry(self, category: str, option: str, telem_config: Any) -> "Config":
         """Add internal telemetry to the config.
 
         Telemetry is enabled by adding it to the appropriate service section.
@@ -198,11 +218,6 @@ class Config:
                 [],
             ):
                 self._config["service"]["pipelines"][pipeline][category].append(name)
-
-    @property
-    def ports(self) -> List[int]:
-        """Return the ports that are used in the Collector config."""
-        return [port.value for port in Ports]
 
     def add_prometheus_scrape(self, jobs: List):
         """Update the Prometheus receiver config with scrape jobs."""

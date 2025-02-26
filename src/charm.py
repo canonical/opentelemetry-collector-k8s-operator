@@ -9,10 +9,10 @@ from pathlib import Path
 import yaml
 import logging
 
-from config import Config, Ports
+from config import Config, PORTS
 
 from ops import CharmBase, main
-from ops.model import ActiveStatus
+from ops.model import ActiveStatus, MaintenanceStatus
 from ops.pebble import Layer
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
@@ -28,11 +28,11 @@ logger = logging.getLogger(__name__)
 RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
 
 
-def _aggregate_alerts(alerts: Dict, rule_path_map: RulesMapping):
+def _aggregate_alerts(rules: Dict, rule_path_map: RulesMapping):
     if os.path.exists(rule_path_map.dest):
         shutil.rmtree(rule_path_map.dest)
     shutil.copytree(rule_path_map.src, rule_path_map.dest)
-    for topology_identifier, rule in alerts.items():
+    for topology_identifier, rule in rules.items():
         rule_file = Path(rule_path_map.dest) / f"juju_{topology_identifier}.rules"
         rule_file.write_text(yaml.safe_dump(rule))
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
@@ -49,6 +49,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def __init__(self, *args):
         super().__init__(*args)
         if not self.unit.get_container(self._container_name).can_connect():
+            self.unit.status = MaintenanceStatus("Waiting for prometheus to start")
             return
 
         self.topology = JujuTopology.from_charm(self)
@@ -61,11 +62,20 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container = self.unit.get_container(self._container_name)
         charm_root = self.charm_dir.absolute()
 
+        self.otel_config.clear_ports()  # This must be run before any otelcol config is built
+
         # Metrics setup
         metrics_rules_paths = RulesMapping(
             src=charm_root.joinpath(*self._rules_source_path.split("/")),
             dest=charm_root.joinpath(*self._rules_destination_path.split("/")),
         )
+        # Receive alert rules and scrape jobs
+        metrics_consumer = MetricsEndpointConsumer(self)
+        _aggregate_alerts(metrics_consumer.alerts, metrics_rules_paths)
+        # Update the otel config
+        self._add_self_scrape()
+        self.otel_config.add_prometheus_scrape(metrics_consumer.jobs())
+
         # Forward alert rules and scrape jobs to Prometheus
         remote_write = PrometheusRemoteWriteConsumer(
             self, alert_rules_path=metrics_rules_paths.dest
@@ -74,19 +84,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Update the otel config
         self._add_remote_write(remote_write.endpoints)
 
-        # Receive alert rules and scrape jobs
-        metrics_consumer = MetricsEndpointConsumer(self)
-        _aggregate_alerts(metrics_consumer.alerts, metrics_rules_paths)
-        # Update the otel config
-        self._add_self_scrape()
-        self.otel_config.add_prometheus_scrape(metrics_consumer.jobs())
-
         container.push(self._config_path, self.otel_config.yaml)
 
         container.add_layer(self._container_name, self._pebble_layer, combine=True)
         container.replan()
 
-        self.unit.set_ports(*self.otel_config.ports)
+        self.unit.set_ports(*self.otel_config.active_ports())
         self.unit.status = ActiveStatus()
 
     @property
@@ -124,7 +127,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "override": "replace",
                 "level": "alive",
                 "period": "30s",
-                "http": {"url": f"http://localhost:{Ports.HEALTH.value}/health"},  # TODO: TLS
+                "http": {
+                    "url": f"http://localhost:{self.otel_config.assign_port(PORTS.HEALTH)}/health"
+                },  # TODO: TLS
             },
             "valid-config": {
                 "override": "replace",
@@ -146,7 +151,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                             "scrape_interval": "60s",
                             "static_configs": [
                                 {
-                                    "targets": [f"0.0.0.0:{Ports.METRICS.value}"],
+                                    "targets": [
+                                        f"0.0.0.0:{self.otel_config.assign_port(PORTS.METRICS)}"
+                                    ],
                                     "labels": self.topology.alert_expression_dict,
                                 }
                             ],

@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
-"""Basic integration test for the charm."""
+"""Feature: Healthy deployment.
+
+Scenario: Standalone deployment
+    When otelcol is deployed standalone
+    Then all pebble checks pass
+"""
 
 import sh
 import yaml

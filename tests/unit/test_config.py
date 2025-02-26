@@ -1,7 +1,13 @@
+#!/usr/bin/env python3
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
-#
-# Learn more about testing at: https://juju.is/docs/sdk/testing
+"""Feature: Opentelemetry-collector config builder.
+
+Scenario: Making config changes
+    When the otelcol config is first instantiated
+    AND it is empty, i.e. without the default config
+    Then config components are added to the config accordingly
+"""
 
 import pytest
 

@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
-"""Test that otel-collector can integrate with Prometheus."""
+"""Feature: Scraped metrics are remote-written.
+
+Scenario: scrape-to-remote-write forwarding
+    When otelcol is integrated with avalanche and prometheus over scrape and remote write respectively
+    Then avalanche metrics are forwarded to prometheus with topology
+"""
 
 import yaml
 import json
