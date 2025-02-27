@@ -15,36 +15,7 @@ def sha256(hashable) -> str:
     return hashlib.sha256(hashable).hexdigest()
 
 
-
-class PortNamespace(SimpleNamespace):
-    """Only use this class for ports used in the otelcol config file!"""
-    used_ports = set()
-
-    def __getattribute__(self, name):
-        """Track configured ports."""
-        if name in object.__getattribute__(self, '__dict__'):
-            port_value = self.get_value(name)
-            self.used_ports.add(port_value)
-        return super().__getattribute__(name)
-
-    def get_value(self, name: str) -> int:
-        """Return port value by attribute name.
-
-        PortNamespace.get_value(name) does not add the port to "used_ports" unlike PortNamespace.name
-        """
-        return object.__getattribute__(self, '__dict__')[name]
-
-    def active_ports(self) -> List[int]:
-        """Return the ports that are used."""
-        return list(self.used_ports)
-
-    @classmethod
-    def clear_ports(cls):
-        """Reset the used ports."""
-        cls.used_ports = set()
-
-
-PORTS = PortNamespace(
+PORTS = SimpleNamespace(
     OTLP_GRPC=4317,
     METRICS=8888,
     HEALTH=13133,
@@ -77,6 +48,11 @@ class Config:
     def hash(self):
         """Return the config as a SHA256 hash."""
         return sha256(yaml.safe_dump(self.yaml))
+
+    @property
+    def ports(self) -> List[int]:
+        """Return the ports that are used in the Collector config."""
+        return list(vars(PORTS).values())
 
     @classmethod
     def default_config(cls) -> "Config":

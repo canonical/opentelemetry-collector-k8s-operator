@@ -49,7 +49,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def __init__(self, *args):
         super().__init__(*args)
         if not self.unit.get_container(self._container_name).can_connect():
-            self.unit.status = MaintenanceStatus("Waiting for prometheus to start")
+            self.unit.status = MaintenanceStatus("Waiting for otelcol to start")
             return
 
         self.topology = JujuTopology.from_charm(self)
@@ -61,8 +61,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """Recreate the world state for the charm."""
         container = self.unit.get_container(self._container_name)
         charm_root = self.charm_dir.absolute()
-
-        PORTS.clear_ports()  # This must be run before any otelcol config is built
 
         # Metrics setup
         metrics_rules_paths = RulesMapping(
@@ -89,7 +87,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container.add_layer(self._container_name, self._pebble_layer, combine=True)
         container.replan()
 
-        self.unit.set_ports(*PORTS.active_ports())
+        self.unit.set_ports(
+            *self.otel_config.ports
+        )  # TODO Conditionally open ports based on the otelcol config file rather than opening all ports
         self.unit.status = ActiveStatus()
 
     @property
@@ -127,9 +127,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "override": "replace",
                 "level": "alive",
                 "period": "30s",
-                "http": {
-                    "url": f"http://localhost:{PORTS.HEALTH}/health"
-                },  # TODO: TLS
+                "http": {"url": f"http://localhost:{PORTS.HEALTH}/health"},  # TODO: TLS
             },
             "valid-config": {
                 "override": "replace",
@@ -151,9 +149,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                             "scrape_interval": "60s",
                             "static_configs": [
                                 {
-                                    "targets": [
-                                        f"0.0.0.0:{PORTS.METRICS}"
-                                    ],
+                                    "targets": [f"0.0.0.0:{PORTS.METRICS}"],
                                     "labels": self.topology.alert_expression_dict,
                                 }
                             ],
