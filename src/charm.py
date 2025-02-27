@@ -62,7 +62,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container = self.unit.get_container(self._container_name)
         charm_root = self.charm_dir.absolute()
 
-        self.otel_config.clear_ports()  # This must be run before any otelcol config is built
+        PORTS.clear_ports()  # This must be run before any otelcol config is built
 
         # Metrics setup
         metrics_rules_paths = RulesMapping(
@@ -89,7 +89,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container.add_layer(self._container_name, self._pebble_layer, combine=True)
         container.replan()
 
-        self.unit.set_ports(*self.otel_config.active_ports())
+        self.unit.set_ports(*PORTS.active_ports())
         self.unit.status = ActiveStatus()
 
     @property
@@ -128,7 +128,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "level": "alive",
                 "period": "30s",
                 "http": {
-                    "url": f"http://localhost:{self._set_port(PORTS.HEALTH)}/health"
+                    "url": f"http://localhost:{PORTS.HEALTH}/health"
                 },  # TODO: TLS
             },
             "valid-config": {
@@ -138,9 +138,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             },
         }
         return checks
-
-    def _set_port(self, port: int) -> int:
-        return self.otel_config.set_port(port)
 
     def _add_self_scrape(self):
         """Configure self-monitoring scrape jobs."""
@@ -155,7 +152,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                             "static_configs": [
                                 {
                                     "targets": [
-                                        f"0.0.0.0:{self._set_port(PORTS.METRICS)}"
+                                        f"0.0.0.0:{PORTS.METRICS}"
                                     ],
                                     "labels": self.topology.alert_expression_dict,
                                 }

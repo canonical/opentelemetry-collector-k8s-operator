@@ -15,7 +15,36 @@ def sha256(hashable) -> str:
     return hashlib.sha256(hashable).hexdigest()
 
 
-PORTS = SimpleNamespace(
+
+class PortNamespace(SimpleNamespace):
+    """Only use this class for ports used in the otelcol config file!"""
+    used_ports = set()
+
+    def __getattribute__(self, name):
+        """Track configured ports."""
+        if name in object.__getattribute__(self, '__dict__'):
+            port_value = self.get_value(name)
+            self.used_ports.add(port_value)
+        return super().__getattribute__(name)
+
+    def get_value(self, name: str) -> int:
+        """Return port value by attribute name.
+
+        PortNamespace.get_value(name) does not add the port to "used_ports" unlike PortNamespace.name
+        """
+        return object.__getattribute__(self, '__dict__')[name]
+
+    def active_ports(self) -> List[int]:
+        """Return the ports that are used."""
+        return list(self.used_ports)
+
+    @classmethod
+    def clear_ports(cls):
+        """Reset the used ports."""
+        cls.used_ports = set()
+
+
+PORTS = PortNamespace(
     OTLP_GRPC=4317,
     METRICS=8888,
     HEALTH=13133,
@@ -24,8 +53,6 @@ PORTS = SimpleNamespace(
 
 class Config:
     """Configuration manager for OpenTelemetry Collector."""
-
-    used_ports = set()
 
     def __init__(self):
         self._config = {
@@ -58,34 +85,15 @@ class Config:
             cls()
             .add_receiver(
                 "otlp",
-                {"protocols": {"grpc": {"endpoint": f"0.0.0.0:{cls.set_port(PORTS.OTLP_GRPC)}"}}},
+                {"protocols": {"grpc": {"endpoint": f"0.0.0.0:{PORTS.OTLP_GRPC}"}}},
                 pipelines=["metrics"],
             )
             .add_exporter(
-                "otlp", {"endpoint": f"otelcol:{cls.set_port(PORTS.OTLP_GRPC)}"}, pipelines=["metrics"]
+                "otlp", {"endpoint": f"otelcol:{PORTS.OTLP_GRPC}"}, pipelines=["metrics"]
             )
-            .add_extension("health_check", {"endpoint": f"0.0.0.0:{cls.set_port(PORTS.HEALTH)}"})
+            .add_extension("health_check", {"endpoint": f"0.0.0.0:{PORTS.HEALTH}"})
             .add_telemetry("metrics", "level", "normal")
         )
-
-    @classmethod
-    def active_ports(cls) -> List[int]:
-        """Return the ports that are used in the Collector config."""
-        return list(cls.used_ports)
-
-    @classmethod
-    def clear_ports(cls):
-        """Reset the ports that are used in the Collector config."""
-        cls.used_ports = set()
-
-    @classmethod
-    def set_port(cls, port: int) -> int:
-        """Track configured ports."""
-        if port not in cls.used_ports:
-            cls.used_ports.add(port)
-        else:
-            logger.warn(f"Port {port} is already in use.")
-        return port
 
     def add_receiver(
         self, name: str, receiver_config: Dict[str, Any], pipelines: Optional[List[str]] = None
