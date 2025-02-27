@@ -11,11 +11,11 @@ Scenario: Add/remove a port to/from the config
 # from src.config import Config
 
 
-def test_assign_port():
+def test_set_port():
     pass
     # GIVEN a default Config
     # cfg = Config()
-    # WHEN a port is assigned in the config
+    # WHEN a port is set in the config
     # THEN the port is tracked in active_ports
 
 def test_clear_ports():

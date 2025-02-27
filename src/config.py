@@ -58,13 +58,13 @@ class Config:
             cls()
             .add_receiver(
                 "otlp",
-                {"protocols": {"grpc": {"endpoint": f"0.0.0.0:{cls.assign_port(PORTS.OTLP_GRPC)}"}}},
+                {"protocols": {"grpc": {"endpoint": f"0.0.0.0:{cls.set_port(PORTS.OTLP_GRPC)}"}}},
                 pipelines=["metrics"],
             )
             .add_exporter(
-                "otlp", {"endpoint": f"otelcol:{cls.assign_port(PORTS.OTLP_GRPC)}"}, pipelines=["metrics"]
+                "otlp", {"endpoint": f"otelcol:{cls.set_port(PORTS.OTLP_GRPC)}"}, pipelines=["metrics"]
             )
-            .add_extension("health_check", {"endpoint": f"0.0.0.0:{cls.assign_port(PORTS.HEALTH)}"})
+            .add_extension("health_check", {"endpoint": f"0.0.0.0:{cls.set_port(PORTS.HEALTH)}"})
             .add_telemetry("metrics", "level", "normal")
         )
 
@@ -79,8 +79,8 @@ class Config:
         cls.used_ports = set()
 
     @classmethod
-    def assign_port(cls, port: int) -> int:
-        """Track assigned ports."""
+    def set_port(cls, port: int) -> int:
+        """Track configured ports."""
         if port not in cls.used_ports:
             cls.used_ports.add(port)
         else:

@@ -128,7 +128,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "level": "alive",
                 "period": "30s",
                 "http": {
-                    "url": f"http://localhost:{self.otel_config.assign_port(PORTS.HEALTH)}/health"
+                    "url": f"http://localhost:{self._set_port(PORTS.HEALTH)}/health"
                 },  # TODO: TLS
             },
             "valid-config": {
@@ -138,6 +138,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             },
         }
         return checks
+
+    def _set_port(self, port: int) -> int:
+        return self.otel_config.set_port(port)
 
     def _add_self_scrape(self):
         """Configure self-monitoring scrape jobs."""
@@ -152,7 +155,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                             "static_configs": [
                                 {
                                     "targets": [
-                                        f"0.0.0.0:{self.otel_config.assign_port(PORTS.METRICS)}"
+                                        f"0.0.0.0:{self._set_port(PORTS.METRICS)}"
                                     ],
                                     "labels": self.topology.alert_expression_dict,
                                 }
