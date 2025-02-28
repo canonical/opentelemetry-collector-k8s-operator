@@ -1,0 +1,11 @@
+groups:
+  - name: Exporter
+    rules:
+      - alert: exporter-failed-metrics
+        expr: sum(rate(otelcol_exporter_send_failed_metric_points{}[1m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Some metric points failed to send by exporter
+          description: Destination may have a problem or payload is incorrect
