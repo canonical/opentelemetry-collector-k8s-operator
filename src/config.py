@@ -1,13 +1,12 @@
 """Helper module to build the configuration for OpenTelemetry Collector."""
 
 import yaml
-from enum import Enum
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 import hashlib
 import logging
 
 logger = logging.getLogger(__name__)
-
 
 def sha256(hashable) -> str:
     """Use instead of the builtin hash() for repeatable values."""
@@ -16,14 +15,12 @@ def sha256(hashable) -> str:
     return hashlib.sha256(hashable).hexdigest()
 
 
-class Ports(Enum):
-    """Helper enum for OpenTelemetry Collector ports."""
-
-    OTLP_GRPC = 4317
-    METRICS = 8888
-    HEALTH = 13133
-    LOKI_HTTP = 3500
-    LOKI_GRPC = 3600
+PORTS = SimpleNamespace(
+    OTLP_HTTP=4318,
+    METRICS=8888,
+    HEALTH=13133,
+    LOKI_HTTP=3500,
+)
 
 
 class Config:
@@ -53,6 +50,11 @@ class Config:
         """Return the config as a SHA256 hash."""
         return sha256(yaml.safe_dump(self.yaml))
 
+    @property
+    def ports(self) -> List[int]:
+        """Return the ports that are used in the Collector config."""
+        return list(vars(PORTS).values())
+
     @classmethod
     def default_config(cls) -> "Config":
         """Return the default config for OpenTelemetry Collector."""
@@ -60,13 +62,13 @@ class Config:
             cls()
             .add_receiver(
                 "otlp",
-                {"protocols": {"grpc": {"endpoint": f"0.0.0.0:{Ports.OTLP_GRPC.value}"}}},
-                pipelines=["metrics"],
+                {"protocols": {"http": {"endpoint": f"0.0.0.0:{PORTS.OTLP_HTTP}"}}},
+                pipelines=["metrics", "logs"],
             )
             .add_exporter(
-                "otlp", {"endpoint": f"otelcol:{Ports.OTLP_GRPC.value}"}, pipelines=["metrics"]
+                "otlp", {"endpoint": f"otelcol:{PORTS.OTLP_HTTP}"}, pipelines=["metrics", "logs"]  # TODO does we need to replace otelcol with a hostname or IP?
             )
-            .add_extension("health_check", {"endpoint": f"0.0.0.0:{Ports.HEALTH.value}"})
+            .add_extension("health_check", {"endpoint": f"0.0.0.0:{PORTS.HEALTH}"})
             .add_telemetry("metrics", "level", "normal")
         )
 
@@ -167,9 +169,7 @@ class Config:
         self._config["extensions"][name] = extension_config
         return self
 
-    def add_telemetry(
-        self, category: str, option: str, telem_config: Any
-    ) -> "Config":
+    def add_telemetry(self, category: str, option: str, telem_config: Any) -> "Config":
         """Add internal telemetry to the config.
 
         Telemetry is enabled by adding it to the appropriate service section.
@@ -204,17 +204,12 @@ class Config:
             ):
                 self._config["service"]["pipelines"][pipeline][category].append(name)
 
-    @property
-    def ports(self) -> List[int]:
-        """Return the ports that are used in the Collector config."""
-        return [port.value for port in Ports]
-
     def add_prometheus_scrape(self, jobs: List):
-        """Update the Prometheus receiver config."""
+        """Update the Prometheus receiver config with scrape jobs."""
         # Create the scrape_configs key path if it does not exist
+        self._config["receivers"].setdefault("prometheus", {}).setdefault("config", {}).setdefault(
+            "scrape_configs", []
+        )
         for scrape_job in jobs:
-            self._config["receivers"].setdefault("prometheus", {}).setdefault("config", {}).setdefault(
-                "scrape_configs", []
-            )
             self._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(scrape_job)
         return self

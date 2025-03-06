@@ -62,8 +62,9 @@ actions:
       but also relation data set by the charm.
 
 provides:
-  logging:
+  logging-provider:
     interface: loki_push_api
+  # TODO Waiting for https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusremotewritereceiver
   # receive-remote-write:
   #   interface: prometheus_remote_write
 
@@ -74,3 +75,13 @@ requires:
   send-remote-write:
     interface: prometheus_remote_write
     description: To forward collected metrics to a prometheus backend.
+  logging-consumer:
+    interface: loki_push_api
+
+config:
+  options:
+    forward_alert_rules:
+      description: >
+        Toggle forwarding of alert rules.
+      type: boolean
+      default: true
