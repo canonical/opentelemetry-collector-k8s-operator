@@ -30,6 +30,21 @@ logger = logging.getLogger(__name__)
 RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
 
 
+def _aggregate_alerts(rules: Dict, rule_path_map: RulesMapping):
+    if os.path.exists(rule_path_map.dest):
+        shutil.rmtree(rule_path_map.dest)
+    shutil.copytree(rule_path_map.src, rule_path_map.dest)
+    for topology_identifier, rule in rules.items():
+        rule_file = Path(rule_path_map.dest) / f"juju_{topology_identifier}.rules"
+        rule_file.write_text(yaml.safe_dump(rule))
+        logger.debug(f"updated alert rules file {rule_file.as_posix()}")
+
+from config import PORTS, Config
+
+logger = logging.getLogger(__name__)
+RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
+
+
 def _aggregate_alerts(rules: Dict, rule_path_map: RulesMapping, forward_alert_rules: bool):
     rules = rules if forward_alert_rules else {}
     if os.path.exists(rule_path_map.dest):

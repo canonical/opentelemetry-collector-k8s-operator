@@ -16,10 +16,10 @@ def sha256(hashable) -> str:
 
 
 PORTS = SimpleNamespace(
+    LOKI_HTTP=3500,
     OTLP_HTTP=4318,
     METRICS=8888,
     HEALTH=13133,
-    LOKI_HTTP=3500,
 )
 
 
