@@ -30,21 +30,6 @@ logger = logging.getLogger(__name__)
 RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
 
 
-def _aggregate_alerts(rules: Dict, rule_path_map: RulesMapping):
-    if os.path.exists(rule_path_map.dest):
-        shutil.rmtree(rule_path_map.dest)
-    shutil.copytree(rule_path_map.src, rule_path_map.dest)
-    for topology_identifier, rule in rules.items():
-        rule_file = Path(rule_path_map.dest) / f"juju_{topology_identifier}.rules"
-        rule_file.write_text(yaml.safe_dump(rule))
-        logger.debug(f"updated alert rules file {rule_file.as_posix()}")
-
-from config import PORTS, Config
-
-logger = logging.getLogger(__name__)
-RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
-
-
 def _aggregate_alerts(rules: Dict, rule_path_map: RulesMapping, forward_alert_rules: bool):
     rules = rules if forward_alert_rules else {}
     if os.path.exists(rule_path_map.dest):
@@ -108,12 +93,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             src=charm_root.joinpath(*self._loki_rules_src_path.split("/")),
             dest=charm_root.joinpath(*self._loki_rules_dest_path.split("/")),
         )
-        loki_provider = LokiPushApiProvider(
+        self.loki_provider = LokiPushApiProvider(
             self,
             # address=self.internal_url,  # TODO Do we need to overwrite localhost
             relation_name="logging-provider",
             port=PORTS.LOKI_HTTP,
-            path="",
         )
         loki_consumer = LokiPushApiConsumer(
             self,
@@ -121,8 +105,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             alert_rules_path=loki_rules_paths.dest,
             forward_alert_rules=forward_alert_rules,
         )
-        _aggregate_alerts(loki_provider.alerts, loki_rules_paths, forward_alert_rules)
-        loki_consumer._reinitialize_alert_rules()
+        _aggregate_alerts(self.loki_provider.alerts, loki_rules_paths, forward_alert_rules)
+        loki_consumer.reload_alerts()
         self._add_log_ingestion()
         self._add_log_forwarding(loki_consumer.loki_endpoints)
 
@@ -195,7 +179,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "config": {
                     "scrape_configs": [
                         {
-                            "job_name": self.topology.identifier,
+                            "job_name": self.topology.identifier,  # This job name is overwritten with "otelcol" when remote-writing when remote-writing
                             "scrape_interval": "60s",
                             "static_configs": [
                                 {
@@ -242,11 +226,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     def _add_log_forwarding(self, endpoints: List[dict]):
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/lokiexporter
-        # https://grafana.com/docs/loki/latest/reference/loki-http-api/#ingest-logs-using-otlp
         for idx, endpoint in enumerate(endpoints):
             self.otel_config.add_exporter(
                 f"loki/{idx}",
-                {"endpoint": endpoint},
+                {"endpoint": endpoint["url"]},
                 pipelines=["logs"],
             )
 

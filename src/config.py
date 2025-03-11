@@ -70,6 +70,7 @@ class Config:
             )
             .add_extension("health_check", {"endpoint": f"0.0.0.0:{PORTS.HEALTH}"})
             .add_telemetry("metrics", "level", "normal")
+            .add_telemetry("logs", "level", "INFO")
         )
 
     def add_receiver(
