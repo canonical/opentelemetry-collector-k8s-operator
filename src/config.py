@@ -59,8 +59,6 @@ class Config:
     @classmethod
     def default_config(cls) -> "Config":
         """Return the default config for OpenTelemetry Collector."""
-        # TODO Only start the workload otelcol pebble service if we have an OUTGOING relation in place (required to set receiver exporter pair)
-        #   _on_relation_departed, _on_relation_joined
         return (
             cls()
             .add_receiver(
@@ -68,18 +66,12 @@ class Config:
                 {"protocols": {"http": {"endpoint": f"0.0.0.0:{PORTS.OTLP_HTTP}"}}},
                 pipelines=["metrics", "logs"],
             )
-            # TODO Disable the receivers if no incoming relation
-            # TODO Chat with team
-            #   Use debug exporter
-            #   Start the otelcol service when we have an outgoing relation?
             .add_exporter(
-                "debug",
-                {"verbosity": "detailed"},
-                pipelines=["metrics", "logs"],
+                "otlp", {"endpoint": f"otelcol:{PORTS.OTLP_HTTP}"}, pipelines=["metrics", "logs"]
             )
             .add_extension("health_check", {"endpoint": f"0.0.0.0:{PORTS.HEALTH}"})
             .add_telemetry("metrics", "level", "normal")
-            .add_telemetry("logs", "level", "INFO")
+            .add_telemetry("logs", "level", "DEBUG")
         )
 
     def add_receiver(

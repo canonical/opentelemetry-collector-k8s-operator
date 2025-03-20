@@ -51,6 +51,7 @@ async def charm(ops_test: OpsTest) -> str:
     return str(charm)
 
 
+@pytest.fixture(scope="module")
 def charm_resources(metadata_file="charmcraft.yaml") -> Dict[str, str]:
     with open(metadata_file, "r") as file:
         metadata = yaml.safe_load(file)

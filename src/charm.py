@@ -95,7 +95,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         self.loki_provider = LokiPushApiProvider(
             self,
-            # address=self.internal_url,  # TODO Do we need to overwrite localhost
             relation_name="logging-provider",
             port=PORTS.LOKI_HTTP,
         )
@@ -238,7 +237,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         for idx, endpoint in enumerate(endpoints):
             self.otel_config.add_exporter(
                 f"loki/exporter-{idx}",
-                {"endpoint": endpoint["url"], "default_labels_enabled": {"exporter": False}},
+                {"endpoint": endpoint["url"], "default_labels_enabled": {"exporter": False, "job": True}},
                 pipelines=["logs"],
             )
         self.otel_config.add_processor(

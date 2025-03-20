@@ -64,6 +64,8 @@ actions:
 provides:
   logging-provider:
     interface: loki_push_api
+    description: To receive logs by allowing Promtail instances to specify the Otelcol as their Loki address.
+
   # TODO Waiting for https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusremotewritereceiver
   # receive-remote-write:
   #   interface: prometheus_remote_write
@@ -74,9 +76,10 @@ requires:
     description: To scrape other charms' metrics endpoints.
   send-remote-write:
     interface: prometheus_remote_write
-    description: To forward collected metrics to a prometheus backend.
+    description: To forward collected metrics to a Prometheus backend.
   logging-consumer:
     interface: loki_push_api
+    description: To forward collected logs to a Loki backend.
 
 config:
   options:

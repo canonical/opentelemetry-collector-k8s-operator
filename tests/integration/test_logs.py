@@ -18,18 +18,22 @@ async def test_logs_pipeline(ops_test: OpsTest, charm: str, charm_resources: Dic
     """Send logs from Flog to Loki with Otel-collector."""
     assert ops_test.model
     # GIVEN a model with flog, otel-collector, and loki charms
-    zinc_app_name = "flog-k8s"
+    flog_app_name = "flog-k8s"
     otelcol_app_name = "otel-collector-k8s"
     loki_app_name = "loki-k8s"
-    await ops_test.model.deploy(zinc_app_name)
+    await ops_test.model.deploy(flog_app_name)
     await ops_test.model.deploy(charm, otelcol_app_name, resources=charm_resources)
     await ops_test.model.deploy(loki_app_name, trust=True)
-    # WHEN they are related to logging-consumer and logging-provider
-    # TODO What about when we have logging with LogForwarder in Zinc?
+    # WHEN they are related to over the loki_push_api interface
     await ops_test.model.integrate(
-        f"{zinc_app_name}:log-proxy", f"{otelcol_app_name}:logging-provider"
+        f"{flog_app_name}:log-proxy", f"{otelcol_app_name}:logging-provider"
     )
     await ops_test.model.integrate(
         f"{otelcol_app_name}:logging-consumer", f"{loki_app_name}:logging"
     )
     await ops_test.model.wait_for_idle(status="active")
+    # THEN logs arrive in loki
+    juju_cmd = ["ssh", "--container", "loki", f"{loki_app_name}/0", "/usr/bin/logcli labels"]
+    rc, labels, _ = await ops_test.juju(*juju_cmd)
+    assert rc == 0
+    assert "juju_application" in labels
