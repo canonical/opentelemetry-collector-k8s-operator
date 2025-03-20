@@ -173,6 +173,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     def _add_self_scrape(self):
         """Configure self-monitoring scrape jobs."""
+        # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusreceiver
         self.otel_config.add_receiver(
             "prometheus",
             {
@@ -196,6 +197,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     def _add_remote_write(self, endpoints: List[Dict[str, str]]):
         """Configure forwarding alert rules to prometheus/mimir via remote-write."""
+        # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/prometheusremotewriteexporter
         for idx, endpoint in enumerate(endpoints):
             self.otel_config.add_exporter(
                 f"prometheusremotewrite/{idx}",
@@ -210,11 +212,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
 
     def _add_log_ingestion(self):
+        """Configure receiving logs, allowing Promtail instances to specify the Otelcol as their lokiAddress."""
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/lokireceiver
-        # The Loki receiver implements the Loki push api.
-        # It allows Promtail instances to specify the open telemetry collector as their lokiAddress.
         self.otel_config.add_receiver(
-            "loki",
+            "loki/receiver",
             {
                 "protocols": {
                     "http": {"endpoint": f"0.0.0.0:{PORTS.LOKI_HTTP}"},
@@ -225,13 +226,47 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
 
     def _add_log_forwarding(self, endpoints: List[dict]):
-        # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/lokiexporter
+        """Configure sending logs to Loki via the Loki push API endpoint.
+
+        The LogRecord format is controlled with the `loki.format` hint.
+
+        The Loki exporter converts OTLP resource and log attributes into Loki labels, which are indexed.
+        Configuring hints (e.g. `loki.attribute.labels`) specifies which attributes should be placed as labels.
+        The hints are themselves attributes and will be ignored when exporting to Loki.
+        """
+        # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.122.0/exporter/lokiexporter
         for idx, endpoint in enumerate(endpoints):
             self.otel_config.add_exporter(
-                f"loki/{idx}",
-                {"endpoint": endpoint["url"]},
+                f"loki/exporter-{idx}",
+                {"endpoint": endpoint["url"], "default_labels_enabled": {"exporter": False}},
                 pipelines=["logs"],
             )
+        self.otel_config.add_processor(
+            "resource",
+            {
+                "attributes": [
+                    {
+                        "action": "insert",
+                        "key": "loki.format",
+                        "value": "raw",  # logfmt, json, raw
+                    },
+                ]
+            },
+            pipelines=["logs"],
+        ).add_processor(
+            "attributes",
+            {
+                "actions": [
+                    {
+                        "action": "upsert",
+                        "key": "loki.attribute.labels",
+                        # These labels are set in `_scrape_configs` of the `v1.loki_push_api` lib
+                        "value": "container, job, filename, juju_application, juju_charm, juju_model, juju_model_uuid, juju_unit",
+                    },
+                ]
+            },
+            pipelines=["logs"],
+        )
 
 
 if __name__ == "__main__":

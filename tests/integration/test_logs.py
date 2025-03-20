@@ -4,8 +4,8 @@
 """Feature: Ingested logs are forwarded.
 
 Scenario: loki-to-loki formatted log forwarding
-    When otelcol is integrated with zinc and loki over logging-consumer and logging-provider respectively
-    Then zinc logs are forwarded to loki
+    When otelcol is integrated with flog and loki over logging-consumer and logging-provider respectively
+    Then flog logs are forwarded to loki
 """
 
 from typing import Dict
@@ -15,10 +15,10 @@ from pytest_operator.plugin import OpsTest
 
 
 async def test_logs_pipeline(ops_test: OpsTest, charm: str, charm_resources: Dict[str, str]):
-    """Send logs from Zinc to Loki with Otel-collector."""
+    """Send logs from Flog to Loki with Otel-collector."""
     assert ops_test.model
-    # GIVEN a model with zinc, otel-collector, and loki charms
-    zinc_app_name = "zinc-k8s"
+    # GIVEN a model with flog, otel-collector, and loki charms
+    zinc_app_name = "flog-k8s"
     otelcol_app_name = "otel-collector-k8s"
     loki_app_name = "loki-k8s"
     await ops_test.model.deploy(zinc_app_name)
