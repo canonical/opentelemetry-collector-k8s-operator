@@ -66,7 +66,7 @@ class Config:
             )
             .add_exporter(
                 "debug",
-                {"verbosity": "detailed"},
+                {"verbosity": "basic"},
                 pipelines=["metrics", "logs"],
             )
             .add_extension("health_check", {"endpoint": f"0.0.0.0:{PORTS.HEALTH}"})
