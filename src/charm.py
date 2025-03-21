@@ -95,12 +95,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         self.loki_provider = LokiPushApiProvider(
             self,
-            relation_name="logging-provider",
+            relation_name="receive-loki-logs",
             port=PORTS.LOKI_HTTP,
         )
         loki_consumer = LokiPushApiConsumer(
             self,
-            relation_name="logging-consumer",
+            relation_name="send-loki-logs",
             alert_rules_path=loki_rules_paths.dest,
             forward_alert_rules=forward_alert_rules,
         )

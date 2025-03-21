@@ -4,7 +4,7 @@
 """Feature: Ingested logs are forwarded.
 
 Scenario: loki-to-loki formatted log forwarding
-    When otelcol is integrated with flog and loki over logging-consumer and logging-provider respectively
+    When otelcol is integrated with flog and loki over send-loki-logs and receive-loki-logs respectively
     Then flog logs are forwarded to loki
 """
 
@@ -26,10 +26,10 @@ async def test_logs_pipeline(ops_test: OpsTest, charm: str, charm_resources: Dic
     await ops_test.model.deploy(loki_app_name, trust=True)
     # WHEN they are related to over the loki_push_api interface
     await ops_test.model.integrate(
-        f"{flog_app_name}:log-proxy", f"{otelcol_app_name}:logging-provider"
+        f"{flog_app_name}:log-proxy", f"{otelcol_app_name}:receive-loki-logs"
     )
     await ops_test.model.integrate(
-        f"{otelcol_app_name}:logging-consumer", f"{loki_app_name}:logging"
+        f"{otelcol_app_name}:send-loki-logs", f"{loki_app_name}:logging"
     )
     await ops_test.model.wait_for_idle(status="active")
     # THEN logs arrive in loki
