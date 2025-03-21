@@ -8,6 +8,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def sha256(hashable) -> str:
     """Use instead of the builtin hash() for repeatable values."""
     if isinstance(hashable, str):
@@ -16,7 +17,8 @@ def sha256(hashable) -> str:
 
 
 PORTS = SimpleNamespace(
-    OTLP_GRPC=4317,
+    LOKI_HTTP=3500,
+    OTLP_HTTP=4318,
     METRICS=8888,
     HEALTH=13133,
 )
@@ -61,14 +63,15 @@ class Config:
             cls()
             .add_receiver(
                 "otlp",
-                {"protocols": {"grpc": {"endpoint": f"0.0.0.0:{PORTS.OTLP_GRPC}"}}},
-                pipelines=["metrics"],
+                {"protocols": {"http": {"endpoint": f"0.0.0.0:{PORTS.OTLP_HTTP}"}}},
+                pipelines=["metrics", "logs"],
             )
             .add_exporter(
-                "otlp", {"endpoint": f"otelcol:{PORTS.OTLP_GRPC}"}, pipelines=["metrics"]
+                "otlp", {"endpoint": f"otelcol:{PORTS.OTLP_HTTP}"}, pipelines=["metrics", "logs"]
             )
             .add_extension("health_check", {"endpoint": f"0.0.0.0:{PORTS.HEALTH}"})
             .add_telemetry("metrics", "level", "normal")
+            .add_telemetry("logs", "level", "DEBUG")
         )
 
     def add_receiver(

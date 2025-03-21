@@ -8,7 +8,6 @@ Scenario: scrape-to-remote-write forwarding
     Then avalanche metrics are forwarded to prometheus with topology
 """
 
-import yaml
 import json
 from typing import Dict
 from pytest_operator.plugin import OpsTest
@@ -34,16 +33,7 @@ async def _retry_prom_jobs_api(endpoint: str):
     assert any("otel-collector-k8s" in item for item in job_names)
 
 
-def _charm_resources(metadata_file="charmcraft.yaml") -> Dict[str, str]:
-    with open(metadata_file, "r") as file:
-        metadata = yaml.safe_load(file)
-    resources = {}
-    for res, data in metadata["resources"].items():
-        resources[res] = data["upstream-source"]
-    return resources
-
-
-async def test_metrics_pipeline(ops_test: OpsTest, charm: str):
+async def test_metrics_pipeline(ops_test: OpsTest, charm: str, charm_resources: Dict[str, str]):
     """Send metrics from Avalanche to Prometheus with Otel-collector."""
     assert ops_test.model
     # GIVEN a model with avalanche, otel-collector, and prometheus charms
@@ -51,7 +41,7 @@ async def test_metrics_pipeline(ops_test: OpsTest, charm: str):
     otelcol_app_name = "otel-collector-k8s"
     prom_app_name = "prometheus-k8s"
     await ops_test.model.deploy(av_app_name)
-    await ops_test.model.deploy(charm, otelcol_app_name, resources=_charm_resources())
+    await ops_test.model.deploy(charm, otelcol_app_name, resources=charm_resources)
     await ops_test.model.deploy(prom_app_name, trust=True)
     # WHEN they are related to scrape and remote-write
     await ops_test.model.integrate(

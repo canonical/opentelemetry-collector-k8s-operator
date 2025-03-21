@@ -8,8 +8,10 @@ import logging
 import os
 from collections import defaultdict
 from datetime import datetime
+from typing import Dict
 
 import pytest
+import yaml
 from pytest_operator.plugin import OpsTest
 
 logger = logging.getLogger(__name__)
@@ -47,3 +49,13 @@ async def charm(ops_test: OpsTest) -> str:
     charm = await ops_test.build_charm(".")
     assert charm
     return str(charm)
+
+
+@pytest.fixture(scope="module")
+def charm_resources(metadata_file="charmcraft.yaml") -> Dict[str, str]:
+    with open(metadata_file, "r") as file:
+        metadata = yaml.safe_load(file)
+    resources = {}
+    for res, data in metadata["resources"].items():
+        resources[res] = data["upstream-source"]
+    return resources
