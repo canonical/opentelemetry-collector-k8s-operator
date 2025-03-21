@@ -6,7 +6,6 @@
 import logging
 import os
 import shutil
-import socket
 from collections import namedtuple
 from pathlib import Path
 from typing import Any, Dict, List, cast
