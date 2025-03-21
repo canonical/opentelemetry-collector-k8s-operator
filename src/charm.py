@@ -179,7 +179,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "config": {
                     "scrape_configs": [
                         {
-                            "job_name": self.topology.identifier,  # This job name is overwritten with "otelcol" when remote-writing when remote-writing
+                            "job_name": self.topology.identifier,  # This job name is overwritten with "otelcol" when remote-writing
                             "scrape_interval": "60s",
                             "static_configs": [
                                 {
