@@ -67,7 +67,9 @@ class Config:
                 pipelines=["metrics", "logs"],
             )
             .add_exporter(
-                "otlp", {"endpoint": f"otelcol:{PORTS.OTLP_HTTP}"}, pipelines=["metrics", "logs"]
+                "debug",
+                {"verbosity": "basic"},
+                pipelines=["metrics", "logs"],
             )
             .add_extension("health_check", {"endpoint": f"0.0.0.0:{PORTS.HEALTH}"})
             .add_telemetry("metrics", "level", "normal")
