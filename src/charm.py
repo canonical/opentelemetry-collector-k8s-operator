@@ -120,12 +120,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self.unit.status = ActiveStatus()
 
     @property
-    def internal_url(self):
-        """Fqdn plus appropriate scheme and server port."""
-        scheme = "http"
-        return f"{scheme}://{socket.getfqdn()}"
-
-    @property
     def _pebble_layer(self) -> Layer:
         """Construct the Pebble layer informataion."""
         layer = Layer(
