@@ -67,32 +67,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         charm_root = self.charm_dir.absolute()
         forward_alert_rules = cast(bool, self.config["forward_alert_rules"])
 
-        # Metrics setup
-        metrics_rules_paths = RulesMapping(
-            src=charm_root.joinpath(*self._metrics_rules_src_path.split("/")),
-            dest=charm_root.joinpath(*self._metrics_rules_dest_path.split("/")),
-        )
-        # Receive alert rules and scrape jobs
-        metrics_consumer = MetricsEndpointConsumer(self)
-        _aggregate_alerts(metrics_consumer.alerts, metrics_rules_paths, forward_alert_rules)
-        # Update the otel config
-        self._add_self_scrape()
-        self.otel_config.add_prometheus_scrape(metrics_consumer.jobs())
-
-        # Forward alert rules and scrape jobs to Prometheus
-        remote_write = PrometheusRemoteWriteConsumer(
-            self, alert_rules_path=metrics_rules_paths.dest
-        )
-        remote_write.reload_alerts()
-        # Update the otel config
-        self._add_remote_write(remote_write.endpoints)
-
         # Logs setup
         loki_rules_paths = RulesMapping(
             src=charm_root.joinpath(*self._loki_rules_src_path.split("/")),
             dest=charm_root.joinpath(*self._loki_rules_dest_path.split("/")),
         )
-        self.loki_provider = LokiPushApiProvider(
+        loki_provider = LokiPushApiProvider(
             self,
             relation_name="receive-loki-logs",
             port=PORTS.LOKI_HTTP,
@@ -103,16 +83,32 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             alert_rules_path=loki_rules_paths.dest,
             forward_alert_rules=forward_alert_rules,
         )
-        _aggregate_alerts(self.loki_provider.alerts, loki_rules_paths, forward_alert_rules)
+        _aggregate_alerts(loki_provider.alerts, loki_rules_paths, forward_alert_rules)
         loki_consumer.reload_alerts()
         self._add_log_ingestion()
         self._add_log_forwarding(loki_consumer.loki_endpoints)
 
-        container.push(self._config_path, self.otel_config.yaml)
+        # Metrics setup
+        metrics_rules_paths = RulesMapping(
+            src=charm_root.joinpath(*self._metrics_rules_src_path.split("/")),
+            dest=charm_root.joinpath(*self._metrics_rules_dest_path.split("/")),
+        )
+        # Receive alert rules and scrape jobs
+        metrics_consumer = MetricsEndpointConsumer(self)
+        _aggregate_alerts(metrics_consumer.alerts, metrics_rules_paths, forward_alert_rules)
+        self._add_self_scrape()
+        self.otel_config.add_prometheus_scrape(metrics_consumer.jobs(), self._incoming_metrics)
+        # Forward alert rules and scrape jobs to Prometheus
+        remote_write = PrometheusRemoteWriteConsumer(
+            self, alert_rules_path=metrics_rules_paths.dest
+        )
+        remote_write.reload_alerts()
+        self._add_remote_write(remote_write.endpoints)
 
+        # Deploy/update
+        container.push(self._config_path, self.otel_config.yaml)
         container.add_layer(self._container_name, self._pebble_layer, combine=True)
         container.replan()
-
         self.unit.set_ports(
             *self.otel_config.ports
         )  # TODO Conditionally open ports based on the otelcol config file rather than opening all ports
@@ -163,6 +159,22 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         }
         return checks
 
+    @property
+    def _incoming_metrics(self) -> bool:
+        return any(self.model.relations.get("metrics-endpoint", []))
+
+    @property
+    def _incoming_logs(self) -> bool:
+        return any(self.model.relations.get("receive-loki-logs", []))
+
+    @property
+    def _outgoing_metrics(self) -> bool:
+        return any(self.model.relations.get("send-remote-write", []))
+
+    @property
+    def _outgoing_logs(self) -> bool:
+        return any(self.model.relations.get("send-loki-logs", []))
+
     def _add_self_scrape(self):
         """Configure self-monitoring scrape jobs."""
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusreceiver
@@ -206,16 +218,20 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _add_log_ingestion(self):
         """Configure receiving logs, allowing Promtail instances to specify the Otelcol as their lokiAddress."""
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/lokireceiver
-        self.otel_config.add_receiver(
-            "loki/receiver",
-            {
-                "protocols": {
-                    "http": {"endpoint": f"0.0.0.0:{PORTS.LOKI_HTTP}"},
+
+        # For now, the only incoming and outgoing log relations are loki push api,
+        # so we don't need to mix and match between them yet.
+        if self._incoming_logs:
+            self.otel_config.add_receiver(
+                "loki",
+                {
+                    "protocols": {
+                        "http": {"endpoint": f"0.0.0.0:{PORTS.LOKI_HTTP}"},
+                    },
+                    "use_incoming_timestamp": True,
                 },
-                "use_incoming_timestamp": True,
-            },
-            pipelines=["logs"],
-        )
+                pipelines=["logs"],
+            )
 
     def _add_log_forwarding(self, endpoints: List[dict]):
         """Configure sending logs to Loki via the Loki push API endpoint.
@@ -230,35 +246,39 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         for idx, endpoint in enumerate(endpoints):
             self.otel_config.add_exporter(
                 f"loki/exporter-{idx}",
-                {"endpoint": endpoint["url"], "default_labels_enabled": {"exporter": False, "job": True}},
+                {
+                    "endpoint": endpoint["url"],
+                    "default_labels_enabled": {"exporter": False, "job": True},
+                },
                 pipelines=["logs"],
             )
-        self.otel_config.add_processor(
-            "resource",
-            {
-                "attributes": [
-                    {
-                        "action": "insert",
-                        "key": "loki.format",
-                        "value": "raw",  # logfmt, json, raw
-                    },
-                ]
-            },
-            pipelines=["logs"],
-        ).add_processor(
-            "attributes",
-            {
-                "actions": [
-                    {
-                        "action": "upsert",
-                        "key": "loki.attribute.labels",
-                        # These labels are set in `_scrape_configs` of the `v1.loki_push_api` lib
-                        "value": "container, job, filename, juju_application, juju_charm, juju_model, juju_model_uuid, juju_unit",
-                    },
-                ]
-            },
-            pipelines=["logs"],
-        )
+        if self._outgoing_logs:
+            self.otel_config.add_processor(
+                "resource",
+                {
+                    "attributes": [
+                        {
+                            "action": "insert",
+                            "key": "loki.format",
+                            "value": "raw",  # logfmt, json, raw
+                        },
+                    ]
+                },
+                pipelines=["logs"],
+            ).add_processor(
+                "attributes",
+                {
+                    "actions": [
+                        {
+                            "action": "upsert",
+                            "key": "loki.attribute.labels",
+                            # These labels are set in `_scrape_configs` of the `v1.loki_push_api` lib
+                            "value": "container, job, filename, juju_application, juju_charm, juju_model, juju_model_uuid, juju_unit",
+                        },
+                    ]
+                },
+                pipelines=["logs"],
+            )
 
 
 if __name__ == "__main__":

@@ -44,6 +44,7 @@ class Config:
     @property
     def yaml(self) -> str:
         """Return the config as a string."""
+        self.add_debug_exporter()  # Ensures the config is valid
         return yaml.dump(self._config)
 
     @property
@@ -61,17 +62,16 @@ class Config:
         """Return the default config for OpenTelemetry Collector."""
         return (
             cls()
+            # Currently, we always include the OTLP receiver to ensure the config is valid at all times.
+            # There must be at least one pipeline and it must have a valid receiver exporter pair.
             .add_receiver(
                 "otlp",
                 {"protocols": {"http": {"endpoint": f"0.0.0.0:{PORTS.OTLP_HTTP}"}}},
-                pipelines=["metrics", "logs"],
-            )
-            .add_exporter(
-                "otlp", {"endpoint": f"otelcol:{PORTS.OTLP_HTTP}"}, pipelines=["metrics", "logs"]
+                pipelines=["logs", "metrics", "traces"],
             )
             .add_extension("health_check", {"endpoint": f"0.0.0.0:{PORTS.HEALTH}"})
-            .add_telemetry("metrics", "level", "normal")
-            .add_telemetry("logs", "level", "DEBUG")
+            .add_telemetry("logs", {"level": "DEBUG"})
+            .add_telemetry("metrics", {"level": "normal"})
         )
 
     def add_receiver(
@@ -171,14 +171,13 @@ class Config:
         self._config["extensions"][name] = extension_config
         return self
 
-    def add_telemetry(self, category: str, option: str, telem_config: Any) -> "Config":
+    def add_telemetry(self, category: str, telem_config: Any) -> "Config":
         """Add internal telemetry to the config.
 
         Telemetry is enabled by adding it to the appropriate service section.
 
         Args:
-            category: a string representing the pre-defined internal-telemetry.
-            option: a string representing the config key within the specified category to configure.
+            category: a string representing the pre-defined internal-telemetry types (logs, metrics, traces).
             telem_config: a list of (potentially nested) dict(s) representing the config contents.
 
         Returns:
@@ -186,11 +185,20 @@ class Config:
         """
         # https://opentelemetry.io/docs/collector/internal-telemetry
         self._config["service"]["telemetry"].setdefault(category, {})
-        self._config["service"]["telemetry"][category][option] = telem_config
+        self._config["service"]["telemetry"][category] = telem_config
         return self
 
     def _add_to_pipeline(self, name: str, category: str, pipelines: List[str]):
-        """Add a pipeline component to the service::pipelines config."""
+        """Add a pipeline component to the service::pipelines config.
+
+        Args:
+            name: a string, uniquely identifying this pipeline component.
+            category: a string identifying thy type of pipeline component (receiver, exporter, processor, ...).
+            pipelines: a list of strings identifying which signal pipeline type(s) to assign the pipeline component to.
+
+        Returns:
+            Config since this is a builder method.
+        """
         # Create the pipeline dict key chain if it doesn't exist
         for pipeline in pipelines:
             self._config["service"]["pipelines"].setdefault(
@@ -205,13 +213,40 @@ class Config:
                 [],
             ):
                 self._config["service"]["pipelines"][pipeline][category].append(name)
+        return self
 
-    def add_prometheus_scrape(self, jobs: List):
+    def add_debug_exporter(self):
+        """A pipeline requires at least one receiver and exporter, otherwise the otelcol service errors.
+
+        To avoid this scenario, we create the debug exporter and assign it in the pipeline for
+        each signal type (logs, metrics, traces) which has a receiver without an exporter pair
+        in the config. In other words, the charm has no outgoing relations for that signal type
+        so we send them to debug.
+        """
+        debug_exporter_required = False
+        for signal in ["logs", "metrics", "traces"]:
+            pipeline = self._config["service"]["pipelines"].get(signal, {})
+            if pipeline:
+                if pipeline.get("receivers", []) and not pipeline.get("exporters", []):
+                    self._add_to_pipeline("debug", "exporters", [signal])
+                    debug_exporter_required = True
+        if debug_exporter_required:
+            self.add_exporter(
+                "debug",
+                {"verbosity": "basic"},
+            )
+
+    def add_prometheus_scrape(self, jobs: List, incoming_metrics: bool):
         """Update the Prometheus receiver config with scrape jobs."""
-        # Create the scrape_configs key path if it does not exist
-        self._config["receivers"].setdefault("prometheus", {}).setdefault("config", {}).setdefault(
-            "scrape_configs", []
-        )
-        for scrape_job in jobs:
-            self._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(scrape_job)
+        # For now, the only incoming and outgoing metrics relations are remote-write/scrape,
+        # so we don't need to mix and match between them yet.
+        if incoming_metrics and jobs:
+            # create the scrape_configs key path if it does not exist
+            self._config["receivers"].setdefault("prometheus", {}).setdefault(
+                "config", {}
+            ).setdefault("scrape_configs", [])
+            for scrape_job in jobs:
+                self._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(
+                    scrape_job
+                )
         return self

@@ -72,15 +72,12 @@ def test_add_telemetry():
     cfg = Config()
     # WHEN adding a pipeline with a config
     sample_config = [{"a": {"b": "c"}}]
-    cfg.add_telemetry("logs", "level", "INFO")
-    cfg.add_telemetry("metrics", "level", "normal")
-    cfg.add_telemetry("metrics", "some_config", sample_config)
+    cfg.add_telemetry("logs", {"level": "INFO"})
+    cfg.add_telemetry("metrics", {"level": "normal"})
+    cfg.add_telemetry("metrics", {"some_config": sample_config})
     # THEN the respective telemetry sections are added to the service::telemetry config
     assert ["logs", "metrics"] == list(cfg._config["service"]["telemetry"].keys())
     # AND the telemetry is added to the service::telemetry config
-    assert cfg._config["service"]["telemetry"]["metrics"] == {
-        "level": "normal",
-        "some_config": sample_config,
-    }
+    assert cfg._config["service"]["telemetry"]["metrics"] == {"some_config": sample_config}
     assert cfg._config["service"]["telemetry"]["logs"] == {"level": "INFO"}
 
