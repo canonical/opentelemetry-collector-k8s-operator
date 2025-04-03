@@ -85,8 +85,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         _aggregate_alerts(loki_provider.alerts, loki_rules_paths, forward_alert_rules)
         loki_consumer.reload_alerts()
-        if self._incoming_logs:
-            self._add_log_ingestion()
+        self._add_log_ingestion()
         self._add_log_forwarding(loki_consumer.loki_endpoints)
 
         # Metrics setup
@@ -98,8 +97,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         metrics_consumer = MetricsEndpointConsumer(self)
         _aggregate_alerts(metrics_consumer.alerts, metrics_rules_paths, forward_alert_rules)
         self._add_self_scrape()
-        if self._incoming_metrics:
-            self.otel_config.add_prometheus_scrape(metrics_consumer.jobs())
+        self.otel_config.add_prometheus_scrape(metrics_consumer.jobs(), self._incoming_metrics)
         # Forward alert rules and scrape jobs to Prometheus
         remote_write = PrometheusRemoteWriteConsumer(
             self, alert_rules_path=metrics_rules_paths.dest
@@ -107,7 +105,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         remote_write.reload_alerts()
         self._add_remote_write(remote_write.endpoints)
 
-        self.otel_config.add_debug_exporter()
+        # Deploy/update
         container.push(self._config_path, self.otel_config.yaml)
         container.add_layer(self._container_name, self._pebble_layer, combine=True)
         container.replan()
@@ -220,16 +218,20 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _add_log_ingestion(self):
         """Configure receiving logs, allowing Promtail instances to specify the Otelcol as their lokiAddress."""
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/lokireceiver
-        self.otel_config.add_receiver(
-            "loki",
-            {
-                "protocols": {
-                    "http": {"endpoint": f"0.0.0.0:{PORTS.LOKI_HTTP}"},
+
+        # For now, the only incoming and outgoing log relations are loki push api,
+        # so we don't need to mix and match between them yet.
+        if self._incoming_logs:
+            self.otel_config.add_receiver(
+                "loki",
+                {
+                    "protocols": {
+                        "http": {"endpoint": f"0.0.0.0:{PORTS.LOKI_HTTP}"},
+                    },
+                    "use_incoming_timestamp": True,
                 },
-                "use_incoming_timestamp": True,
-            },
-            pipelines=["logs"],
-        )
+                pipelines=["logs"],
+            )
 
     def _add_log_forwarding(self, endpoints: List[dict]):
         """Configure sending logs to Loki via the Loki push API endpoint.

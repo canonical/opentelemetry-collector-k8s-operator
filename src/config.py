@@ -44,6 +44,7 @@ class Config:
     @property
     def yaml(self) -> str:
         """Return the config as a string."""
+        self.add_debug_exporter()  # Ensures the config is valid
         return yaml.dump(self._config)
 
     @property
@@ -61,11 +62,13 @@ class Config:
         """Return the default config for OpenTelemetry Collector."""
         return (
             cls()
-            # .add_receiver(
-            #     "otlp",
-            #     {"protocols": {"http": {"endpoint": f"0.0.0.0:{PORTS.OTLP_HTTP}"}}},
-            #     pipelines=["logs", "metrics", "traces"],
-            # )
+            # Currently, we always include the OTLP receiver to ensure the config is valid at all times.
+            # There must be at least one pipeline and it must have a valid receiver exporter pair.
+            .add_receiver(
+                "otlp",
+                {"protocols": {"http": {"endpoint": f"0.0.0.0:{PORTS.OTLP_HTTP}"}}},
+                pipelines=["logs", "metrics", "traces"],
+            )
             .add_extension("health_check", {"endpoint": f"0.0.0.0:{PORTS.HEALTH}"})
             .add_telemetry("logs", {"level": "DEBUG"})
             .add_telemetry("metrics", {"level": "normal"})
@@ -213,10 +216,12 @@ class Config:
         return self
 
     def add_debug_exporter(self):
-        """A pipeline (if it exists) must reference at least one receiver and exporter, otherwise the otelcol service errors.
+        """A pipeline requires at least one receiver and exporter, otherwise the otelcol service errors.
 
-        To avoid this scenario, we create the debug exporter and assign it in the pipeline for each signal type (logs, metrics, traces)
-        which has a receiver without an exporter pair in the config. In other words, the charm has no outgoing relations for that signal type so we send them to debug.
+        To avoid this scenario, we create the debug exporter and assign it in the pipeline for
+        each signal type (logs, metrics, traces) which has a receiver without an exporter pair
+        in the config. In other words, the charm has no outgoing relations for that signal type
+        so we send them to debug.
         """
         debug_exporter_required = False
         for signal in ["logs", "metrics", "traces"]:
@@ -231,13 +236,17 @@ class Config:
                 {"verbosity": "basic"},
             )
 
-    def add_prometheus_scrape(self, jobs: List):
+    def add_prometheus_scrape(self, jobs: List, incoming_metrics: bool):
         """Update the Prometheus receiver config with scrape jobs."""
-        if jobs:
+        # For now, the only incoming and outgoing metrics relations are remote-write/scrape,
+        # so we don't need to mix and match between them yet.
+        if incoming_metrics and jobs:
             # create the scrape_configs key path if it does not exist
-            self._config["receivers"].setdefault("prometheus", {}).setdefault("config", {}).setdefault(
-                "scrape_configs", []
-            )
+            self._config["receivers"].setdefault("prometheus", {}).setdefault(
+                "config", {}
+            ).setdefault("scrape_configs", [])
             for scrape_job in jobs:
-                self._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(scrape_job)
+                self._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(
+                    scrape_job
+                )
         return self
