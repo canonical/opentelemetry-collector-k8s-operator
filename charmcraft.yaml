@@ -62,7 +62,7 @@ actions:
       but also relation data set by the charm.
 
 provides:
-  grafana-dashboard:
+  grafana-dashboards-provider:
     interface: grafana_dashboard
   receive-loki-logs:
     interface: loki_push_api
@@ -72,6 +72,8 @@ provides:
   #   interface: prometheus_remote_write
 
 requires:
+  grafana-dashboards-consumer:
+    interface: grafana_dashboard
   metrics-endpoint:
     interface: prometheus_scrape
     description: To scrape other charms' metrics endpoints.
