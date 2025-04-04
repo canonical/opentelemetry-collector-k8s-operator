@@ -113,12 +113,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         certificate_transfer = CertificateTransferRequires(self, "receive-ca-cert")
         ca_certs = certificate_transfer.get_all_certificates()
         for i, cert in enumerate(ca_certs):
-            container.push(RECV_CA_CERT_FOLDER_PATH + f"/{i}.crt", make_dirs=True)
+            container.push(RECV_CA_CERT_FOLDER_PATH + f"/{i}.crt", cert, make_dirs=True)
         # Finally, refresh certs
         container.exec(["update-ca-certificates", "--fresh"]).wait()
 
         # Deploy/update
-        container.push(self._config_path, self.otel_config.yaml)
+        container.push(self._config_path, self.otel_config.yaml, make_dirs=True)
         container.add_layer(self._container_name, self._pebble_layer, combine=True)
         container.replan()
         self.unit.set_ports(
