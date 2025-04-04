@@ -62,10 +62,11 @@ actions:
       but also relation data set by the charm.
 
 provides:
+  grafana-dashboard:
+    interface: grafana_dashboard
   receive-loki-logs:
     interface: loki_push_api
     description: To receive logs by allowing Promtail instances to specify the Otelcol as their Loki address.
-
   # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
   # receive-remote-write:
   #   interface: prometheus_remote_write

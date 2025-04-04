@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, cast
 
 import yaml
+from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
@@ -66,6 +67,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container = self.unit.get_container(self._container_name)
         charm_root = self.charm_dir.absolute()
         forward_alert_rules = cast(bool, self.config["forward_alert_rules"])
+
+        self.dashboard_provider = GrafanaDashboardProvider(self)
 
         # Logs setup
         loki_rules_paths = RulesMapping(
