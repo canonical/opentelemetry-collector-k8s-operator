@@ -9,7 +9,7 @@ import shutil
 from collections import namedtuple
 from pathlib import Path
 from typing import Any, Dict, List, cast
-
+from constants import RECV_CA_CERT_FOLDER_PATH
 import yaml
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
 from charms.prometheus_k8s.v0.prometheus_scrape import (
@@ -18,6 +18,7 @@ from charms.prometheus_k8s.v0.prometheus_scrape import (
 from charms.prometheus_k8s.v1.prometheus_remote_write import (
     PrometheusRemoteWriteConsumer,
 )
+from lib.charms.certificate_transfer_interface.v1.certificate_transfer import CertificateTransferRequires
 from cosl import JujuTopology
 from ops import CharmBase, main
 from ops.model import ActiveStatus, MaintenanceStatus
@@ -106,6 +107,17 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         remote_write.reload_alerts()
         self._add_remote_write(remote_write.endpoints)
+
+        # TLS: receive-ca-cert
+        # First, clean up
+        container.remove_path(RECV_CA_CERT_FOLDER_PATH, recursive=True)
+        # Now, write all current certs
+        certificate_transfer = CertificateTransferRequires(self, "receive-ca-cert")
+        ca_certs = certificate_transfer.get_all_certificates()
+        for i, cert in enumerate(ca_certs):
+            container.push(RECV_CA_CERT_FOLDER_PATH + f"/{i}.crt", make_dirs=True)
+        # Finally, refresh certs
+        container.exec(["update-ca-certificates", "--fresh"]).wait()
 
         # Deploy/update
         container.push(self._config_path, self.otel_config.yaml, make_dirs=True)
