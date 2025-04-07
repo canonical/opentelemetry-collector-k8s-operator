@@ -18,7 +18,7 @@ from charms.prometheus_k8s.v0.prometheus_scrape import (
 from charms.prometheus_k8s.v1.prometheus_remote_write import (
     PrometheusRemoteWriteConsumer,
 )
-from lib.charms.certificate_transfer_interface.v1.certificate_transfer import CertificateTransferRequires
+from charms.certificate_transfer_interface.v1.certificate_transfer import CertificateTransferRequires
 from cosl import JujuTopology
 from ops import CharmBase, main
 from ops.model import ActiveStatus, MaintenanceStatus
