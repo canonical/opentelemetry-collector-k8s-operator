@@ -58,7 +58,7 @@ per-file-ignores = {"tests/*" = ["D100","D101","D102","D103"]}
 convention = "google"
 
 [tool.pyright]
-extraPaths = ["lib"]
+extraPaths = ["src", "lib"]
 pythonVersion = "3.8"
 pythonPlatform = "All"
 

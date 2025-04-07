@@ -3,10 +3,6 @@
 
 name: opentelemetry-collector-k8s
 type: charm
-assumes:
-  - k8s-api
-  - juju >= 3.6
-
 summary: Vendor-agnostic way to receive, process and export telemetry data.
 description: |
   The OpenTelemetry Collector offers a vendor-agnostic implementation on how to receive, 
@@ -15,10 +11,14 @@ description: |
   (e.g. Jaeger, Prometheus, etc.) to multiple open-source or commercial back-ends.
 
 links:
+  # documentation: https://discourse.charmhub.io/
   website: https://charmhub.io/opentelemetry-collector-k8s
   source: https://github.com/canonical/opentelemetry-collector-k8s-operator
   issues: https://github.com/canonical/opentelemetry-collector-k8s-operator/issues
-  # documentation: https://discourse.charmhub.io/
+
+assumes:
+  - k8s-api
+  - juju >= 3.6
 
 platforms:
   ubuntu@24.04:amd64:
@@ -26,21 +26,17 @@ platforms:
 
 parts:
   charm:
-    charm-binary-python-packages: [cryptography, jsonschema, pydantic, pydantic-core, maturin]
+    source: .
+    plugin: uv
     build-packages: [git]
     build-snaps: [astral-uv]
     override-build: |
-      uv export --frozen --no-hashes --format=requirements-txt -o requirements.txt
-      git describe --always > version
       craftctl default
-    charm-requirements: [requirements.txt]
+      git describe --always > $CRAFT_PART_INSTALL/version
   cos-tool:
     plugin: dump
-    source: .
-    build-packages:
-      - curl
-    override-pull: |
-      curl -L -O https://github.com/canonical/cos-tool/releases/latest/download/cos-tool-${CRAFT_ARCH_BUILD_FOR}
+    source: https://github.com/canonical/cos-tool/releases/latest/download/cos-tool-${CRAFT_ARCH_BUILD_FOR}
+    source-type: file
     permissions:
       - path: cos-tool-${CRAFT_ARCH_BUILD_FOR}
         mode: "755"
@@ -55,17 +51,11 @@ resources:
     description: OCI image for opentelemetry-collector
     upstream-source: ghcr.io/canonical/opentelemetry-collector:dev
 
-actions:
-  reconcile:
-    description: >
-      Regenerate the world state from scratch. This includes the configuration file,
-      but also relation data set by the charm.
-
 provides:
   receive-loki-logs:
     interface: loki_push_api
+    optional: true
     description: To receive logs by allowing Promtail instances to specify the Otelcol as their Loki address.
-
   # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
   # receive-remote-write:
   #   interface: prometheus_remote_write
@@ -73,12 +63,15 @@ provides:
 requires:
   metrics-endpoint:
     interface: prometheus_scrape
+    optional: true
     description: To scrape other charms' metrics endpoints.
   send-remote-write:
     interface: prometheus_remote_write
+    optional: true
     description: To forward collected metrics to a Prometheus backend.
   send-loki-logs:
     interface: loki_push_api
+    optional: true
     description: To forward collected logs to a Loki backend.
 
 config:
@@ -88,3 +81,9 @@ config:
         Toggle forwarding of alert rules.
       type: boolean
       default: true
+
+actions:
+  reconcile:
+    description: >
+      Regenerate the world state from scratch. This includes the configuration file,
+      but also relation data set by the charm.
