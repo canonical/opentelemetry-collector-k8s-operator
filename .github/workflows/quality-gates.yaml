@@ -5,8 +5,8 @@ on:
   workflow_dispatch:
   # Run the quality checks periodically
   # FIXME: adjust the frequency as needed once we have actual gates in place
-  schedule:
-    - cron: "0 0 * * Tue"
+  # schedule:
+  #   - cron: "0 0 * * Tue"
 
 
 jobs:
