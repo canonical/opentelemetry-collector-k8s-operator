@@ -19,10 +19,7 @@ Scenario: Relate to a data source
     Then    A debug exporter is added for that receiver-exporter pair to ensure a valid config
 """
 
-from typing import Dict
-from pathlib import Path
-from ops.testing import Container, Relation, State, Context, Mount
-import yaml
+from ops.testing import Container, Relation, State, Context
 
 
 # TODO scenario, bc its charm
@@ -58,10 +55,3 @@ def test_update_data_sink(otelcol_charm):
     # assert otelcol_config.exists()
     # yml = yaml.safe_load(otelcol_config.read_text())
     # assert yml["traces"] == {}
-
-    # -------------------------------------------
-    # TODO Move to unit test (with basic YAML pipeline validation)
-    # 1. Scenario relation tests
-    # 2. Test the config builder as a config builder with otelcol validate (without ops) https://github.com/canonical/loki-k8s-operator/blob/e61769afa165800c750c1f3e4364fc7304bd3024/tests/unit/test_transform.py#L24
-    # TODO Capture frustration in writing, easy itests hard to scenario
-    # -------------------------------------------

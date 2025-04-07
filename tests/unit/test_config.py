@@ -4,6 +4,7 @@
 """Feature: Opentelemetry-collector config builder."""
 
 import pytest
+import yaml
 
 from src.config import Config
 
@@ -19,7 +20,7 @@ def test_add_pipeline_component(pipelines, pipeline_component):
     """
     method_name = f"add_{pipeline_component}"
     category = f"{pipeline_component}s"
-    # GIVEN a default Config
+    # GIVEN an empty config
     cfg = Config()
     # WHEN adding a pipeline component with a nested config
     sample_config = {"a": {"b": "c"}}
@@ -44,7 +45,7 @@ def test_add_to_pipeline(pipelines, pipeline_component):
     https://opentelemetry.io/docs/collector/configuration/#basics
     """
     category = f"{pipeline_component}s"
-    # GIVEN a default Config
+    # GIVEN an empty config
     cfg = Config()
     # WHEN adding a pipeline component
     cfg._add_to_pipeline("foo", category, pipelines)
@@ -56,7 +57,7 @@ def test_add_to_pipeline(pipelines, pipeline_component):
 
 
 def test_add_extension():
-    # GIVEN a default Config
+    # GIVEN an empty config
     cfg = Config()
     # WHEN adding a pipeline with a config
     sample_config = {"a": {"b": "c"}}
@@ -68,7 +69,7 @@ def test_add_extension():
 
 
 def test_add_telemetry():
-    # GIVEN a default Config
+    # GIVEN an empty config
     cfg = Config()
     # WHEN adding a pipeline with a config
     sample_config = [{"a": {"b": "c"}}]
@@ -81,3 +82,12 @@ def test_add_telemetry():
     assert cfg._config["service"]["telemetry"]["metrics"] == {"some_config": sample_config}
     assert cfg._config["service"]["telemetry"]["logs"] == {"level": "INFO"}
 
+
+def test_rendered_default_is_valid():
+    # GIVEN a default config
+    # WHEN rendered
+    cfg = yaml.safe_load(Config.default_config().yaml)
+    # THEN each pipeline has at least one receiver-exporter pair
+    pipelines = [cfg["service"]["pipelines"][p] for p in cfg["service"]["pipelines"]]
+    pairs = [(len(p["receivers"]) > 0, len(p["exporters"]) > 0) for p in pipelines]
+    assert all(all(condition for condition in pair) for pair in pairs)
