@@ -60,7 +60,7 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
         f.write(bundle.encode())
         f.flush()
         juju.deploy(f.name, trust=True)
-    juju.wait(jubilant.all_active, timeout=600)
+    juju.wait(jubilant.all_active, delay=10, timeout=600)
 
     logger.info("Waiting for scrape interval (1 minute) to elapse...")
     scrape_interval = 60  # seconds!
@@ -82,7 +82,7 @@ def test_with_ca_cert_forwarded(juju: jubilant.Juju):
     """Scenario: Otelcol succeeds to scrape metrics from a server signed by a CA that otelcol trusts."""
     # WHEN otelcol trusts the CA that signed the scrape target
     sh.juju.relate("ssc", "otelcol:receive-ca-cert", m=juju.model)
-    juju.wait(jubilant.all_active, timeout=600)
+    juju.wait(jubilant.all_active, delay=10, timeout=600)
 
     # Wait for scrape interval (1 minute) to elapse
     scrape_interval = 60  # seconds!
