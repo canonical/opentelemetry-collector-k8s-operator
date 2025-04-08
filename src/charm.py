@@ -24,7 +24,7 @@ from ops import CharmBase, main
 from ops.model import ActiveStatus, MaintenanceStatus
 from ops.pebble import Layer
 
-from config import PORTS, Config
+from config import PORTS, Config, sha256
 
 logger = logging.getLogger(__name__)
 RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
@@ -118,19 +118,26 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             container.push(RECV_CA_CERT_FOLDER_PATH + f"/{i}.crt", cert, make_dirs=True)
         # Finally, refresh certs
         container.exec(["update-ca-certificates", "--fresh"]).wait()
+        # A hot-reload doesn't pick up new system certs - need to restart the service
+        replan_manifest = sha256(yaml.safe_dump(ca_certs))
 
         # Deploy/update
         container.push(self._config_path, self.otel_config.yaml, make_dirs=True)
-        container.add_layer(self._container_name, self._pebble_layer, combine=True)
+        replan_manifest += self.otel_config.hash
+
+        container.add_layer(self._container_name, self._pebble_layer(replan_manifest), combine=True)
         container.replan()
         self.unit.set_ports(
             *self.otel_config.ports
         )  # TODO Conditionally open ports based on the otelcol config file rather than opening all ports
         self.unit.status = ActiveStatus()
 
-    @property
-    def _pebble_layer(self) -> Layer:
-        """Construct the Pebble layer informataion."""
+    def _pebble_layer(self, sentinel: str) -> Layer:
+        """Construct the Pebble layer information.
+
+        Args:
+            sentinel: A value indicative of a change that should prompt a replan.
+        """
         layer = Layer(
             {
                 "summary": "opentelemetry-collector-k8s layer",
@@ -142,7 +149,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                         "command": f"/usr/bin/otelcol --config={self._config_path}",
                         "startup": "enabled",
                         "environment": {
-                            "_config_hash": self.otel_config.hash,  # Restarts the service on config change via pebble replan
+                            "_config_hash": sentinel,  # Restarts the service via pebble replan
                             "https_proxy": os.environ.get("JUJU_CHARM_HTTPS_PROXY", ""),
                             "http_proxy": os.environ.get("JUJU_CHARM_HTTP_PROXY", ""),
                             "no_proxy": os.environ.get("JUJU_CHARM_NO_PROXY", ""),
