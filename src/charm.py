@@ -35,6 +35,8 @@ def _aggregate_alerts(rules: Dict, rule_path_map: PathMapping, forward_alert_rul
     rules = rules if forward_alert_rules else {}
     if os.path.exists(rule_path_map.dest):
         shutil.rmtree(rule_path_map.dest)
+    # TODO Why does scenario need this to find dirs
+    rule_path_map.src.mkdir(parents=True, exist_ok=True)
     shutil.copytree(rule_path_map.src, rule_path_map.dest)
     for topology_identifier, rule in rules.items():
         rule_file = Path(rule_path_map.dest) / f"juju_{topology_identifier}.rules"
@@ -133,7 +135,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self._add_remote_write(remote_write.endpoints)
 
         # Deploy/update
-        container.push(self._config_path, self.otel_config.yaml)
+        container.push(self._config_path, self.otel_config.yaml, make_dirs=True)
         container.add_layer(self._container_name, self._pebble_layer, combine=True)
         container.replan()
         self.unit.set_ports(
@@ -315,7 +317,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.122.0/exporter/lokiexporter
         for idx, endpoint in enumerate(endpoints):
             self.otel_config.add_exporter(
-                f"loki/exporter-{idx}",
+                f"loki/{idx}",
                 {
                     "endpoint": endpoint["url"],
                     "default_labels_enabled": {"exporter": False, "job": True},
