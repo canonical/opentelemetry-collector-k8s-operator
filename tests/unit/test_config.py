@@ -85,9 +85,10 @@ def test_add_telemetry():
 
 def test_rendered_default_is_valid():
     # GIVEN a default config
-    # WHEN rendered
+    # WHEN the config is rendered
     cfg = yaml.safe_load(Config.default_config().yaml)
-    # THEN each pipeline has at least one receiver-exporter pair
+    # THEN a debug exporter is added for each pipeline missing one
     pipelines = [cfg["service"]["pipelines"][p] for p in cfg["service"]["pipelines"]]
     pairs = [(len(p["receivers"]) > 0, len(p["exporters"]) > 0) for p in pipelines]
+    # AND each pipeline has at least one receiver-exporter pair
     assert all(all(condition for condition in pair) for pair in pairs)

@@ -1,22 +1,7 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
-"""Feature: Relation-dependant Opentelemetry-collector config.
 
-Scenario: Relate to a data sink
-    Given   A valid config requires at least one pipeline and it must have at least one
-            receiver-exporter pair
-    And     An OTLP receiver is added to all signal (logs, metrics, traces) pipelines
-    When    A data-sink charm is integrated with the otelcol charm
-    Then    A relevant exporter is added to the config
-
-Scenario: Relate to a data source
-    Given   A valid config requires at least one pipeline and it must have a at least one
-            receiver-exporter pair
-    When    A data-source charm is integrated with the otelcol charm
-    Then    A relevant receiver is added to the config
-    And     If there is no exporter for that pipeline
-    Then    A debug exporter is added for that receiver-exporter pair to ensure a valid config
-"""
+"""Feature: Relation-dependant Opentelemetry-collector config."""
 
 import yaml
 from ops.testing import Container, Context, Relation, State
@@ -30,7 +15,8 @@ def check_valid_pipelines(cfg):
 
 
 def test_no_relations(otelcol_charm):
-    # GIVEN No relations
+    """Scenario: Direct signals to debug if no data sink exists."""
+    # GIVEN no relations
     ctx = Context(otelcol_charm)
     state_in = State(containers=[Container(name="otelcol", can_connect=True)])
     # WHEN any event executes the reconciler
@@ -48,7 +34,8 @@ def test_no_relations(otelcol_charm):
 
 
 def test_loki_exporter(otelcol_charm):
-    # GIVEN A relation to multiple Loki units
+    """Scenario: Fan-out logging architecture."""
+    # GIVEN a relation to multiple Loki units
     remote_units_data = {
         0: {"endpoint": '{"url": "http://fqdn-0:3100/loki/api/v1/push"}'},
         1: {"endpoint": '{"url": "http://fqdn-1:3100/loki/api/v1/push"}'},
@@ -80,7 +67,8 @@ def test_loki_exporter(otelcol_charm):
 
 
 def test_prometheus_exporter(otelcol_charm):
-    # GIVEN A relation to multiple Prometheus units
+    """Scenario: Fan-out remote writing architecture."""
+    # GIVEN a relation to multiple Prometheus units
     remote_units_data = {
         0: {"remote_write": '{"url": "http://fqdn-0:9090/api/v1/write"}'},
         1: {"remote_write": '{"url": "http://fqdn-1:9090/api/v1/write"}'},
