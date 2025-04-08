@@ -20,7 +20,7 @@ from charms.prometheus_k8s.v1.prometheus_remote_write import (
 )
 from charms.certificate_transfer_interface.v1.certificate_transfer import CertificateTransferRequires
 from cosl import JujuTopology
-from ops import CharmBase, main
+from ops import CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus
 from ops.pebble import Layer
 
@@ -41,6 +41,26 @@ def _aggregate_alerts(rules: Dict, rule_path_map: RulesMapping, forward_alert_ru
         rule_file = Path(rule_path_map.dest) / f"juju_{topology_identifier}.rules"
         rule_file.write_text(yaml.safe_dump(rule))
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
+
+
+def receive_ca_certs(charm: CharmBase, container: Container) -> str:
+    """Returns a 'pebble replan sentinel' (hash of all certs), for pebble to determine whether a replan is required."""
+    # Obtain certs from relation data
+    certificate_transfer = CertificateTransferRequires(charm, "receive-ca-cert")
+    ca_certs = certificate_transfer.get_all_certificates()
+
+    # Clean-up previously existing certs
+    container.remove_path(RECV_CA_CERT_FOLDER_PATH, recursive=True)
+
+    # Write current certs
+    for i, cert in enumerate(ca_certs):
+        container.push(RECV_CA_CERT_FOLDER_PATH + f"/{i}.crt", cert, make_dirs=True)
+
+    # Refresh system certs
+    container.exec(["update-ca-certificates", "--fresh"]).wait()
+
+    # A hot-reload doesn't pick up new system certs - need to restart the service
+    return sha256(yaml.safe_dump(ca_certs))
 
 
 class OpenTelemetryCollectorK8sCharm(CharmBase):
@@ -109,17 +129,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self._add_remote_write(remote_write.endpoints)
 
         # TLS: receive-ca-cert
-        # First, clean up
-        container.remove_path(RECV_CA_CERT_FOLDER_PATH, recursive=True)
-        # Now, write all current certs
-        certificate_transfer = CertificateTransferRequires(self, "receive-ca-cert")
-        ca_certs = certificate_transfer.get_all_certificates()
-        for i, cert in enumerate(ca_certs):
-            container.push(RECV_CA_CERT_FOLDER_PATH + f"/{i}.crt", cert, make_dirs=True)
-        # Finally, refresh certs
-        container.exec(["update-ca-certificates", "--fresh"]).wait()
-        # A hot-reload doesn't pick up new system certs - need to restart the service
-        replan_manifest = sha256(yaml.safe_dump(ca_certs))
+        replan_manifest = receive_ca_certs(self, container)
 
         # Deploy/update
         container.push(self._config_path, self.otel_config.yaml, make_dirs=True)
