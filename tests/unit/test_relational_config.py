@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 """Feature: Relation-dependant Opentelemetry-collector config.
 
 Scenario: Relate to a data sink
-    Given   A valid config requires at least one pipeline and it must have a at least one
+    Given   A valid config requires at least one pipeline and it must have at least one
             receiver-exporter pair
     And     An OTLP receiver is added to all signal (logs, metrics, traces) pipelines
     When    A data-sink charm is integrated with the otelcol charm
