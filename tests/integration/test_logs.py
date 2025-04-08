@@ -1,12 +1,7 @@
-#!/usr/bin/env python3
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
-"""Feature: Ingested logs are forwarded.
 
-Scenario: loki-to-loki formatted log forwarding
-    When otelcol is integrated with flog and loki over send-loki-logs and receive-loki-logs respectively
-    Then flog logs are forwarded to loki
-"""
+"""Feature: Ingested logs are forwarded."""
 
 from typing import Dict
 from pytest_operator.plugin import OpsTest
@@ -15,7 +10,7 @@ from pytest_operator.plugin import OpsTest
 
 
 async def test_logs_pipeline(ops_test: OpsTest, charm: str, charm_resources: Dict[str, str]):
-    """Send logs from Flog to Loki with Otel-collector."""
+    """Scenario: loki-to-loki formatted log forwarding."""
     assert ops_test.model
     # GIVEN a model with flog, otel-collector, and loki charms
     flog_app_name = "flog-k8s"

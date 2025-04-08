@@ -1,12 +1,7 @@
-#!/usr/bin/env python3
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
-"""Feature: Scraped metrics are remote-written.
 
-Scenario: scrape-to-remote-write forwarding
-    When otelcol is integrated with avalanche and prometheus over scrape and remote write respectively
-    Then avalanche metrics are forwarded to prometheus with topology
-"""
+"""Feature: Scraped metrics are remote-written."""
 
 import json
 from typing import Dict
@@ -34,7 +29,7 @@ async def _retry_prom_jobs_api(endpoint: str):
 
 
 async def test_metrics_pipeline(ops_test: OpsTest, charm: str, charm_resources: Dict[str, str]):
-    """Send metrics from Avalanche to Prometheus with Otel-collector."""
+    """Scenario: scrape-to-remote-write forwarding."""
     assert ops_test.model
     # GIVEN a model with avalanche, otel-collector, and prometheus charms
     av_app_name = "avalanche-k8s"
