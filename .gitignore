@@ -3,6 +3,7 @@ build
 .idea
 __pycache__
 .venv
+.vscode
 .tox
 .coverage
 venv
