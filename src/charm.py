@@ -247,7 +247,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.122.0/exporter/lokiexporter
         for idx, endpoint in enumerate(endpoints):
             self.otel_config.add_exporter(
-                f"loki/exporter-{idx}",
+                f"loki/{idx}",
                 {
                     "endpoint": endpoint["url"],
                     "default_labels_enabled": {"exporter": False, "job": True},
