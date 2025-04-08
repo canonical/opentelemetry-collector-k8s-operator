@@ -928,6 +928,18 @@ wheels = [
 ]
 
 [[package]]
+name = "jubilant"
+version = "0.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/75/7e9ec75fd1c917f46f44f663e4563882eaa325dff76829893c592db1012e/jubilant-0.3.2.tar.gz", hash = "sha256:cefb1a39783c237400d2dfdd86c563adb251b9960ddf8465f735982a074ec44f", size = 21212 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/e2/373a0c079c6b4a4d86cb9dcbdb206caec37bd4a09ab375838d0dc5bf1af4/jubilant-0.3.2-py3-none-any.whl", hash = "sha256:89359695ec6b7fe07db479e19d88ac0b77d6dede7224a9d9ca9428994828d8a2", size = 20426 },
+]
+
+[[package]]
 name = "juju"
 version = "3.3.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1193,6 +1205,7 @@ dependencies = [
     { name = "cosl" },
     { name = "cryptography" },
     { name = "jsonschema" },
+    { name = "jubilant" },
     { name = "lightkube" },
     { name = "ops" },
     { name = "pyyaml" },
@@ -1205,6 +1218,7 @@ dev = [
     { name = "codespell" },
     { name = "coverage", version = "7.6.1", source = { registry = "https://pypi.org/simple" }, extra = ["toml"], marker = "python_full_version < '3.9'" },
     { name = "coverage", version = "7.8.0", source = { registry = "https://pypi.org/simple" }, extra = ["toml"], marker = "python_full_version >= '3.9'" },
+    { name = "jubilant" },
     { name = "juju" },
     { name = "ops", extra = ["testing"] },
     { name = "pyright" },
@@ -1227,6 +1241,8 @@ requires-dist = [
     { name = "coverage", extras = ["toml"], marker = "extra == 'dev'" },
     { name = "cryptography" },
     { name = "jsonschema" },
+    { name = "jubilant", specifier = ">=0.3.2" },
+    { name = "jubilant", marker = "extra == 'dev'" },
     { name = "juju", marker = "extra == 'dev'", specifier = ">=3.0,<=3.3.0" },
     { name = "lightkube", specifier = ">=0.11" },
     { name = "ops", specifier = ">=2.17" },

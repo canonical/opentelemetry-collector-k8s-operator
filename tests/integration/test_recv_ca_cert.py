@@ -5,10 +5,9 @@ import sh
 from typing import Dict
 import tempfile
 import time
-from pytest_operator.plugin import OpsTest
-from helpers import wait_for_idle
 import pathlib
 import logging
+import jubilant
 
 # This is needed for sh.juju
 # pyright: reportAttributeAccessIssue = false
@@ -20,9 +19,9 @@ logger = logging.getLogger(__name__)
 TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
-async def test_unknown_authority(ops_test: OpsTest, charm: str, charm_resources: Dict[str, str]):
+async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: Otelcol fails to scrape metrics from a server signed by unknown authority."""
-    sh.juju.switch(ops_test.model_name)
+    sh.juju.switch(juju.model)
 
     # GIVEN a scrape target signed by a self-signed certificate
     # WHEN related to otelcol
@@ -60,8 +59,8 @@ async def test_unknown_authority(ops_test: OpsTest, charm: str, charm_resources:
     with tempfile.NamedTemporaryFile(dir=TEMP_DIR, suffix=".yaml") as f:
         f.write(bundle.encode())
         f.flush()
-        sh.juju.deploy(f.name, "--trust", m=ops_test.model_name)
-    wait_for_idle(ops_test.model_name, ["am", "otelcol", "ssc"])
+        juju.deploy(f.name, trust=True)
+    juju.wait(jubilant.all_active, timeout=600)
 
     logger.info("Waiting for scrape interval (1 minute) to elapse...")
     scrape_interval = 60  # seconds!
@@ -70,7 +69,7 @@ async def test_unknown_authority(ops_test: OpsTest, charm: str, charm_resources:
 
     # THEN scrape fails
     # TODO make assertions less brittle
-    logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=ops_test.model_name, since=f"{lookback_window}s")
+    logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
     assert "Failed to scrape" in logs
     assert "unknown authority" in logs
 
@@ -79,11 +78,11 @@ async def test_unknown_authority(ops_test: OpsTest, charm: str, charm_resources:
     # 2025-04-07T20:46:23.468Z [otelcol] 2025-04-07T20:46:23.468Z	warn	internal/transaction.go:129	Failed to scrape Prometheus endpoint	{"otelcol.component.id": "prometheus", "otelcol.component.kind": "Receiver", "otelcol.signal": "metrics", "scrape_timestamp": 1744058783465, "target_labels": "{__name__=\"up\", instance=\"welcome-k8s_39de1be4-832a-4e93-8f5f-c19abd31ebd2_am\", job=\"juju_welcome-k8s_39de1be4_am_prometheus_scrape\", juju_application=\"am\", juju_charm=\"alertmanager-k8s\", juju_model=\"welcome-k8s\", juju_model_uuid=\"39de1be4-832a-4e93-8f5f-c19abd31ebd2\"}"}
 
 
-def test_with_ca_cert_forwarded(ops_test: OpsTest):
+def test_with_ca_cert_forwarded(juju: jubilant.Juju):
     """Scenario: Otelcol succeeds to scrape metrics from a server signed by a CA that otelcol trusts."""
     # WHEN otelcol trusts the CA that signed the scrape target
-    sh.juju.relate("ssc", "otelcol:receive-ca-cert")
-    wait_for_idle(ops_test.model_name, ["am", "otelcol", "ssc"])
+    sh.juju.relate("ssc", "otelcol:receive-ca-cert", m=juju.model)
+    juju.wait(jubilant.all_active, timeout=600)
 
     # Wait for scrape interval (1 minute) to elapse
     scrape_interval = 60  # seconds!
@@ -92,7 +91,7 @@ def test_with_ca_cert_forwarded(ops_test: OpsTest):
 
     # THEN scrape succeeds
     # TODO make assertions less brittle
-    logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=ops_test.model_name, since=f"{lookback_window}s")
+    logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
     assert "Failed to scrape" not in logs
     assert "unknown authority" not in logs
 

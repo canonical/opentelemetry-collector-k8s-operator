@@ -31,6 +31,7 @@ dev = [
   "pytest-operator>=0.39",
   "ops[testing]",
   "sh",
+  "jubilant",
   "tenacity",
 ]
 
