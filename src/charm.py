@@ -9,7 +9,7 @@ import shutil
 from collections import namedtuple
 from pathlib import Path
 from typing import Any, Dict, List, cast
-from constants import RECV_CA_CERT_FOLDER_PATH, CONFIG_PATH
+from constants import RECV_CA_CERT_FOLDER_PATH, CONFIG_PATH, CLOUD_CA_PATH
 import yaml
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
 from charms.prometheus_k8s.v0.prometheus_scrape import (
@@ -18,7 +18,10 @@ from charms.prometheus_k8s.v0.prometheus_scrape import (
 from charms.prometheus_k8s.v1.prometheus_remote_write import (
     PrometheusRemoteWriteConsumer,
 )
-from charms.certificate_transfer_interface.v1.certificate_transfer import CertificateTransferRequires
+from charms.certificate_transfer_interface.v1.certificate_transfer import (
+    CertificateTransferRequires,
+)
+from charms.grafana_cloud_integrator.v0.cloud_config_requirer import GrafanaCloudConfigRequirer
 from cosl import JujuTopology
 from ops import CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus
@@ -88,6 +91,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container = self.unit.get_container(self._container_name)
         charm_root = self.charm_dir.absolute()
         forward_alert_rules = cast(bool, self.config["forward_alert_rules"])
+        replan_sentinel: str = ""
 
         # Logs setup
         loki_rules_paths = RulesMapping(
@@ -127,14 +131,41 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         remote_write.reload_alerts()
         self._add_remote_write(remote_write.endpoints)
 
+        # Enable forwarding telemetry with GrafanaCloudIntegrator
+        cloud_integrator = GrafanaCloudConfigRequirer(self)
+        if cloud_integrator.tls_ca_ready:
+            container.push(CLOUD_CA_PATH, cloud_integrator.tls_ca)
+            replan_sentinel += sha256(cloud_integrator.tls_ca)
+        else:
+            container.remove_path(CLOUD_CA_PATH)
+        container.exec(["update-ca-certificates", "--fresh"]).wait()
+        if cloud_integrator.prometheus_ready:
+            self.otel_config.add_exporter(
+                "cloud-integrator-metrics",
+                {"endpoint": cloud_integrator.prometheus_url},
+                pipelines=["metrics"],
+            )
+        if cloud_integrator.loki_ready:
+            self.otel_config.add_exporter(
+                "cloud-integrator-logs",
+                {
+                    "endpoint": cloud_integrator.loki_url,
+                    "default_labels_enabled": {"exporter": False, "job": True},
+                    "headers": {"Content-Encoding": "snappy"},  # TODO: check if this is needed
+                },
+                pipelines=["logs"],
+            )
+
         # TLS: receive-ca-cert
-        replan_manifest = receive_ca_certs(self, container)
+        replan_sentinel += receive_ca_certs(self, container)
 
-        # Deploy/update
+        # Push the config and Push the config and deploy/update
         container.push(CONFIG_PATH, self.otel_config.yaml, make_dirs=True)
-        replan_manifest += self.otel_config.hash
+        replan_sentinel += self.otel_config.hash
 
-        container.add_layer(self._container_name, self._pebble_layer(replan_manifest), combine=True)
+        container.add_layer(
+            self._container_name, self._pebble_layer(replan_sentinel), combine=True
+        )
         container.replan()
         self.unit.set_ports(
             *self.otel_config.ports

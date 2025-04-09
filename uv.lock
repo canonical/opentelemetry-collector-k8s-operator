@@ -1,5 +1,4 @@
 version = 1
-revision = 1
 requires-python = ">=3.8, <4"
 resolution-markers = [
     "python_full_version >= '3.11'",
@@ -1205,7 +1204,6 @@ dependencies = [
     { name = "cosl" },
     { name = "cryptography" },
     { name = "jsonschema" },
-    { name = "jubilant" },
     { name = "lightkube" },
     { name = "ops" },
     { name = "pyyaml" },
@@ -1241,7 +1239,6 @@ requires-dist = [
     { name = "coverage", extras = ["toml"], marker = "extra == 'dev'" },
     { name = "cryptography" },
     { name = "jsonschema" },
-    { name = "jubilant", specifier = ">=0.3.2" },
     { name = "jubilant", marker = "extra == 'dev'" },
     { name = "juju", marker = "extra == 'dev'", specifier = ">=3.0,<=3.3.0" },
     { name = "lightkube", specifier = ">=0.11" },
@@ -1257,7 +1254,6 @@ requires-dist = [
     { name = "urllib3" },
     { name = "websockets", marker = "extra == 'dev'", specifier = "<14.0" },
 ]
-provides-extras = ["dev"]
 
 [[package]]
 name = "ops"
