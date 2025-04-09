@@ -15,10 +15,10 @@ def check_valid_pipelines(cfg):
     assert all(all(condition for condition in pair) for pair in pairs)
 
 
-def test_no_relations(ctx):
+def test_no_relations(ctx, execs):
     """Scenario: Direct signals to debug if no data sink exists."""
     # GIVEN no relations
-    state_in = State(containers=[Container(name="otelcol", can_connect=True, execs={Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")})])
+    state_in = State(containers=[Container(name="otelcol", can_connect=True, execs=execs)])
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state_in)
     otelcol = state_out.get_container("otelcol")
@@ -33,7 +33,7 @@ def test_no_relations(ctx):
     check_valid_pipelines(cfg)
 
 
-def test_loki_exporter(ctx):
+def test_loki_exporter(ctx, execs):
     """Scenario: Fan-out logging architecture."""
     # GIVEN a relation to multiple Loki units
     remote_units_data = {
@@ -43,7 +43,7 @@ def test_loki_exporter(ctx):
     data_sink = Relation(
         endpoint="send-loki-logs", interface="loki_push_api", remote_units_data=remote_units_data
     )
-    container = Container(name="otelcol", can_connect=True, execs={Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")})
+    container = Container(name="otelcol", can_connect=True, execs=execs)
     state_in = State(
         relations=[data_sink],
         containers=[container],
@@ -65,7 +65,7 @@ def test_loki_exporter(ctx):
     check_valid_pipelines(cfg)
 
 
-def test_prometheus_exporter(ctx):
+def test_prometheus_exporter(ctx, execs):
     """Scenario: Fan-out remote writing architecture."""
     # GIVEN a relation to multiple Prometheus units
     remote_units_data = {
@@ -77,7 +77,7 @@ def test_prometheus_exporter(ctx):
         interface="prometheus_remote_write",
         remote_units_data=remote_units_data,
     )
-    container = Container(name="otelcol", can_connect=True, execs={Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")})
+    container = Container(name="otelcol", can_connect=True, execs=execs)
     state_in = State(
         relations=[data_sink],
         containers=[container],

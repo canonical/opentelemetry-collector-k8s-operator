@@ -4,11 +4,11 @@ from unittest.mock import patch
 import json
 
 
-def test_no_recv_ca_cert_relations_present(ctx):
+def test_no_recv_ca_cert_relations_present(ctx, execs):
     # GIVEN the charm is deployed in isolation
     state = State(
         leader=True,
-        containers={Container("otelcol", can_connect=True, execs={Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")})},
+        containers={Container("otelcol", can_connect=True, execs=execs)},
     )
 
     # WHEN any event is emitted
@@ -21,7 +21,7 @@ def test_no_recv_ca_cert_relations_present(ctx):
     assert not fs.joinpath(RECV_CA_CERT_FOLDER_PATH.lstrip("/")).exists()
 
 
-def test_ca_forwarded_over_rel_data(ctx):
+def test_ca_forwarded_over_rel_data(ctx, execs):
     # Relation 1
     cert1a = "-----BEGIN CERTIFICATE-----\n ... cert1a ... \n-----END CERTIFICATE-----"
     cert1b = "-----BEGIN CERTIFICATE-----\n ... cert1b ... \n-----END CERTIFICATE-----"
@@ -33,7 +33,7 @@ def test_ca_forwarded_over_rel_data(ctx):
     # GIVEN the charm is related to a CA
     state = State(
         leader=True,
-        containers={Container("otelcol", can_connect=True, execs={Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")})},
+        containers={Container("otelcol", can_connect=True, execs=execs)},
         relations=[
             Relation("receive-ca-cert", remote_app_data={"certificates": json.dumps([cert1a, cert1b])}),
             Relation("receive-ca-cert", remote_app_data={"certificates": json.dumps([cert2a, cert2b])}),
