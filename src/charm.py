@@ -23,7 +23,7 @@ from charms.prometheus_k8s.v1.prometheus_remote_write import (
 from charms.certificate_transfer_interface.v1.certificate_transfer import CertificateTransferRequires
 from cosl import JujuTopology, LZMABase64
 from ops import CharmBase, main, Container
-from ops.model import ActiveStatus, MaintenanceStatus
+from ops.model import ActiveStatus, MaintenanceStatus, Relation
 from ops.pebble import Layer
 
 from config import PORTS, Config, sha256
@@ -45,10 +45,10 @@ def _aggregate_alerts(rules: Dict, rule_path_map: PathMapping, forward_alert_rul
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
 
 
-def dashboards(charm: CharmBase) -> list:
+def dashboards(relations: List[Relation]) -> list:
     """Returns an aggregate of all dashboards received by this otelcol."""
     aggregate = {}
-    for rel in charm.model.relations["grafana-dashboards-consumer"]:
+    for rel in relations:
         dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
         if "templates" not in dashboards:
             continue
@@ -91,7 +91,7 @@ def forward_dashboards(charm: CharmBase):
         return
     shutil.rmtree(dashboard_paths.dest)
     shutil.copytree(dashboard_paths.src, dashboard_paths.dest)
-    for dash in dashboards(charm):
+    for dash in dashboards(charm.model.relations["grafana-dashboards-consumer"]):
         # Build dashboard custom filename
         charm = dash.get("charm", "charm-name")
         rel_id = dash.get("relation_id", "rel_id")

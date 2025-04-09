@@ -42,7 +42,7 @@ def test_dashboard_propagation(ctx, execs):
     )
     # THEN the dashboards are correctly transferred to the provider databag
     with ctx(ctx.on.relation_changed(consumer), state=state) as mgr:
-        dash = dashboards(mgr.charm)[0]
+        dash = dashboards(mgr.charm.model.relations["grafana-dashboards-consumer"])[0]
         assert dash["charm"] == expected["charm"]
         assert dash["title"] == expected["title"]
         assert dash["content"] == json.loads(LZMABase64.decompress(expected["content"]))
