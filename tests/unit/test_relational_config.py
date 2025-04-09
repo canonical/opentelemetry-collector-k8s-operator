@@ -4,7 +4,7 @@
 """Feature: Relation-dependant Opentelemetry-collector config."""
 
 import yaml
-from ops.testing import Container, Context, Relation, State
+from ops.testing import Container, Relation, State
 
 
 def check_valid_pipelines(cfg):
@@ -14,17 +14,16 @@ def check_valid_pipelines(cfg):
     assert all(all(condition for condition in pair) for pair in pairs)
 
 
-def test_no_relations(otelcol_charm):
+def test_no_relations(context, otelcol_charm):
     """Scenario: Direct signals to debug if no data sink exists."""
     # GIVEN no relations
-    ctx = Context(otelcol_charm)
     state_in = State(containers=[Container(name="otelcol", can_connect=True)])
     # WHEN any event executes the reconciler
-    state_out = ctx.run(ctx.on.update_status(), state_in)
+    state_out = context.run(context.on.update_status(), state_in)
     otelcol = state_out.get_container("otelcol")
     # THEN the otelcol service has started
     assert otelcol.services["otelcol"].is_running()
-    fs = otelcol.get_filesystem(ctx)
+    fs = otelcol.get_filesystem(context)
     otelcol_config = fs.joinpath(*otelcol_charm._config_path.strip("/").split("/"))
     # AND the otelcol config was pushed to the workload container
     assert otelcol_config.exists()
@@ -33,7 +32,7 @@ def test_no_relations(otelcol_charm):
     check_valid_pipelines(cfg)
 
 
-def test_loki_exporter(otelcol_charm):
+def test_loki_exporter(context, otelcol_charm):
     """Scenario: Fan-out logging architecture."""
     # GIVEN a relation to multiple Loki units
     remote_units_data = {
@@ -43,18 +42,17 @@ def test_loki_exporter(otelcol_charm):
     data_sink = Relation(
         endpoint="send-loki-logs", interface="loki_push_api", remote_units_data=remote_units_data
     )
-    ctx = Context(otelcol_charm)
     container = Container(name="otelcol", can_connect=True)
     state_in = State(
         relations=[data_sink],
         containers=[container],
     )
     # WHEN any event executes the reconciler
-    state_out = ctx.run(ctx.on.update_status(), state_in)
+    state_out = context.run(context.on.update_status(), state_in)
     otelcol = state_out.get_container("otelcol")
     # THEN the otelcol service has started
     assert otelcol.services["otelcol"].is_running()
-    fs = otelcol.get_filesystem(ctx)
+    fs = otelcol.get_filesystem(context)
     otelcol_config = fs.joinpath(*otelcol_charm._config_path.strip("/").split("/"))
     # AND the otelcol config was pushed to the workload container
     assert otelcol_config.exists()
@@ -66,7 +64,7 @@ def test_loki_exporter(otelcol_charm):
     check_valid_pipelines(cfg)
 
 
-def test_prometheus_exporter(otelcol_charm):
+def test_prometheus_exporter(context, otelcol_charm):
     """Scenario: Fan-out remote writing architecture."""
     # GIVEN a relation to multiple Prometheus units
     remote_units_data = {
@@ -78,18 +76,17 @@ def test_prometheus_exporter(otelcol_charm):
         interface="prometheus_remote_write",
         remote_units_data=remote_units_data,
     )
-    ctx = Context(otelcol_charm)
     container = Container(name="otelcol", can_connect=True)
     state_in = State(
         relations=[data_sink],
         containers=[container],
     )
     # WHEN any event executes the reconciler
-    state_out = ctx.run(ctx.on.update_status(), state_in)
+    state_out = context.run(context.on.update_status(), state_in)
     otelcol = state_out.get_container("otelcol")
     # THEN the otelcol service has started
     assert otelcol.services["otelcol"].is_running()
-    fs = otelcol.get_filesystem(ctx)
+    fs = otelcol.get_filesystem(context)
     otelcol_config = fs.joinpath(*otelcol_charm._config_path.strip("/").split("/"))
     # AND the otelcol config was pushed to the workload container
     assert otelcol_config.exists()

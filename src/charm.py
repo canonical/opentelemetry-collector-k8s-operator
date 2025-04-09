@@ -35,13 +35,76 @@ def _aggregate_alerts(rules: Dict, rule_path_map: PathMapping, forward_alert_rul
     rules = rules if forward_alert_rules else {}
     if os.path.exists(rule_path_map.dest):
         shutil.rmtree(rule_path_map.dest)
-    # TODO Why does scenario need this to find dirs
-    rule_path_map.src.mkdir(parents=True, exist_ok=True)
     shutil.copytree(rule_path_map.src, rule_path_map.dest)
     for topology_identifier, rule in rules.items():
         rule_file = Path(rule_path_map.dest) / f"juju_{topology_identifier}.rules"
         rule_file.write_text(yaml.safe_dump(rule))
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
+
+
+def dashboards(charm: CharmBase) -> list:
+    """Returns an aggregate of all dashboards received by this otelcol."""
+    aggregate = {}
+    for rel in charm.model.relations["grafana-dashboards-consumer"]:
+        dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
+        if "templates" not in dashboards:
+            continue
+        for template in dashboards["templates"]:
+            content = json.loads(
+                LZMABase64.decompress(dashboards["templates"][template].get("content"))
+            )
+            entry = {
+                "charm": dashboards["templates"][template].get("charm", "charm_name"),
+                "relation_id": rel.id,
+                "title": template,
+                "content": content,
+            }
+            aggregate[template] = entry
+
+    return list(aggregate.values())
+
+
+def forward_dashboards(charm: CharmBase):
+    """Instantiate the GrafanaDashboardProvider and update the dashboards in the relation databag.
+
+    First, dashboards from relations (including those bundled with Otelcol) and save them to disk.
+    Then, update the relation databag with these dashboards for Grafana.
+    """
+    charm_root = charm.charm_dir.absolute()
+    dashboard_paths = PathMapping(
+        src=charm_root.joinpath(*"src/grafana_dashboards".split("/")),
+        dest=charm_root.joinpath(*"grafana_dashboards".split("/")),
+    )
+    if not os.path.isdir(dashboard_paths.dest):
+        shutil.copytree(dashboard_paths.src, dashboard_paths.dest, dirs_exist_ok=True)
+    grafana_dashboards_provider = GrafanaDashboardProvider(
+        charm,
+        relation_name="grafana-dashboards-provider",
+        dashboards_path=dashboard_paths.dest,
+    )
+
+    # Copy dashboards from relations and save them to disk."""
+    if not charm.unit.is_leader():
+        return
+    shutil.rmtree(dashboard_paths.dest)
+    shutil.copytree(dashboard_paths.src, dashboard_paths.dest)
+    for dash in dashboards(charm):
+        # Build dashboard custom filename
+        charm = dash.get("charm", "charm-name")
+        rel_id = dash.get("relation_id", "rel_id")
+        title = dash.get("title").replace(" ", "_").replace("/", "_").lower()
+        filename = f"juju_{title}-{charm}-{rel_id}.json"
+        with open(Path(dashboard_paths.dest, filename), mode="w", encoding="utf-8") as f:
+            f.write(json.dumps(dash["content"]))
+            logger.debug("updated dashboard file %s", f.name)
+
+    # Scan the built-in dashboards and update relations with changes
+    # TODO Make this a public method like reload_alerts for logs and metrics
+    grafana_dashboards_provider._update_all_dashboards_from_dir()
+
+    # TODO Do we need to implement dashboard status changed logic?
+    #   This propagates Grafana's errors to the charm which provided the dashboard
+    # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
 
 class OpenTelemetryCollectorK8sCharm(CharmBase):
@@ -53,10 +116,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     _metrics_rules_dest_path = "prometheus_alert_rules"
     _loki_rules_src_path = "src/loki_alert_rules"
     _loki_rules_dest_path = "loki_alert_rules"
-    _dashboards_src_path = "src/grafana_dashboards"
-    _dashboards_dest_path = (
-        "grafana_dashboards"  # TODO from gagent: placeholder until we figure out the plug
-    )
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -75,26 +134,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         charm_root = self.charm_dir.absolute()
         forward_alert_rules = cast(bool, self.config["forward_alert_rules"])
 
-        # Dashboards setup
-        dashboard_paths = PathMapping(
-            src=charm_root.joinpath(*self._dashboards_src_path.split("/")),
-            dest=charm_root.joinpath(*self._dashboards_dest_path.split("/")),
-        )
-        if not os.path.isdir(dashboard_paths.dest):
-            # TODO @leon We create the src directory to avoid excessive mocking in tests
-            dashboard_paths.src.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(dashboard_paths.src, dashboard_paths.dest, dirs_exist_ok=True)
-        grafana_dashboards_provider = GrafanaDashboardProvider(
-            self,
-            relation_name="grafana-dashboards-provider",
-            dashboards_path=dashboard_paths.dest,
-        )
-        self._aggregate_dashboards(dashboard_paths)
-        # TODO Make this a public method like reload_alerts for logs and metrics
-        grafana_dashboards_provider._update_all_dashboards_from_dir()
-        # TODO Do we need to implement dashboard status changed? I think not since we reconcile
-        # self._on_dashboard_status_changed,
-        # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)  # noqa
+        forward_dashboards(self)
 
         # Logs setup
         loki_rules_paths = PathMapping(
@@ -203,49 +243,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     @property
     def _outgoing_logs(self) -> bool:
         return any(self.model.relations.get("send-loki-logs", []))
-
-    @property
-    def dashboards(self) -> list:
-        """Returns an aggregate of all dashboards received by this otelcol."""
-        aggregate = {}
-        for rel in self.model.relations["grafana-dashboards-consumer"]:
-            dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
-            if "templates" not in dashboards:
-                continue
-            for template in dashboards["templates"]:
-                content = json.loads(
-                    LZMABase64.decompress(dashboards["templates"][template].get("content"))
-                )
-                entry = {
-                    "charm": dashboards["templates"][template].get("charm", "charm_name"),
-                    "relation_id": rel.id,
-                    "title": template,
-                    "content": content,
-                }
-                aggregate[template] = entry
-
-        return list(aggregate.values())
-
-    # TODO we have self.dashboards, why did we support Any for dashboards? Check other code paths.
-    def _aggregate_dashboards(self, mapping: PathMapping):
-        """Copy dashboards from relations, save them to disk, and update."""
-        logger.info("updating dashboards")
-
-        if not self.unit.is_leader():
-            return
-
-        shutil.rmtree(mapping.dest)
-        shutil.copytree(mapping.src, mapping.dest)
-        for dash in self.dashboards:
-            # Build dashboard custom filename
-            charm = dash.get("charm", "charm-name")
-            rel_id = dash.get("relation_id", "rel_id")
-            title = dash.get("title").replace(" ", "_").replace("/", "_").lower()
-            filename = f"juju_{title}-{charm}-{rel_id}.json"
-
-            with open(Path(mapping.dest, filename), mode="w", encoding="utf-8") as f:
-                f.write(json.dumps(dash["content"]))
-                logger.debug("updated dashboard file %s", f.name)
 
     def _add_self_scrape(self):
         """Configure self-monitoring scrape jobs."""
