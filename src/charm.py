@@ -133,21 +133,17 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Enable forwarding telemetry with GrafanaCloudIntegrator
         cloud_integrator = GrafanaCloudConfigRequirer(self)
-        if cloud_integrator.tls_ca_ready:
-            container.push(CLOUD_CA_PATH, cloud_integrator.tls_ca)
-            replan_sentinel += sha256(cloud_integrator.tls_ca)
-        else:
-            container.remove_path(CLOUD_CA_PATH)
-        container.exec(["update-ca-certificates", "--fresh"]).wait()
+        # We're intentionally not getting the CA cert from Grafana Cloud Integrator;
+        # we decided that we should only get certs from receive-ca-cert.
         if cloud_integrator.prometheus_ready:
             self.otel_config.add_exporter(
-                "cloud-integrator-metrics",
+                "prometheusremotewrite/cloud-integrator-metrics",
                 {"endpoint": cloud_integrator.prometheus_url},
                 pipelines=["metrics"],
             )
         if cloud_integrator.loki_ready:
             self.otel_config.add_exporter(
-                "cloud-integrator-logs",
+                "loki/cloud-integrator-logs",
                 {
                     "endpoint": cloud_integrator.loki_url,
                     "default_labels_enabled": {"exporter": False, "job": True},
