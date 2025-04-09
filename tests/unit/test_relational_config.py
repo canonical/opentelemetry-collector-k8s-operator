@@ -4,7 +4,7 @@
 """Feature: Relation-dependant Opentelemetry-collector config."""
 
 import yaml
-from ops.testing import Container, Context, Exec, Relation, State
+from ops.testing import Container, Exec, Relation, State
 from constants import CONFIG_PATH
 
 
@@ -15,10 +15,9 @@ def check_valid_pipelines(cfg):
     assert all(all(condition for condition in pair) for pair in pairs)
 
 
-def test_no_relations(otelcol_charm):
+def test_no_relations(ctx):
     """Scenario: Direct signals to debug if no data sink exists."""
     # GIVEN no relations
-    ctx = Context(otelcol_charm)
     state_in = State(containers=[Container(name="otelcol", can_connect=True, execs={Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")})])
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state_in)
@@ -34,7 +33,7 @@ def test_no_relations(otelcol_charm):
     check_valid_pipelines(cfg)
 
 
-def test_loki_exporter(otelcol_charm):
+def test_loki_exporter(ctx):
     """Scenario: Fan-out logging architecture."""
     # GIVEN a relation to multiple Loki units
     remote_units_data = {
@@ -44,7 +43,6 @@ def test_loki_exporter(otelcol_charm):
     data_sink = Relation(
         endpoint="send-loki-logs", interface="loki_push_api", remote_units_data=remote_units_data
     )
-    ctx = Context(otelcol_charm)
     container = Container(name="otelcol", can_connect=True, execs={Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")})
     state_in = State(
         relations=[data_sink],
@@ -67,7 +65,7 @@ def test_loki_exporter(otelcol_charm):
     check_valid_pipelines(cfg)
 
 
-def test_prometheus_exporter(otelcol_charm):
+def test_prometheus_exporter(ctx):
     """Scenario: Fan-out remote writing architecture."""
     # GIVEN a relation to multiple Prometheus units
     remote_units_data = {
@@ -79,7 +77,6 @@ def test_prometheus_exporter(otelcol_charm):
         interface="prometheus_remote_write",
         remote_units_data=remote_units_data,
     )
-    ctx = Context(otelcol_charm)
     container = Container(name="otelcol", can_connect=True, execs={Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")})
     state_in = State(
         relations=[data_sink],
