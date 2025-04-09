@@ -13,6 +13,7 @@ from typing import Dict
 import pytest
 import yaml
 from pytest_operator.plugin import OpsTest
+import jubilant
 
 logger = logging.getLogger(__name__)
 
@@ -59,3 +60,9 @@ def charm_resources(metadata_file="charmcraft.yaml") -> Dict[str, str]:
     for res, data in metadata["resources"].items():
         resources[res] = data["upstream-source"]
     return resources
+
+
+@pytest.fixture(scope='module')
+def juju():
+    with jubilant.temp_model() as juju:
+        yield juju

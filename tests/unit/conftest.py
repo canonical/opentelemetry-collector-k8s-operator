@@ -1,11 +1,15 @@
-from unittest.mock import patch
 
 import pytest
+from ops.testing import Context, Exec
 
-from src.charm import OpenTelemetryCollectorK8sCharm
+from charm import OpenTelemetryCollectorK8sCharm
 
 
 @pytest.fixture
-def otelcol_charm(tmp_path):
-    with patch("socket.getfqdn", new=lambda *args: "fqdn"):
-        yield OpenTelemetryCollectorK8sCharm
+def ctx():
+    yield Context(OpenTelemetryCollectorK8sCharm)
+
+
+@pytest.fixture
+def execs():
+    yield {Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")}

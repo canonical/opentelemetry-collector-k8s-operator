@@ -9,7 +9,7 @@ import shutil
 from collections import namedtuple
 from pathlib import Path
 from typing import Any, Dict, List, cast
-
+from constants import RECV_CA_CERT_FOLDER_PATH, CONFIG_PATH
 import yaml
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
 from charms.prometheus_k8s.v0.prometheus_scrape import (
@@ -18,12 +18,13 @@ from charms.prometheus_k8s.v0.prometheus_scrape import (
 from charms.prometheus_k8s.v1.prometheus_remote_write import (
     PrometheusRemoteWriteConsumer,
 )
+from charms.certificate_transfer_interface.v1.certificate_transfer import CertificateTransferRequires
 from cosl import JujuTopology
-from ops import CharmBase, main
+from ops import CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus
 from ops.pebble import Layer
 
-from config import PORTS, Config
+from config import PORTS, Config, sha256
 
 logger = logging.getLogger(__name__)
 RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
@@ -42,10 +43,29 @@ def _aggregate_alerts(rules: Dict, rule_path_map: RulesMapping, forward_alert_ru
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
 
 
+def receive_ca_certs(charm: CharmBase, container: Container) -> str:
+    """Returns a 'pebble replan sentinel' (hash of all certs), for pebble to determine whether a replan is required."""
+    # Obtain certs from relation data
+    certificate_transfer = CertificateTransferRequires(charm, "receive-ca-cert")
+    ca_certs = certificate_transfer.get_all_certificates()
+
+    # Clean-up previously existing certs
+    container.remove_path(RECV_CA_CERT_FOLDER_PATH, recursive=True)
+
+    # Write current certs
+    for i, cert in enumerate(ca_certs):
+        container.push(RECV_CA_CERT_FOLDER_PATH + f"/{i}.crt", cert, make_dirs=True)
+
+    # Refresh system certs
+    container.exec(["update-ca-certificates", "--fresh"]).wait()
+
+    # A hot-reload doesn't pick up new system certs - need to restart the service
+    return sha256(yaml.safe_dump(ca_certs))
+
+
 class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
-    _config_path = "/etc/otelcol/config.yaml"
     _container_name = "otelcol"
     _metrics_rules_src_path = "src/prometheus_alert_rules"
     _metrics_rules_dest_path = "prometheus_alert_rules"
@@ -107,18 +127,26 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         remote_write.reload_alerts()
         self._add_remote_write(remote_write.endpoints)
 
+        # TLS: receive-ca-cert
+        replan_manifest = receive_ca_certs(self, container)
+
         # Deploy/update
-        container.push(self._config_path, self.otel_config.yaml, make_dirs=True)
-        container.add_layer(self._container_name, self._pebble_layer, combine=True)
+        container.push(CONFIG_PATH, self.otel_config.yaml, make_dirs=True)
+        replan_manifest += self.otel_config.hash
+
+        container.add_layer(self._container_name, self._pebble_layer(replan_manifest), combine=True)
         container.replan()
         self.unit.set_ports(
             *self.otel_config.ports
         )  # TODO Conditionally open ports based on the otelcol config file rather than opening all ports
         self.unit.status = ActiveStatus()
 
-    @property
-    def _pebble_layer(self) -> Layer:
-        """Construct the Pebble layer informataion."""
+    def _pebble_layer(self, sentinel: str) -> Layer:
+        """Construct the Pebble layer information.
+
+        Args:
+            sentinel: A value indicative of a change that should prompt a replan.
+        """
         layer = Layer(
             {
                 "summary": "opentelemetry-collector-k8s layer",
@@ -127,10 +155,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     "otelcol": {
                         "override": "replace",
                         "summary": "opentelemetry-collector-k8s service",
-                        "command": f"/usr/bin/otelcol --config={self._config_path}",
+                        "command": f"/usr/bin/otelcol --config={CONFIG_PATH}",
                         "startup": "enabled",
                         "environment": {
-                            "_config_hash": self.otel_config.hash,  # Restarts the service on config change via pebble replan
+                            "_config_hash": sentinel,  # Restarts the service via pebble replan
                             "https_proxy": os.environ.get("JUJU_CHARM_HTTPS_PROXY", ""),
                             "http_proxy": os.environ.get("JUJU_CHARM_HTTP_PROXY", ""),
                             "no_proxy": os.environ.get("JUJU_CHARM_NO_PROXY", ""),
@@ -156,7 +184,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             "valid-config": {
                 "override": "replace",
                 "level": "alive",
-                "exec": {"command": f"otelcol validate --config={self._config_path}"},
+                "exec": {"command": f"otelcol validate --config={CONFIG_PATH}"},
             },
         }
         return checks
