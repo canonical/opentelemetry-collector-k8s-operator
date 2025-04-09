@@ -9,7 +9,7 @@ import shutil
 from collections import namedtuple
 from pathlib import Path
 from typing import Any, Dict, List, cast
-from constants import RECV_CA_CERT_FOLDER_PATH, CONFIG_PATH, CLOUD_CA_PATH
+from constants import RECV_CA_CERT_FOLDER_PATH, CONFIG_PATH
 import yaml
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
 from charms.prometheus_k8s.v0.prometheus_scrape import (

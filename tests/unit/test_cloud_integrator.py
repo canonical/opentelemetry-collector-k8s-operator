@@ -1,7 +1,6 @@
-from ops.testing import Container, State, Relation
+from ops.testing import Container, State
 from constants import CLOUD_CA_PATH
 from unittest.mock import patch
-import json
 
 
 def test_no_cloud_integrator_relations_present(ctx, execs):
