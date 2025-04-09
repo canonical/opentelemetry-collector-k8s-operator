@@ -14,7 +14,7 @@ def encode_as_dashboard(dct: dict):
     return LZMABase64.compress(json.dumps(dct))
 
 
-def test_dashboard_propagation(context):
+def test_dashboard_propagation(ctx, execs):
     """Scenario: Dashboards are forwarded when a dashboard provider is related."""
     # GIVEN a remote charm with dashboards
     content_in = encode_as_dashboard({"hello": "world"})
@@ -38,10 +38,10 @@ def test_dashboard_propagation(context):
     state = State(
         relations=[consumer, provider],
         leader=True,
-        containers=[Container("otelcol", can_connect=True)],
+        containers=[Container("otelcol", can_connect=True, execs=execs)],
     )
     # THEN the dashboards are correctly transferred to the provider databag
-    with context(context.on.relation_changed(consumer), state=state) as mgr:
+    with ctx(ctx.on.relation_changed(consumer), state=state) as mgr:
         dash = dashboards(mgr.charm)[0]
         assert dash["charm"] == expected["charm"]
         assert dash["title"] == expected["title"]

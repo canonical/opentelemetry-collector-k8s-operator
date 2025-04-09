@@ -5,7 +5,7 @@
 import logging
 from pytest_operator.plugin import OpsTest
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 # pyright: reportOptionalMemberAccess = false
 

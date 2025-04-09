@@ -5,6 +5,7 @@
 
 import yaml
 from ops.testing import Container, Relation, State
+from constants import CONFIG_PATH
 
 
 def check_valid_pipelines(cfg):
@@ -14,17 +15,17 @@ def check_valid_pipelines(cfg):
     assert all(all(condition for condition in pair) for pair in pairs)
 
 
-def test_no_relations(context, otelcol_charm):
+def test_no_relations(ctx, execs):
     """Scenario: Direct signals to debug if no data sink exists."""
     # GIVEN no relations
-    state_in = State(containers=[Container(name="otelcol", can_connect=True)])
+    state_in = State(containers=[Container(name="otelcol", can_connect=True, execs=execs)])
     # WHEN any event executes the reconciler
-    state_out = context.run(context.on.update_status(), state_in)
+    state_out = ctx.run(ctx.on.update_status(), state_in)
     otelcol = state_out.get_container("otelcol")
     # THEN the otelcol service has started
     assert otelcol.services["otelcol"].is_running()
-    fs = otelcol.get_filesystem(context)
-    otelcol_config = fs.joinpath(*otelcol_charm._config_path.strip("/").split("/"))
+    fs = otelcol.get_filesystem(ctx)
+    otelcol_config = fs.joinpath(*CONFIG_PATH.strip("/").split("/"))
     # AND the otelcol config was pushed to the workload container
     assert otelcol_config.exists()
     cfg = yaml.safe_load(otelcol_config.read_text())
@@ -32,7 +33,7 @@ def test_no_relations(context, otelcol_charm):
     check_valid_pipelines(cfg)
 
 
-def test_loki_exporter(context, otelcol_charm):
+def test_loki_exporter(ctx, execs):
     """Scenario: Fan-out logging architecture."""
     # GIVEN a relation to multiple Loki units
     remote_units_data = {
@@ -42,18 +43,18 @@ def test_loki_exporter(context, otelcol_charm):
     data_sink = Relation(
         endpoint="send-loki-logs", interface="loki_push_api", remote_units_data=remote_units_data
     )
-    container = Container(name="otelcol", can_connect=True)
+    container = Container(name="otelcol", can_connect=True, execs=execs)
     state_in = State(
         relations=[data_sink],
         containers=[container],
     )
     # WHEN any event executes the reconciler
-    state_out = context.run(context.on.update_status(), state_in)
+    state_out = ctx.run(ctx.on.update_status(), state_in)
     otelcol = state_out.get_container("otelcol")
     # THEN the otelcol service has started
     assert otelcol.services["otelcol"].is_running()
-    fs = otelcol.get_filesystem(context)
-    otelcol_config = fs.joinpath(*otelcol_charm._config_path.strip("/").split("/"))
+    fs = otelcol.get_filesystem(ctx)
+    otelcol_config = fs.joinpath(*CONFIG_PATH.strip("/").split("/"))
     # AND the otelcol config was pushed to the workload container
     assert otelcol_config.exists()
     cfg = yaml.safe_load(otelcol_config.read_text())
@@ -64,7 +65,7 @@ def test_loki_exporter(context, otelcol_charm):
     check_valid_pipelines(cfg)
 
 
-def test_prometheus_exporter(context, otelcol_charm):
+def test_prometheus_exporter(ctx, execs):
     """Scenario: Fan-out remote writing architecture."""
     # GIVEN a relation to multiple Prometheus units
     remote_units_data = {
@@ -76,18 +77,18 @@ def test_prometheus_exporter(context, otelcol_charm):
         interface="prometheus_remote_write",
         remote_units_data=remote_units_data,
     )
-    container = Container(name="otelcol", can_connect=True)
+    container = Container(name="otelcol", can_connect=True, execs=execs)
     state_in = State(
         relations=[data_sink],
         containers=[container],
     )
     # WHEN any event executes the reconciler
-    state_out = context.run(context.on.update_status(), state_in)
+    state_out = ctx.run(ctx.on.update_status(), state_in)
     otelcol = state_out.get_container("otelcol")
     # THEN the otelcol service has started
     assert otelcol.services["otelcol"].is_running()
-    fs = otelcol.get_filesystem(context)
-    otelcol_config = fs.joinpath(*otelcol_charm._config_path.strip("/").split("/"))
+    fs = otelcol.get_filesystem(ctx)
+    otelcol_config = fs.joinpath(*CONFIG_PATH.strip("/").split("/"))
     # AND the otelcol config was pushed to the workload container
     assert otelcol_config.exists()
     cfg = yaml.safe_load(otelcol_config.read_text())
