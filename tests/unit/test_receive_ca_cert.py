@@ -1,4 +1,4 @@
-from ops.testing import Container, State, Exec, Relation
+from ops.testing import Container, State, Relation
 from constants import RECV_CA_CERT_FOLDER_PATH
 from unittest.mock import patch
 import json

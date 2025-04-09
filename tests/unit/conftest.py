@@ -1,4 +1,3 @@
-from unittest.mock import patch
 
 import pytest
 from ops.testing import Context, Exec
