@@ -279,6 +279,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 {
                     "endpoint": endpoint["url"],
                     "default_labels_enabled": {"exporter": False, "job": True},
+                    "tls": {"insecure": self.model.config.get("tls_insecure_skip_verify")},
                 },
                 pipelines=["logs"],
             )
