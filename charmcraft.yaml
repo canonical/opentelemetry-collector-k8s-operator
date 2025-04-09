@@ -54,6 +54,8 @@ resources:
 provides:
   grafana-dashboards-provider:
     interface: grafana_dashboard
+    description: |
+      Send own and aggregated dashboards to grafana.
   receive-loki-logs:
     interface: loki_push_api
     optional: true
@@ -65,6 +67,8 @@ provides:
 requires:
   grafana-dashboards-consumer:
     interface: grafana_dashboard
+    description: |
+      Collect dashboards to be forwarded to grafana.
   metrics-endpoint:
     interface: prometheus_scrape
     optional: true
