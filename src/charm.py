@@ -137,13 +137,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # we decided that we should only get certs from receive-ca-cert.
         if cloud_integrator.prometheus_ready:
             self.otel_config.add_exporter(
-                "prometheusremotewrite/cloud-integrator-metrics",
+                "prometheusremotewrite/cloud-integrator",
                 {"endpoint": cloud_integrator.prometheus_url},
                 pipelines=["metrics"],
             )
         if cloud_integrator.loki_ready:
             self.otel_config.add_exporter(
-                "loki/cloud-integrator-logs",
+                "loki/cloud-integrator",
                 {
                     "endpoint": cloud_integrator.loki_url,
                     "default_labels_enabled": {"exporter": False, "job": True},
