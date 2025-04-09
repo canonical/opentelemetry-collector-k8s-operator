@@ -4,7 +4,8 @@
 """Feature: Relation-dependant Opentelemetry-collector config."""
 
 import yaml
-from ops.testing import Container, Context, Relation, State
+from ops.testing import Container, Context, Exec, Relation, State
+from constants import CONFIG_PATH
 
 
 def check_valid_pipelines(cfg):
@@ -18,14 +19,14 @@ def test_no_relations(otelcol_charm):
     """Scenario: Direct signals to debug if no data sink exists."""
     # GIVEN no relations
     ctx = Context(otelcol_charm)
-    state_in = State(containers=[Container(name="otelcol", can_connect=True)])
+    state_in = State(containers=[Container(name="otelcol", can_connect=True, execs={Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")})])
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state_in)
     otelcol = state_out.get_container("otelcol")
     # THEN the otelcol service has started
     assert otelcol.services["otelcol"].is_running()
     fs = otelcol.get_filesystem(ctx)
-    otelcol_config = fs.joinpath(*otelcol_charm._config_path.strip("/").split("/"))
+    otelcol_config = fs.joinpath(*CONFIG_PATH.strip("/").split("/"))
     # AND the otelcol config was pushed to the workload container
     assert otelcol_config.exists()
     cfg = yaml.safe_load(otelcol_config.read_text())
@@ -44,7 +45,7 @@ def test_loki_exporter(otelcol_charm):
         endpoint="send-loki-logs", interface="loki_push_api", remote_units_data=remote_units_data
     )
     ctx = Context(otelcol_charm)
-    container = Container(name="otelcol", can_connect=True)
+    container = Container(name="otelcol", can_connect=True, execs={Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")})
     state_in = State(
         relations=[data_sink],
         containers=[container],
@@ -55,7 +56,7 @@ def test_loki_exporter(otelcol_charm):
     # THEN the otelcol service has started
     assert otelcol.services["otelcol"].is_running()
     fs = otelcol.get_filesystem(ctx)
-    otelcol_config = fs.joinpath(*otelcol_charm._config_path.strip("/").split("/"))
+    otelcol_config = fs.joinpath(*CONFIG_PATH.strip("/").split("/"))
     # AND the otelcol config was pushed to the workload container
     assert otelcol_config.exists()
     cfg = yaml.safe_load(otelcol_config.read_text())
@@ -79,7 +80,7 @@ def test_prometheus_exporter(otelcol_charm):
         remote_units_data=remote_units_data,
     )
     ctx = Context(otelcol_charm)
-    container = Container(name="otelcol", can_connect=True)
+    container = Container(name="otelcol", can_connect=True, execs={Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")})
     state_in = State(
         relations=[data_sink],
         containers=[container],
@@ -90,7 +91,7 @@ def test_prometheus_exporter(otelcol_charm):
     # THEN the otelcol service has started
     assert otelcol.services["otelcol"].is_running()
     fs = otelcol.get_filesystem(ctx)
-    otelcol_config = fs.joinpath(*otelcol_charm._config_path.strip("/").split("/"))
+    otelcol_config = fs.joinpath(*CONFIG_PATH.strip("/").split("/"))
     # AND the otelcol config was pushed to the workload container
     assert otelcol_config.exists()
     cfg = yaml.safe_load(otelcol_config.read_text())

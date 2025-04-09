@@ -9,7 +9,7 @@ import shutil
 from collections import namedtuple
 from pathlib import Path
 from typing import Any, Dict, List, cast
-from constants import RECV_CA_CERT_FOLDER_PATH
+from constants import RECV_CA_CERT_FOLDER_PATH, CONFIG_PATH
 import yaml
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
 from charms.prometheus_k8s.v0.prometheus_scrape import (
@@ -66,7 +66,6 @@ def receive_ca_certs(charm: CharmBase, container: Container) -> str:
 class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
-    _config_path = "/etc/otelcol/config.yaml"
     _container_name = "otelcol"
     _metrics_rules_src_path = "src/prometheus_alert_rules"
     _metrics_rules_dest_path = "prometheus_alert_rules"
@@ -132,7 +131,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         replan_manifest = receive_ca_certs(self, container)
 
         # Deploy/update
-        container.push(self._config_path, self.otel_config.yaml, make_dirs=True)
+        container.push(CONFIG_PATH, self.otel_config.yaml, make_dirs=True)
         replan_manifest += self.otel_config.hash
 
         container.add_layer(self._container_name, self._pebble_layer(replan_manifest), combine=True)
@@ -156,7 +155,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     "otelcol": {
                         "override": "replace",
                         "summary": "opentelemetry-collector-k8s service",
-                        "command": f"/usr/bin/otelcol --config={self._config_path}",
+                        "command": f"/usr/bin/otelcol --config={CONFIG_PATH}",
                         "startup": "enabled",
                         "environment": {
                             "_config_hash": sentinel,  # Restarts the service via pebble replan
@@ -185,7 +184,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             "valid-config": {
                 "override": "replace",
                 "level": "alive",
-                "exec": {"command": f"otelcol validate --config={self._config_path}"},
+                "exec": {"command": f"otelcol validate --config={CONFIG_PATH}"},
             },
         }
         return checks
