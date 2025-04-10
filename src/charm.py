@@ -45,8 +45,8 @@ def _aggregate_alerts(rules: Dict, rule_path_map: PathMapping, forward_alert_rul
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
 
 
-def dashboards(relations: List[Relation]) -> list:
-    """Returns an aggregate of all dashboards received by this otelcol."""
+def get_dashboards(relations: List[Relation]) -> List[Dict[str, Any]]:
+    """Returns a deduplicated list of all dashboards received by this otelcol."""
     aggregate = {}
     for rel in relations:
         dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
@@ -80,30 +80,30 @@ def forward_dashboards(charm: CharmBase):
     )
     if not os.path.isdir(dashboard_paths.dest):
         shutil.copytree(dashboard_paths.src, dashboard_paths.dest, dirs_exist_ok=True)
-    grafana_dashboards_provider = GrafanaDashboardProvider(
-        charm,
-        relation_name="grafana-dashboards-provider",
-        dashboards_path=dashboard_paths.dest,
-    )
 
-    # Copy dashboards from relations and save them to disk."""
+    # The leader copies dashboards from relations and save them to disk."""
     if not charm.unit.is_leader():
         return
     shutil.rmtree(dashboard_paths.dest)
     shutil.copytree(dashboard_paths.src, dashboard_paths.dest)
-    for dash in dashboards(charm.model.relations["grafana-dashboards-consumer"]):
+    for dash in get_dashboards(charm.model.relations["grafana-dashboards-consumer"]):
         # Build dashboard custom filename
-        charm = dash.get("charm", "charm-name")
+        charm_name = dash.get("charm", "charm-name")
         rel_id = dash.get("relation_id", "rel_id")
-        title = dash.get("title").replace(" ", "_").replace("/", "_").lower()
-        filename = f"juju_{title}-{charm}-{rel_id}.json"
+        title = dash.get("title", "").replace(" ", "_").replace("/", "_").lower()
+        filename = f"juju_{title}-{charm_name}-{rel_id}.json"
         with open(Path(dashboard_paths.dest, filename), mode="w", encoding="utf-8") as f:
             f.write(json.dumps(dash["content"]))
             logger.debug("updated dashboard file %s", f.name)
 
     # Scan the built-in dashboards and update relations with changes
-    # TODO Make this a public method like reload_alerts for logs and metrics
+    grafana_dashboards_provider = GrafanaDashboardProvider(
+        charm,
+        relation_name="grafana-dashboards-provider",
+        dashboards_path=dashboard_paths.dest,
+    )
     grafana_dashboards_provider._update_all_dashboards_from_dir()
+    # TODO replace with grafana_dashboards_provider.reload_dashboards()
 
     # TODO Do we need to implement dashboard status changed logic?
     #   This propagates Grafana's errors to the charm which provided the dashboard
