@@ -18,7 +18,9 @@ from charms.prometheus_k8s.v0.prometheus_scrape import (
 from charms.prometheus_k8s.v1.prometheus_remote_write import (
     PrometheusRemoteWriteConsumer,
 )
-from charms.certificate_transfer_interface.v1.certificate_transfer import CertificateTransferRequires
+from charms.certificate_transfer_interface.v1.certificate_transfer import (
+    CertificateTransferRequires,
+)
 from cosl import JujuTopology
 from ops import CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus
@@ -79,7 +81,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             return
 
         self.topology = JujuTopology.from_charm(self)
-        self.otel_config = Config.default_config()
+        self.otel_config = Config(
+            cast(bool, self.model.config.get("tls_insecure_skip_verify"))
+        ).default_config()
 
         self._reconcile()
 
@@ -134,7 +138,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container.push(CONFIG_PATH, self.otel_config.yaml, make_dirs=True)
         replan_manifest += self.otel_config.hash
 
-        container.add_layer(self._container_name, self._pebble_layer(replan_manifest), combine=True)
+        container.add_layer(
+            self._container_name, self._pebble_layer(replan_manifest), combine=True
+        )
         container.replan()
         self.unit.set_ports(
             *self.otel_config.ports
@@ -237,7 +243,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 f"prometheusremotewrite/{idx}",
                 {
                     "endpoint": endpoint["url"],
-                    "tls": {"insecure": True},  # TODO TLS
                 },
                 pipelines=["metrics"],
             )
