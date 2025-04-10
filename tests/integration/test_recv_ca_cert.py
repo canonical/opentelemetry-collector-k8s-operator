@@ -19,6 +19,16 @@ logger = logging.getLogger(__name__)
 TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
+def logs_contain_errors(logs):
+    assert "Failed to scrape" in logs
+    assert "unknown authority" in logs
+
+
+def logs_contain_no_errors(logs):
+    assert "Failed to scrape" not in logs
+    assert "unknown authority" not in logs
+
+
 async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: Otelcol fails to scrape metrics from a server signed by unknown authority."""
     sh.juju.switch(juju.model)
@@ -70,12 +80,32 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
     # THEN scrape fails
     # TODO make assertions less brittle
     logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
-    assert "Failed to scrape" in logs
-    assert "unknown authority" in logs
+    logs_contain_errors(logs)
 
     # Sample otelcol logs:
     # 2025-04-07T20:46:23.468Z [otelcol] 2025-04-07T20:46:23.468Z	debug	Scrape failed	{"otelcol.component.id": "prometheus", "otelcol.component.kind": "Receiver", "otelcol.signal": "metrics", "scrape_pool": "juju_welcome-k8s_39de1be4_am_prometheus_scrape", "target": "https://am-0.am-endpoints.welcome-k8s.svc.cluster.local:9093/metrics", "err": "Get \"https://am-0.am-endpoints.welcome-k8s.svc.cluster.local:9093/metrics\": tls: failed to verify certificate: x509: certificate signed by unknown authority"}
     # 2025-04-07T20:46:23.468Z [otelcol] 2025-04-07T20:46:23.468Z	warn	internal/transaction.go:129	Failed to scrape Prometheus endpoint	{"otelcol.component.id": "prometheus", "otelcol.component.kind": "Receiver", "otelcol.signal": "metrics", "scrape_timestamp": 1744058783465, "target_labels": "{__name__=\"up\", instance=\"welcome-k8s_39de1be4-832a-4e93-8f5f-c19abd31ebd2_am\", job=\"juju_welcome-k8s_39de1be4_am_prometheus_scrape\", juju_application=\"am\", juju_charm=\"alertmanager-k8s\", juju_model=\"welcome-k8s\", juju_model_uuid=\"39de1be4-832a-4e93-8f5f-c19abd31ebd2\"}"}
+
+
+def test_insecure_skip_verify(juju: jubilant.Juju):
+    scrape_interval = 60  # seconds!
+    lookback_window = scrape_interval + 10  # seconds!
+
+    # WHEN we skip certificate validation
+    juju.config("otelcol", {"tls_insecure_skip_verify": True})
+    # Wait for scrape interval (1 minute) to elapse
+    time.sleep(lookback_window)
+    logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
+    # THEN scrape succeeds
+    logs_contain_no_errors(logs)
+
+    # WHEN We validate certificates
+    juju.config("otelcol", {"tls_insecure_skip_verify": False})
+    # Wait for scrape interval (1 minute) to elapse
+    time.sleep(lookback_window)
+    logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
+    # THEN scrape fails
+    logs_contain_errors(logs)
 
 
 def test_with_ca_cert_forwarded(juju: jubilant.Juju):
@@ -92,8 +122,7 @@ def test_with_ca_cert_forwarded(juju: jubilant.Juju):
     # THEN scrape succeeds
     # TODO make assertions less brittle
     logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
-    assert "Failed to scrape" not in logs
-    assert "unknown authority" not in logs
+    logs_contain_no_errors(logs)
 
     # Sample otelcol log:
     # 2025-04-07T21:32:23.468Z [otelcol] 2025-04-07T21:32:23.468Z	info	Metrics	{"otelcol.component.id": "debug", "otelcol.component.kind": "Exporter", "otelcol.signal": "metrics", "resource metrics": 1, "metrics": 83, "data points": 206}

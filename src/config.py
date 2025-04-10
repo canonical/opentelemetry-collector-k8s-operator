@@ -27,7 +27,8 @@ PORTS = SimpleNamespace(
 class Config:
     """Configuration manager for OpenTelemetry Collector."""
 
-    def __init__(self):
+    def __init__(self, tls_insecure_skip_verify: bool = False):
+        self._tls_insecure_skip_verify = tls_insecure_skip_verify
         self._config = {
             "extensions": {},
             "receivers": {},
@@ -44,6 +45,7 @@ class Config:
     @property
     def yaml(self) -> str:
         """Return the config as a string."""
+        self.add_tls_insecure_skip_verify()
         self.add_debug_exporter()  # Ensures the config is valid
         return yaml.dump(self._config)
 
@@ -234,6 +236,18 @@ class Config:
             self.add_exporter(
                 "debug",
                 {"verbosity": "basic"},
+            )
+
+    def add_tls_insecure_skip_verify(self):
+        """Update `tls::insecure_skip_verify` in the otelcol config with the charm's config per exporter.
+
+        This allows the charm admin to skip verifying the certificate. Since we use the root cert
+        store we do not fine-grain the certs per exporter.
+        """
+        # Just update the section not overwrite the whole TLS section
+        for exporter in self._config["exporters"]:
+            self._config["exporters"][exporter].setdefault("tls", {}).setdefault(
+                "insecure_skip_verify", self._tls_insecure_skip_verify
             )
 
     def add_prometheus_scrape(self, jobs: List, incoming_metrics: bool):

@@ -18,7 +18,9 @@ from charms.prometheus_k8s.v0.prometheus_scrape import (
 from charms.prometheus_k8s.v1.prometheus_remote_write import (
     PrometheusRemoteWriteConsumer,
 )
-from charms.certificate_transfer_interface.v1.certificate_transfer import CertificateTransferRequires
+from charms.certificate_transfer_interface.v1.certificate_transfer import (
+    CertificateTransferRequires,
+)
 from cosl import JujuTopology
 from ops import CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus
@@ -79,7 +81,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             return
 
         self.topology = JujuTopology.from_charm(self)
-        self.otel_config = Config.default_config()
+        self.otel_config = Config(
+            cast(bool, self.model.config.get("tls_insecure_skip_verify"))
+        ).default_config()
 
         self._reconcile()
 
@@ -134,7 +138,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container.push(CONFIG_PATH, self.otel_config.yaml, make_dirs=True)
         replan_manifest += self.otel_config.hash
 
-        container.add_layer(self._container_name, self._pebble_layer(replan_manifest), combine=True)
+        container.add_layer(
+            self._container_name, self._pebble_layer(replan_manifest), combine=True
+        )
         container.replan()
         self.unit.set_ports(
             *self.otel_config.ports
@@ -237,7 +243,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 f"prometheusremotewrite/{idx}",
                 {
                     "endpoint": endpoint["url"],
-                    "tls": {"insecure": True, "insecure_skip_verify": self.model.config.get("tls_insecure_skip_verify")},  # TODO TLS
                 },
                 pipelines=["metrics"],
             )
@@ -279,13 +284,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 {
                     "endpoint": endpoint["url"],
                     "default_labels_enabled": {"exporter": False, "job": True},
-                    # TODO Can each exporter support insecure and insecure_skip_verify?
-                    # In the testdata/config.yaml I did not see this for most receivers/exporters
-                    # Where do I get the certs from? Vault?
-                    # How to test this: scenario and manually?
-                    # reload_interval allows us to reload without container restart? If the cert is in the replan_sentinal this doesnt matter
-                    # Do we want to blanket this in a script prior to rendering cfg.yaml? Will all exporters and receivers want the same certs?
-                    "tls": {"insecure": True, "insecure_skip_verify": self.model.config.get("tls_insecure_skip_verify")},
                 },
                 pipelines=["logs"],
             )
