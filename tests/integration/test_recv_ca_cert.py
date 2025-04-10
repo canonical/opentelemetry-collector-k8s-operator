@@ -20,11 +20,13 @@ TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
 def logs_contain_errors(logs):
+    # TODO make assertions less brittle
     assert "Failed to scrape" in logs
     assert "unknown authority" in logs
 
 
 def logs_contain_no_errors(logs):
+    # TODO make assertions less brittle
     assert "Failed to scrape" not in logs
     assert "unknown authority" not in logs
 
@@ -78,7 +80,6 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
     time.sleep(lookback_window)
 
     # THEN scrape fails
-    # TODO make assertions less brittle
     logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
     logs_contain_errors(logs)
 
@@ -120,7 +121,6 @@ def test_with_ca_cert_forwarded(juju: jubilant.Juju):
     time.sleep(lookback_window)
 
     # THEN scrape succeeds
-    # TODO make assertions less brittle
     logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
     logs_contain_no_errors(logs)
 
