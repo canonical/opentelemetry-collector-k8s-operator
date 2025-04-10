@@ -3,6 +3,7 @@
 
 """Feature: Relation-dependant Opentelemetry-collector config."""
 
+import json
 import yaml
 from ops.testing import Container, Relation, State
 from constants import CONFIG_PATH
@@ -95,5 +96,57 @@ def test_prometheus_exporter(ctx, execs):
     # AND one exporter per prometheus unit in relation exists in the config
     prom_exporters = [f"prometheusremotewrite/{idx}" for idx in range(len(remote_units_data))]
     assert set(prom_exporters).issubset(set(cfg["exporters"].keys()))
+    # AND the pipelines are valid
+    check_valid_pipelines(cfg)
+
+
+def test_cloud_integrator(ctx, execs):
+    """Scenario: Fan-out remote writing architecture."""
+    # GIVEN a relation to a Grafana Cloud Integrator unit
+    remote_units_data = {
+        0: {
+            "grafana_cloud_config": json.dumps(
+                {
+                    "loki_url": "http://fqdn-0:3100/loki/api/v1/push",
+                    "prometheus_url": "http://fqdn-1:9090/api/v1/write",
+                    "username": "user",
+                    "password": "pass",
+                }
+            )
+        },
+    }
+    data_sink = Relation(
+        endpoint="cloud-config",
+        interface="grafana_cloud_config",
+        remote_units_data=remote_units_data,
+    )
+    container = Container(name="otelcol", can_connect=True, execs=execs)
+    state_in = State(
+        relations=[data_sink],
+        containers=[container],
+    )
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state_in)
+    otelcol = state_out.get_container("otelcol")
+    # THEN the otelcol service has started
+    assert otelcol.services["otelcol"].is_running()
+    fs = otelcol.get_filesystem(ctx)
+    otelcol_config = fs.joinpath(*CONFIG_PATH.strip("/").split("/"))
+    # AND the otelcol config was pushed to the workload container
+    assert otelcol_config.exists()
+    cfg = yaml.safe_load(otelcol_config.read_text())
+    # AND the exporters for the cloud-integrator exists in the config
+    expected_exporters = {"loki/cloud-config", "prometheusremotewrite/cloud-config"}
+    assert expected_exporters.issubset(set(cfg["exporters"].keys()))
+    # AND the basicauth extension is configured
+    assert {"basicauth/cloud-config"}.issubset(set(cfg["extensions"].keys()))
+    # AND the exporters are using the basicauth configuration
+    assert (
+        cfg["exporters"]["loki/cloud-config"]["auth"]["authenticator"] == "basicauth/cloud-config"
+    )
+    assert (
+        cfg["exporters"]["prometheusremotewrite/cloud-config"]["auth"]["authenticator"]
+        == "basicauth/cloud-config"
+    )
     # AND the pipelines are valid
     check_valid_pipelines(cfg)

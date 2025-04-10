@@ -66,6 +66,10 @@ def receive_ca_certs(charm: CharmBase, container: Container) -> str:
     return sha256(yaml.safe_dump(ca_certs))
 
 
+def add_cloud_integrator(charm: CharmBase) -> None:
+    """Integrates with a grafana-cloud-integrator to enable telemetry forwarding."""
+
+
 class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
@@ -135,10 +139,22 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         cloud_integrator = GrafanaCloudConfigRequirer(self)
         # We're intentionally not getting the CA cert from Grafana Cloud Integrator;
         # we decided that we should only get certs from receive-ca-cert.
+        exporter_auth_config = {}
+        if credentials := cloud_integrator.credentials:
+            self.otel_config.add_extension(
+                "basicauth/cloud-integrator",
+                {
+                    "client_auth": {
+                        "username": credentials.username,
+                        "password": credentials.password,
+                    }
+                },
+            )
+            exporter_auth_config = {"auth": {"authenticator": "basicauth/cloud-integrator"}}
         if cloud_integrator.prometheus_ready:
             self.otel_config.add_exporter(
                 "prometheusremotewrite/cloud-integrator",
-                {"endpoint": cloud_integrator.prometheus_url},
+                {"endpoint": cloud_integrator.prometheus_url, **exporter_auth_config},
                 pipelines=["metrics"],
             )
         if cloud_integrator.loki_ready:
@@ -148,6 +164,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     "endpoint": cloud_integrator.loki_url,
                     "default_labels_enabled": {"exporter": False, "job": True},
                     "headers": {"Content-Encoding": "snappy"},  # TODO: check if this is needed
+                    **exporter_auth_config,
                 },
                 pipelines=["logs"],
             )
