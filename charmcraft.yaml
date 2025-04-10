@@ -90,7 +90,7 @@ config:
       default: true
     tls_insecure_skip_verify:
       description: |
-        Flag to skip the verification for insecure TLS.
+        Flag to skip the verification of certificates from servers we connect to with TLS.
         If "true", self-signed certs can be seamlessly used; this setting
         will be applied to all of the otelcol exporter configurations.
       type: boolean
