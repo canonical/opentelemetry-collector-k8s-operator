@@ -36,8 +36,6 @@ def _aggregate_alerts(rules: Dict, rule_path_map: PathMapping, forward_alert_rul
     rules = rules if forward_alert_rules else {}
     if os.path.exists(rule_path_map.dest):
         shutil.rmtree(rule_path_map.dest)
-    # TODO Why does scenario need this to find dirs
-    rule_path_map.src.mkdir(parents=True, exist_ok=True)
     shutil.copytree(rule_path_map.src, rule_path_map.dest)
     for topology_identifier, rule in rules.items():
         rule_file = Path(rule_path_map.dest) / f"juju_{topology_identifier}.rules"
@@ -102,8 +100,7 @@ def forward_dashboards(charm: CharmBase):
         relation_name="grafana-dashboards-provider",
         dashboards_path=dashboard_paths.dest,
     )
-    grafana_dashboards_provider._update_all_dashboards_from_dir()
-    # TODO replace with grafana_dashboards_provider.reload_dashboards()
+    grafana_dashboards_provider.reload_dashboards()
 
     # TODO Do we need to implement dashboard status changed logic?
     #   This propagates Grafana's errors to the charm which provided the dashboard
