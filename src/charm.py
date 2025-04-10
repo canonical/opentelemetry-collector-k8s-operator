@@ -237,7 +237,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 f"prometheusremotewrite/{idx}",
                 {
                     "endpoint": endpoint["url"],
-                    "tls": {"insecure": True},  # TODO TLS
+                    "tls": {"insecure": True, "insecure_skip_verify": self.model.config.get("tls_insecure_skip_verify")},  # TODO TLS
                 },
                 pipelines=["metrics"],
             )
@@ -279,7 +279,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 {
                     "endpoint": endpoint["url"],
                     "default_labels_enabled": {"exporter": False, "job": True},
-                    "tls": {"insecure": self.model.config.get("tls_insecure_skip_verify")},
+                    # TODO Can each exporter support insecure and insecure_skip_verify?
+                    # In the testdata/config.yaml I did not see this for most receivers/exporters
+                    # Where do I get the certs from? Vault?
+                    # How to test this: scenario and manually?
+                    # reload_interval allows us to reload without container restart? If the cert is in the replan_sentinal this doesnt matter
+                    # Do we want to blanket this in a script prior to rendering cfg.yaml? Will all exporters and receivers want the same certs?
+                    "tls": {"insecure": True, "insecure_skip_verify": self.model.config.get("tls_insecure_skip_verify")},
                 },
                 pipelines=["logs"],
             )
