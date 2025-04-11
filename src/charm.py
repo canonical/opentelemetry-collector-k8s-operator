@@ -8,7 +8,7 @@ import os
 import shutil
 from collections import namedtuple
 from pathlib import Path
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List, Optional, cast
 from constants import RECV_CA_CERT_FOLDER_PATH, CONFIG_PATH
 import yaml
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
@@ -21,7 +21,10 @@ from charms.prometheus_k8s.v1.prometheus_remote_write import (
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
 )
-from charms.grafana_cloud_integrator.v0.cloud_config_requirer import GrafanaCloudConfigRequirer
+from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
+    Credentials,
+    GrafanaCloudConfigRequirer,
+)
 from cosl import JujuTopology
 from ops import CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus
@@ -64,10 +67,6 @@ def receive_ca_certs(charm: CharmBase, container: Container) -> str:
 
     # A hot-reload doesn't pick up new system certs - need to restart the service
     return sha256(yaml.safe_dump(ca_certs))
-
-
-def add_cloud_integrator(charm: CharmBase) -> None:
-    """Integrates with a grafana-cloud-integrator to enable telemetry forwarding."""
 
 
 class OpenTelemetryCollectorK8sCharm(CharmBase):
@@ -139,35 +138,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         cloud_integrator = GrafanaCloudConfigRequirer(self, relation_name="cloud-config")
         # We're intentionally not getting the CA cert from Grafana Cloud Integrator;
         # we decided that we should only get certs from receive-ca-cert.
-        exporter_auth_config = {}
-        if credentials := cloud_integrator.credentials:
-            self.otel_config.add_extension(
-                "basicauth/cloud-integrator",
-                {
-                    "client_auth": {
-                        "username": credentials.username,
-                        "password": credentials.password,
-                    }
-                },
-            )
-            exporter_auth_config = {"auth": {"authenticator": "basicauth/cloud-integrator"}}
-        if cloud_integrator.prometheus_ready:
-            self.otel_config.add_exporter(
-                "prometheusremotewrite/cloud-integrator",
-                {"endpoint": cloud_integrator.prometheus_url, **exporter_auth_config},
-                pipelines=["metrics"],
-            )
-        if cloud_integrator.loki_ready:
-            self.otel_config.add_exporter(
-                "loki/cloud-integrator",
-                {
-                    "endpoint": cloud_integrator.loki_url,
-                    "default_labels_enabled": {"exporter": False, "job": True},
-                    "headers": {"Content-Encoding": "snappy"},  # TODO: check if this is needed
-                    **exporter_auth_config,
-                },
-                pipelines=["logs"],
-            )
+        self._add_cloud_integrator(
+            credentials=cloud_integrator.credentials,
+            prometheus_url=cloud_integrator.prometheus_url
+            if cloud_integrator.prometheus_ready
+            else None,
+            loki_url=cloud_integrator.loki_url if cloud_integrator.loki_ready else None,
+        )
 
         # TLS: receive-ca-cert
         replan_sentinel += receive_ca_certs(self, container)
@@ -350,6 +327,43 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                             "value": "container, job, filename, juju_application, juju_charm, juju_model, juju_model_uuid, juju_unit",
                         },
                     ]
+                },
+                pipelines=["logs"],
+            )
+
+    def _add_cloud_integrator(
+        self,
+        credentials: Optional[Credentials],
+        prometheus_url: Optional[str],
+        loki_url: Optional[str],
+    ):
+        """Configure forwarding telemetry to the endpoints provided by a cloud-integrator charm."""
+        exporter_auth_config = {}
+        if credentials:
+            self.otel_config.add_extension(
+                "basicauth/cloud-integrator",
+                {
+                    "client_auth": {
+                        "username": credentials.username,
+                        "password": credentials.password,
+                    }
+                },
+            )
+            exporter_auth_config = {"auth": {"authenticator": "basicauth/cloud-integrator"}}
+        if prometheus_url:
+            self.otel_config.add_exporter(
+                "prometheusremotewrite/cloud-integrator",
+                {"endpoint": prometheus_url, **exporter_auth_config},
+                pipelines=["metrics"],
+            )
+        if loki_url:
+            self.otel_config.add_exporter(
+                "loki/cloud-integrator",
+                {
+                    "endpoint": loki_url,
+                    "default_labels_enabled": {"exporter": False, "job": True},
+                    "headers": {"Content-Encoding": "snappy"},  # TODO: check if this is needed
+                    **exporter_auth_config,
                 },
                 pipelines=["logs"],
             )
