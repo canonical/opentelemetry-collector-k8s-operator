@@ -5,12 +5,13 @@
 
 import json
 import logging
+import socket
 import os
 import shutil
 from collections import namedtuple
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
-from constants import RECV_CA_CERT_FOLDER_PATH, CONFIG_PATH
+from constants import RECV_CA_CERT_FOLDER_PATH, CONFIG_PATH, SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH, SERVICE_NAME
 import yaml
 from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
@@ -27,9 +28,16 @@ from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
     Credentials,
     GrafanaCloudConfigRequirer,
 )
+from charms.tls_certificates_interface.v4.tls_certificates import (
+    Certificate,
+    CertificateRequestAttributes,
+    Mode,
+    PrivateKey,
+    TLSCertificatesRequiresV4,
+)
 from cosl import JujuTopology, LZMABase64
 from ops import CharmBase, main, Container
-from ops.model import ActiveStatus, MaintenanceStatus, Relation
+from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus, Relation
 from ops.pebble import Layer
 
 from config import PORTS, Config, sha256
@@ -133,6 +141,75 @@ def receive_ca_certs(charm: CharmBase, container: Container) -> str:
     return sha256(yaml.safe_dump(ca_certs))
 
 
+def server_cert(charm: CharmBase, container: Container) -> str:
+    """Write private key (from juju secret) and server cert (from relation data) to the workload container.
+
+    Returns:
+        Hash of server cert and private key, to be used as reload sentinel.
+    """
+    # Common name length must be >= 1 and <= 64, so fqdn is too long.
+    common_name = charm.unit.name.replace("/", "-")
+    domain = socket.getfqdn()
+    csr_attrs = CertificateRequestAttributes(common_name=common_name, sans_dns=frozenset({domain}))
+    certificates = TLSCertificatesRequiresV4(
+        charm=charm,
+        relationship_name="certificates",
+        certificate_requests=[csr_attrs],
+        mode=Mode.UNIT,
+    )
+
+    # The TLSCertificatesRequiresV4 lib is very much events-based:
+    #   WARNING unit.otelcol/0.juju-log certificates:12:
+    #   Reference to ops.Object at path OpenTelemetryCollectorK8sCharm/TLSCertificatesRequiresV4[certificates] has been
+    #   garbage collected between when the charm was initialised and when the event was emitted.
+    #   Make sure you store a reference to the observer.
+    # So we need to call _configure() ourselves:
+    certificates._configure(None)  # type: ignore[reportArgumentType]
+
+    # TODO: add relation-joined guard?
+    provider_certificate, private_key = certificates.get_assigned_certificate(certificate_request=csr_attrs)
+    if not provider_certificate or not private_key:
+        if not provider_certificate:
+            logger.debug("TLS disabled: Certificate is not available")
+        if not private_key:
+            logger.debug("TLS disabled: Private key is not available")
+
+        # Cleanup, in case this happens is after a "revoked" or "renewal" events.
+        container.remove_path(SERVER_CERT_PATH, recursive=True)
+        container.remove_path(SERVER_CERT_PRIVATE_KEY_PATH, recursive=True)
+        return sha256("")
+
+    existing_cert = container.pull(path=SERVER_CERT_PATH).read() if container.exists(path=SERVER_CERT_PATH) else ""
+    if not existing_cert or provider_certificate.certificate != Certificate.from_string(existing_cert):
+        container.push(path=f"{SERVER_CERT_PATH}", source=str(provider_certificate.certificate), make_dirs=True)
+        logger.info("Pushed certificate pushed to workload")
+
+    existing_key = container.pull(path=SERVER_CERT_PRIVATE_KEY_PATH).read() if container.exists(
+        path=SERVER_CERT_PRIVATE_KEY_PATH) else ""
+    if not existing_key or private_key != PrivateKey.from_string(existing_key):
+        container.push(
+            path=f"{SERVER_CERT_PRIVATE_KEY_PATH}",
+            source=str(private_key),
+            make_dirs=True,
+        )
+        logger.info("Pushed private key to workload")
+
+    # TODO somehow propagate config for the "tls" section
+    # - Having the tls-certificates relation in place semantically means we want TLS, so stop the service until we have
+    #   the cert.
+    # - When the cert is in ("TLS ready"), render the "tls:" section in the receivers' config.
+    #   - we need an external check, "is_tls_ready()". single source of truth: cert+key on disk.
+    # - if we don't store the CA cert then hot reload is enough
+
+    # TODO this is likely a reload sentinel, not a replan
+    return sha256(str(private_key) + str(provider_certificate.certificate))
+
+
+def is_server_cert_on_disk(container: Container) -> bool:
+    """Return True if the server cert and private key are present in the workload container."""
+    return container.exists(path=SERVER_CERT_PATH) and container.exists(path=SERVER_CERT_PRIVATE_KEY_PATH)
+
+
 class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
@@ -215,6 +292,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # TLS: receive-ca-cert
         replan_sentinel += receive_ca_certs(self, container)
 
+        # TLS: server cert
+        replan_sentinel += server_cert(self, container)
+        if server_cert_on_disk := is_server_cert_on_disk(container):
+            self.otel_config.enable_receiver_tls(SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH)
+
         # Push the config and Push the config and deploy/update
         container.push(CONFIG_PATH, self.otel_config.yaml, make_dirs=True)
         replan_sentinel += self.otel_config.hash
@@ -222,11 +304,17 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container.add_layer(
             self._container_name, self._pebble_layer(replan_sentinel), combine=True
         )
-        container.replan()
         self.unit.set_ports(
             *self.otel_config.ports
         )  # TODO Conditionally open ports based on the otelcol config file rather than opening all ports
-        self.unit.status = ActiveStatus()
+
+        if bool(self.model.relations.get("certificates")) and not server_cert_on_disk:
+            # A tls relation to a CA was formed, but we didn't get the cert yet.
+            container.stop(SERVICE_NAME)
+            self.unit.status = WaitingStatus("Waiting for cert")
+        else:
+            container.replan()
+            self.unit.status = ActiveStatus()
 
     def _pebble_layer(self, sentinel: str) -> Layer:
         """Construct the Pebble layer information.
@@ -239,7 +327,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "summary": "opentelemetry-collector-k8s layer",
                 "description": "opentelemetry-collector-k8s layer",
                 "services": {
-                    "otelcol": {
+                    SERVICE_NAME: {
                         "override": "replace",
                         "summary": "opentelemetry-collector-k8s service",
                         "command": f"/usr/bin/otelcol --config={CONFIG_PATH}",
@@ -261,12 +349,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     @property
     def _pebble_checks(self) -> Dict[str, Any]:
         """Pebble checks to run in the charm."""
+        scheme = "https" if is_server_cert_on_disk(self.unit.get_container(self._container_name)) else "http"
         checks = {
             "up": {
                 "override": "replace",
                 "level": "alive",
                 "period": "30s",
-                "http": {"url": f"http://localhost:{PORTS.HEALTH}/health"},  # TODO: TLS
+                "http": {"url": f"{scheme}://localhost:{PORTS.HEALTH}/health"},
             },
             "valid-config": {
                 "override": "replace",
