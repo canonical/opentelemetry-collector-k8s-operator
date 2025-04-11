@@ -3,7 +3,6 @@
 
 """Feature: Relation-dependant Opentelemetry-collector config."""
 
-import json
 import yaml
 from ops.testing import Container, Relation, State
 from constants import CONFIG_PATH
