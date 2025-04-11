@@ -48,20 +48,33 @@ class Config:
         """Return the config as a string."""
         # FIXME this builder method should not alter the underlying _config!
         self.add_debug_exporter()  # Ensures the config is valid
-        config = self._add_receiver_tls(self._config.copy(), self._cert_file, self._key_file)
+        config = self._add_receiver_tls(self._config, self._cert_file, self._key_file)
         return yaml.dump(config)
 
     @classmethod
-    def _add_receiver_tls(cls, config:dict, cert_file: str, key_file: str) -> dict:
+    def _add_receiver_tls(cls, config:dict, cert_file: Optional[str], key_file: Optional[str]) -> dict:
         """Return the updated config in a new dict.
 
         Ref: https://github.com/open-telemetry/opentelemetry-collector/blob/main/config/configtls/README.md#server-configuration
         """
         config = config.copy()
-        if cert_file and key_file:
-            pass
-            # TODO
+        if not cert_file or not key_file:
+            return config
+
+        for receiver in config.get("receivers", {}):
+            for protocol in {"http", "grpc"}:
+                try:
+                    section = config["receivers"][receiver]["protocols"][protocol]
+                except KeyError:
+                    continue
+                else:
+                    if "tls" not in section:
+                        section["tls"] = {}
+                    section["tls"]["key_file"] = key_file
+                    section["tls"]["cert_file"] = cert_file
+
         return config
+
 
     @property
     def hash(self):
