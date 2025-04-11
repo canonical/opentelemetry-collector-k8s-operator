@@ -35,7 +35,7 @@ async def test_metrics_pipeline(ops_test: OpsTest, charm: str, charm_resources: 
     av_app_name = "avalanche-k8s"
     otelcol_app_name = "otel-collector-k8s"
     prom_app_name = "prometheus-k8s"
-    await ops_test.model.deploy(av_app_name)
+    await ops_test.model.deploy(av_app_name, channel="1/edge")
     await ops_test.model.deploy(charm, otelcol_app_name, resources=charm_resources)
     await ops_test.model.deploy(prom_app_name, trust=True)
     # WHEN they are related to scrape and remote-write
@@ -57,6 +57,8 @@ async def test_metrics_pipeline(ops_test: OpsTest, charm: str, charm_resources: 
     await _retry_prom_jobs_api(f"http://{prom_ip}:9090/api/v1/label/juju_application/values")
     # AND avalanche metrics arrive in prometheus
     params = {"query": 'count({__name__=~"avalanche_metric_.+"})'}
-    data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/query", params=params).text)["data"]
+    data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/query", params=params).text)[
+        "data"
+    ]
     avalanche_metric_count = int(data["result"][0]["value"][1])
     assert avalanche_metric_count > 0
