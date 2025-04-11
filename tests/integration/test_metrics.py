@@ -58,7 +58,7 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
         relations:
         - - avalanche:metrics-endpoint
           - otelcol:metrics-endpoint
-        - - otel:send-remote-write
+        - - otelcol:send-remote-write
           - prometheus:receive-remote-write
 
     """)
