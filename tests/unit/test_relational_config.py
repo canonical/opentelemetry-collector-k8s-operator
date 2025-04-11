@@ -132,7 +132,7 @@ def test_cloud_integrator(ctx, execs):
     expected_exporters = {"loki/cloud-integrator", "prometheusremotewrite/cloud-integrator"}
     assert expected_exporters.issubset(set(cfg["exporters"].keys()))
     # AND the basicauth extension is configured
-    assert {"basicauth/cloud-integrator"}.issubset(set(cfg["extensions"].keys()))
+    assert "basicauth/cloud-integrator" in cfg["extensions"]
     # AND the exporters are using the basicauth configuration
     assert (
         cfg["exporters"]["loki/cloud-integrator"]["auth"]["authenticator"]
