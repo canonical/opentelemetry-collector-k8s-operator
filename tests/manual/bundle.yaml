@@ -1,0 +1,53 @@
+bundle: kubernetes
+applications:
+  av:
+    charm: avalanche-k8s
+    channel: 1/stable
+    revision: 47
+    resources:
+      avalanche-image: 20
+    scale: 1
+    constraints: arch=amd64
+  flog:
+    charm: flog-k8s
+    channel: latest/stable
+    revision: 6
+    base: ubuntu@20.04/stable
+    resources:
+      workload-image: 2
+    scale: 1
+    constraints: arch=amd64
+  loki:
+    charm: loki-k8s
+    channel: latest/stable
+    revision: 187
+    base: ubuntu@20.04/stable
+    resources:
+      loki-image: 100
+      node-exporter-image: 3
+    scale: 1
+    constraints: arch=amd64
+    trust: true
+  otelcol:
+    charm: local:opentelemetry-collector-k8s-0
+    scale: 1
+    constraints: arch=amd64
+  prom:
+    charm: prometheus-k8s
+    channel: latest/stable
+    revision: 232
+    base: ubuntu@20.04/stable
+    resources:
+      prometheus-image: 151
+    scale: 1
+    constraints: arch=amd64
+    trust: true
+relations:
+- - otelcol:metrics-endpoint
+  - av:metrics-endpoint
+- - otelcol:receive-loki-logs
+  - flog:log-proxy
+- - otelcol:send-loki-logs
+  - loki:logging
+- - otelcol:send-remote-write
+  - prom:receive-remote-write

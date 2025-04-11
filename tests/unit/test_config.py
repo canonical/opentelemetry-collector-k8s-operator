@@ -5,6 +5,7 @@
 
 import pytest
 import yaml
+import copy
 
 from src.config import Config
 
@@ -92,3 +93,67 @@ def test_rendered_default_is_valid():
     pairs = [(len(p["receivers"]) > 0, len(p["exporters"]) > 0) for p in pipelines]
     # AND each pipeline has at least one receiver-exporter pair
     assert all(all(condition for condition in pair) for pair in pairs)
+
+
+def test_receivers_tls_empty_config():
+    # GIVEN an "empty" config
+    config = Config()
+    # WHEN tls is enabled
+    config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
+    # THEN it has no effect on the rendered config
+    assert config.yaml == Config().yaml
+
+
+def test_receivers_tls_no_protocols():
+    # GIVEN a config without any protocols
+    config = Config()
+    config.add_receiver("prometheus", {"config": {"foo": "bar"}}, pipelines=["metrics"])
+
+    # TODO When we impl fluent config (with immutable builder), then we won't need to copy anymore, because we would:
+    #  yaml1 = config.enable_receiver_tls("foo", "bar").yaml
+    #  yaml2 = config.yaml
+    config_copy = copy.deepcopy(config)
+
+    # WHEN tls is enabled
+    config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
+
+    # THEN it has no effect on the rendered config
+    assert config.yaml == config_copy.yaml
+
+
+def test_receivers_tls_unknown_protocols():
+    # GIVEN a config with an unknown protocols
+    config = Config()
+    config.add_receiver("some_receiver", {"protocols": {"unknown_protocol_name": {"endpoint": "0.0.0.0:1234"}}}, pipelines=["metrics"])
+    config_copy = copy.deepcopy(config)
+
+    # WHEN tls is enabled
+    config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
+
+    # THEN it has no effect on the rendered config
+    assert config.yaml == config_copy.yaml
+
+
+def test_receivers_tls_known_protocols():
+    # GIVEN a config with known protocols (http, grpc)
+    config = Config()
+    config.add_receiver("some-http-receiver", {"protocols": {"http": {"endpoint": "0.0.0.0:1234"}}}, pipelines=["metrics"])
+    config.add_receiver("another-http-receiver", {"protocols": {"http": {"endpoint": "0.0.0.0:1235"}}}, pipelines=["metrics"])
+    config.add_receiver("some-grpc-receiver", {"protocols": {"grpc": {"endpoint": "0.0.0.0:5678"}}}, pipelines=["metrics"])
+    config.add_receiver("another-grpc-receiver", {"protocols": {"grpc": {"endpoint": "0.0.0.0:5679"}}}, pipelines=["metrics"])
+
+    # WHEN tls is enabled
+    config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
+    config_dict = yaml.safe_load(config.yaml)
+
+    # THEN all receivers' http, grpc protocols gain a tls section
+    for tls_section in (
+        config_dict["receivers"]["some-http-receiver"]["protocols"]["http"]["tls"],
+        config_dict["receivers"]["another-http-receiver"]["protocols"]["http"]["tls"],
+        config_dict["receivers"]["some-grpc-receiver"]["protocols"]["grpc"]["tls"],
+        config_dict["receivers"]["another-grpc-receiver"]["protocols"]["grpc"]["tls"],
+    ):
+        assert "key_file" in tls_section
+        assert tls_section["key_file"] == "/some/private.key"
+        assert "cert_file" in tls_section
+        assert tls_section["cert_file"] == "/some/cert.crt"
