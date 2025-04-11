@@ -220,11 +220,15 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     @property
     def _outgoing_metrics(self) -> bool:
-        return any(self.model.relations.get("send-remote-write", []))
+        return any(self.model.relations.get("send-remote-write", [])) or any(
+            self.model.relations.get("cloud-config", [])
+        )
 
     @property
     def _outgoing_logs(self) -> bool:
-        return any(self.model.relations.get("send-loki-logs", []))
+        return any(self.model.relations.get("send-loki-logs", [])) or any(
+            self.model.relations.get("cloud-config", [])
+        )
 
     def _add_self_scrape(self):
         """Configure self-monitoring scrape jobs."""
