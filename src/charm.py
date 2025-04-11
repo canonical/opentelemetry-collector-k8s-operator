@@ -77,14 +77,24 @@ def server_cert(charm: CharmBase, container: Container) -> str:
     Returns:
         Hash of server cert and private key, to be used as reload sentinel.
     """
+    # Common name length must be >= 1 and <= 64, so fqdn is too long.
+    common_name = charm.unit.name.replace("/", "-")
     domain = socket.getfqdn()
-    csr_attrs = CertificateRequestAttributes(common_name=domain, sans_dns=frozenset({domain}))
+    csr_attrs = CertificateRequestAttributes(common_name=common_name, sans_dns=frozenset({domain}))
     certificates = TLSCertificatesRequiresV4(
         charm=charm,
         relationship_name="certificates",
         certificate_requests=[csr_attrs],
         mode=Mode.UNIT,
     )
+
+    # The TLSCertificatesRequiresV4 lib is very much events-based:
+    #   WARNING unit.otelcol/0.juju-log certificates:12:
+    #   Reference to ops.Object at path OpenTelemetryCollectorK8sCharm/TLSCertificatesRequiresV4[certificates] has been
+    #   garbage collected between when the charm was initialised and when the event was emitted.
+    #   Make sure you store a reference to the observer.
+    # So we need to call _configure() ourselves:
+    certificates._configure(None)  # type: ignore[reportArgumentType]
 
     # TODO: add relation-joined guard?
     provider_certificate, private_key = certificates.get_assigned_certificate(certificate_request=csr_attrs)
@@ -100,13 +110,13 @@ def server_cert(charm: CharmBase, container: Container) -> str:
         return sha256("")
 
     existing_cert = container.pull(path=SERVER_CERT_PATH).read() if container.exists(path=SERVER_CERT_PATH) else ""
-    if provider_certificate.certificate != Certificate.from_string(existing_cert):
+    if not existing_cert or provider_certificate.certificate != Certificate.from_string(existing_cert):
         container.push(path=f"{SERVER_CERT_PATH}", source=str(provider_certificate.certificate), make_dirs=True)
         logger.info("Pushed certificate pushed to workload")
 
     existing_key = container.pull(path=SERVER_CERT_PRIVATE_KEY_PATH).read() if container.exists(
         path=SERVER_CERT_PRIVATE_KEY_PATH) else ""
-    if private_key != PrivateKey.from_string(existing_key):
+    if not existing_key or private_key != PrivateKey.from_string(existing_key):
         container.push(
             path=f"{SERVER_CERT_PRIVATE_KEY_PATH}",
             source=str(private_key),
