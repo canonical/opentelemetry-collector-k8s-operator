@@ -73,7 +73,7 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
     juju.wait(jubilant.all_active, delay=10, timeout=600)
     # THEN rules arrive in prometheus
     prom_ip = sh.kubectl.get.pod(
-        "prometheus", namespace=juju.model, o="jsonpath='{.items[*].status.podIP}'"
+        "prometheus-0", namespace=juju.model, o="jsonpath='{.items[*].status.podIP}'"
     )
     data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/rules").text)["data"]
     group_names = [group["name"] for group in data["groups"]]
