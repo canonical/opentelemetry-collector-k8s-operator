@@ -40,12 +40,28 @@ class Config:
                 "telemetry": {},
             },
         }
+        self._cert_file: Optional[str] = None
+        self._key_file: Optional[str] = None
 
     @property
     def yaml(self) -> str:
         """Return the config as a string."""
+        # FIXME this builder method should not alter the underlying _config!
         self.add_debug_exporter()  # Ensures the config is valid
-        return yaml.dump(self._config)
+        config = self._add_receiver_tls(self._config.copy(), self._cert_file, self._key_file)
+        return yaml.dump(config)
+
+    @classmethod
+    def _add_receiver_tls(cls, config:dict, cert_file: str, key_file: str) -> dict:
+        """Return the updated config in a new dict.
+
+        Ref: https://github.com/open-telemetry/opentelemetry-collector/blob/main/config/configtls/README.md#server-configuration
+        """
+        config = config.copy()
+        if cert_file and key_file:
+            pass
+            # TODO
+        return config
 
     @property
     def hash(self):
@@ -250,3 +266,20 @@ class Config:
                     scrape_job
                 )
         return self
+
+    def enable_receiver_tls(self, cert_file: str, key_file: str):
+        """Enable server (receivers) tls. Both cert_file and key_file must be set.
+
+        Raises:
+            ValueError, if either cert_file or key_file are empty.
+        """
+        if not cert_file or not key_file:
+            raise ValueError("Both cert_file and key_file must be set.")
+
+        self._cert_file = cert_file
+        self._key_file = key_file
+
+    def disable_receiver_tls(self):
+        """Disable server (receivers) tls."""
+        self._cert_file = None
+        self._key_file = None
