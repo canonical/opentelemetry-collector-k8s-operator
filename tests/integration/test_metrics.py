@@ -46,14 +46,17 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
           avalanche:
             charm: avalanche-k8s
             channel: 1/edge
+            scale: 1
             trust: true
           otelcol:
             charm: {charm}
+            scale: 1
             resources:
               opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}
           prometheus:
             charm: prometheus-k8s
             channel: latest/edge
+            scale: 1
             trust: true
         relations:
         - - avalanche:metrics-endpoint
