@@ -136,7 +136,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self._add_remote_write(remote_write.endpoints)
 
         # Enable forwarding telemetry with GrafanaCloudIntegrator
-        cloud_integrator = GrafanaCloudConfigRequirer(self)
+        cloud_integrator = GrafanaCloudConfigRequirer(self, relation_name="cloud-config")
         # We're intentionally not getting the CA cert from Grafana Cloud Integrator;
         # we decided that we should only get certs from receive-ca-cert.
         exporter_auth_config = {}

@@ -103,22 +103,16 @@ def test_prometheus_exporter(ctx, execs):
 def test_cloud_integrator(ctx, execs):
     """Scenario: Fan-out remote writing architecture."""
     # GIVEN a relation to a Grafana Cloud Integrator unit
-    remote_units_data = {
-        0: {
-            "grafana_cloud_config": json.dumps(
-                {
-                    "loki_url": "http://fqdn-0:3100/loki/api/v1/push",
-                    "prometheus_url": "http://fqdn-1:9090/api/v1/write",
-                    "username": "user",
-                    "password": "pass",
-                }
-            )
-        },
+    remote_app_data = {
+        "loki_url": "http://fqdn-0:3100/loki/api/v1/push",
+        "prometheus_url": "http://fqdn-1:9090/api/v1/write",
+        "username": "user",
+        "password": "pass",
     }
     data_sink = Relation(
         endpoint="cloud-config",
         interface="grafana_cloud_config",
-        remote_units_data=remote_units_data,
+        remote_app_data=remote_app_data,
     )
     container = Container(name="otelcol", can_connect=True, execs=execs)
     state_in = State(
@@ -136,17 +130,18 @@ def test_cloud_integrator(ctx, execs):
     assert otelcol_config.exists()
     cfg = yaml.safe_load(otelcol_config.read_text())
     # AND the exporters for the cloud-integrator exists in the config
-    expected_exporters = {"loki/cloud-config", "prometheusremotewrite/cloud-config"}
+    expected_exporters = {"loki/cloud-integrator", "prometheusremotewrite/cloud-integrator"}
     assert expected_exporters.issubset(set(cfg["exporters"].keys()))
     # AND the basicauth extension is configured
-    assert {"basicauth/cloud-config"}.issubset(set(cfg["extensions"].keys()))
+    assert {"basicauth/cloud-integrator"}.issubset(set(cfg["extensions"].keys()))
     # AND the exporters are using the basicauth configuration
     assert (
-        cfg["exporters"]["loki/cloud-config"]["auth"]["authenticator"] == "basicauth/cloud-config"
+        cfg["exporters"]["loki/cloud-integrator"]["auth"]["authenticator"]
+        == "basicauth/cloud-integrator"
     )
     assert (
-        cfg["exporters"]["prometheusremotewrite/cloud-config"]["auth"]["authenticator"]
-        == "basicauth/cloud-config"
+        cfg["exporters"]["prometheusremotewrite/cloud-integrator"]["auth"]["authenticator"]
+        == "basicauth/cloud-integrator"
     )
     # AND the pipelines are valid
     check_valid_pipelines(cfg)
