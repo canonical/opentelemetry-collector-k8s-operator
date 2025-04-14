@@ -239,12 +239,20 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "config": {
                     "scrape_configs": [
                         {
-                            "job_name": self.topology.identifier,  # This job name is overwritten with "otelcol" when remote-writing
+                            # This job name is overwritten with "otelcol" when remote-writing
+                            "job_name": f"juju_{self.topology.identifier}_self-monitoring",
                             "scrape_interval": "60s",
                             "static_configs": [
                                 {
                                     "targets": [f"0.0.0.0:{PORTS.METRICS}"],
-                                    "labels": self.topology.alert_expression_dict,
+                                    "labels": {
+                                        "instance": f"{self.topology.identifier}_{self.topology.unit}",
+                                        "juju_charm": self.topology.charm_name,
+                                        "juju_model": self.topology.model,
+                                        "juju_model_uuid": self.topology.model_uuid,
+                                        "juju_application": self.topology.application,
+                                        "juju_unit": self.topology.unit,
+                                    },
                                 }
                             ],
                         }
