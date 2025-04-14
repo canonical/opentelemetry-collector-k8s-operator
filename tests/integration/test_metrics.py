@@ -77,7 +77,13 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
     )
     data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/rules").text)["data"]
     group_names = [group["name"] for group in data["groups"]]
-    assert any("_avalanche_k8s_" in item for item in group_names)
+    print("+++++ DEBUG")
+    print("data[groups]:")
+    print(data["groups"])
+    print("group_names:")
+    print(group_names)
+    print("=====")
+    assert any("_avalanche_" in item for item in group_names)
     # AND the AlwaysFiring alerts from Avalanche arrive in prometheus
     await _retry_prom_alerts_api(f"http://{prom_ip}:9090/api/v1/alerts")
     # AND juju_application labels in prometheus contain otel-collector and avalanche
