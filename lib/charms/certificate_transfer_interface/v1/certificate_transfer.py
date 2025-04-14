@@ -92,7 +92,7 @@ juju integrate <certificate_transfer provider charm> <certificate_transfer requi
 
 import json
 import logging
-from typing import Dict, List, MutableMapping, Optional, Set
+from typing import List, MutableMapping, Optional, Set
 
 from ops import (
     CharmEvents,

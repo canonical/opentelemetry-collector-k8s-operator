@@ -75,11 +75,17 @@ requires:
     description: To forward collected logs to a Loki backend.
   receive-ca-cert:
     interface: certificate_transfer
+    optional: true
     description: |
       For otelcol to create a trusted (TLS) connection with servers
       it scrapes, pushes to, etc., it needs to trust the CA that signed
       the server it talks to. CA certs forwarded over this relation are
       installed in the root CA store.
+  cloud-config:
+    interface: grafana_cloud_config
+    optional: true
+    limit: 1
+    description: Forward telemetry to another Observability stack (Grafana Cloud, COS, etc.).
 
 config:
   options:
