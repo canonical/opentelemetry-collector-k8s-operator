@@ -5,7 +5,7 @@
 
 import pytest
 import yaml
-
+from copy import deepcopy
 from src.config import Config
 
 
@@ -83,7 +83,7 @@ def test_add_telemetry():
     assert cfg._config["service"]["telemetry"]["logs"] == {"level": "INFO"}
 
 
-def test_rendered_default_is_valid():
+def test_default_rendered_config_is_valid():
     # GIVEN a default config
     # WHEN the config is rendered
     cfg = yaml.safe_load(Config.default_config().yaml)
@@ -92,3 +92,26 @@ def test_rendered_default_is_valid():
     pairs = [(len(p["receivers"]) > 0, len(p["exporters"]) > 0) for p in pipelines]
     # AND each pipeline has at least one receiver-exporter pair
     assert all(all(condition for condition in pair) for pair in pairs)
+
+
+def test_insecure_skip_verify():
+    # GIVEN an empty config without exporters
+    cfg = Config()
+    cfg_copy = deepcopy(cfg)
+    # WHEN updating the tls::insecure_skip_verify exporter configuration
+    config_dict = cfg.add_exporter_insecure_skip_verify(cfg._config, False)
+    # THEN it has no effect on the rendered config
+    assert config_dict == cfg_copy._config
+
+    # WHEN multiple exporters are added
+    cfg.add_exporter("foo", {"config": {"foo": "bar"}})
+    cfg.add_exporter("bar", {"config": {"foo": "bar"}})
+    # AND the tls::insecure_skip_verify configuration is added
+    config_dict = cfg.add_exporter_insecure_skip_verify(cfg._config, False)
+    # THEN tls::insecure_skip_verify is set to False per exporter
+    assert all(not exp["tls"]["insecure_skip_verify"] for exp in config_dict["exporters"].values())
+
+    # WHEN updating an existing tls::insecure_skip_verify configuration
+    config_dict = cfg.add_exporter_insecure_skip_verify(cfg._config, True)
+    # THEN tls::insecure_skip_verify is set to True per exporter
+    assert all(exp["tls"]["insecure_skip_verify"] for exp in config_dict["exporters"].values())

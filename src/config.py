@@ -1,10 +1,12 @@
 """Helper module to build the configuration for OpenTelemetry Collector."""
 
-import yaml
-from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
 import hashlib
 import logging
+from copy import deepcopy
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +29,7 @@ PORTS = SimpleNamespace(
 class Config:
     """Configuration manager for OpenTelemetry Collector."""
 
-    def __init__(self, tls_insecure_skip_verify: bool = False):
-        self._tls_insecure_skip_verify = tls_insecure_skip_verify
+    def __init__(self):
         self._config = {
             "extensions": {},
             "receivers": {},
@@ -41,13 +42,15 @@ class Config:
                 "telemetry": {},
             },
         }
+        self._insecure_skip_verify: bool = False
 
     @property
     def yaml(self) -> str:
         """Return the config as a string."""
-        self.add_tls_insecure_skip_verify()
-        self.add_debug_exporter()  # Ensures the config is valid
-        return yaml.dump(self._config)
+        config = deepcopy(self)
+        config._add_debug_exporters()
+        config_dict = config.add_exporter_insecure_skip_verify(config._config, self._insecure_skip_verify)
+        return yaml.dump(config_dict)
 
     @property
     def hash(self):
@@ -190,7 +193,7 @@ class Config:
         self._config["service"]["telemetry"][category] = telem_config
         return self
 
-    def _add_to_pipeline(self, name: str, category: str, pipelines: List[str]):
+    def _add_to_pipeline(self, name: str, category: str, pipelines: List[str]) -> "Config":
         """Add a pipeline component to the service::pipelines config.
 
         Args:
@@ -217,13 +220,15 @@ class Config:
                 self._config["service"]["pipelines"][pipeline][category].append(name)
         return self
 
-    def add_debug_exporter(self):
+    def _add_debug_exporters(self):
         """A pipeline requires at least one receiver and exporter, otherwise the otelcol service errors.
 
         To avoid this scenario, we create the debug exporter and assign it in the pipeline for
         each signal type (logs, metrics, traces) which has a receiver without an exporter pair
         in the config. In other words, the charm has no outgoing relations for that signal type
         so we send them to debug.
+
+        IMPORTANT: This method should be run prior to rendering the config.
         """
         debug_exporter_required = False
         for signal in ["logs", "metrics", "traces"]:
@@ -233,22 +238,28 @@ class Config:
                     self._add_to_pipeline("debug", "exporters", [signal])
                     debug_exporter_required = True
         if debug_exporter_required:
-            self.add_exporter(
-                "debug",
-                {"verbosity": "basic"},
-            )
+            self.add_exporter("debug", {"verbosity": "basic"})
 
-    def add_tls_insecure_skip_verify(self):
+    def set_exporter_insecure_skip_verify(self, insecure_skip_verify: bool):
+        """Enable skipping client (exporters) certificate validation."""
+        self._insecure_skip_verify = insecure_skip_verify
+
+    @classmethod
+    def add_exporter_insecure_skip_verify(
+        cls, config: dict, insecure_skip_verify: bool = False
+    ) -> dict:
         """Update `tls::insecure_skip_verify` in the otelcol config with the charm's config per exporter.
 
         This allows the charm admin to skip verifying the certificate. Since we use the root cert
         store we do not fine-grain the certs per exporter.
+
+        IMPORTANT: This method should be run prior to rendering the config.
         """
-        # Just update the section not overwrite the whole TLS section
-        for exporter in self._config["exporters"]:
-            self._config["exporters"][exporter].setdefault("tls", {}).setdefault(
-                "insecure_skip_verify", self._tls_insecure_skip_verify
+        for exporter in config["exporters"]:
+            config["exporters"][exporter].setdefault("tls", {})["insecure_skip_verify"] = (
+                insecure_skip_verify
             )
+        return config
 
     def add_prometheus_scrape(self, jobs: List, incoming_metrics: bool):
         """Update the Prometheus receiver config with scrape jobs."""

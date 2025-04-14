@@ -85,9 +85,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             return
 
         self.topology = JujuTopology.from_charm(self)
-        self.otel_config = Config(
-            cast(bool, self.model.config.get("tls_insecure_skip_verify"))
-        ).default_config()
+        self.otel_config = Config.default_config()
 
         self._reconcile()
 
@@ -151,6 +149,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # TLS: receive-ca-cert
         replan_sentinel += receive_ca_certs(self, container)
 
+        # TLS: insecure-skip-verify
+        self.otel_config.set_exporter_insecure_skip_verify(
+            cast(bool, self.model.config.get("tls_insecure_skip_verify"))
+        )
+
         # Push the config and Push the config and deploy/update
         container.push(CONFIG_PATH, self.otel_config.yaml, make_dirs=True)
         replan_sentinel += self.otel_config.hash
@@ -159,9 +162,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self._container_name, self._pebble_layer(replan_sentinel), combine=True
         )
         container.replan()
-        self.unit.set_ports(
-            *self.otel_config.ports
-        )  # TODO Conditionally open ports based on the otelcol config file rather than opening all ports
+        # TODO Conditionally open ports based on the otelcol config file rather than opening all ports
+        self.unit.set_ports(*self.otel_config.ports)
         self.unit.status = ActiveStatus()
 
     def _pebble_layer(self, sentinel: str) -> Layer:

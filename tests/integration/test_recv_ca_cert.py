@@ -94,16 +94,14 @@ def test_insecure_skip_verify(juju: jubilant.Juju):
 
     # WHEN we skip certificate validation
     juju.config("otelcol", {"tls_insecure_skip_verify": True})
-    # Wait for scrape interval (1 minute) to elapse
-    time.sleep(lookback_window)
+    time.sleep(lookback_window)  # Wait for scrape interval (1 minute) to elapse
     logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
     # THEN scrape succeeds
     logs_contain_no_errors(logs)
 
-    # WHEN We validate certificates
+    # WHEN we validate certificates
     juju.config("otelcol", {"tls_insecure_skip_verify": False})
-    # Wait for scrape interval (1 minute) to elapse
-    time.sleep(lookback_window)
+    time.sleep(lookback_window)  # Wait for scrape interval (1 minute) to elapse
     logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
     # THEN scrape fails
     logs_contain_errors(logs)
