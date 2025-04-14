@@ -32,7 +32,7 @@ async def _retry_prom_alerts_api(endpoint: str):
 async def _retry_prom_jobs_api(endpoint: str):
     job_names = json.loads(request("GET", endpoint).text)["data"]
     assert any("avalanche" in item for item in job_names)
-    assert any("otel-collector-k8s" in item for item in job_names)
+    assert any("otelcol" in item for item in job_names)
 
 
 async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
