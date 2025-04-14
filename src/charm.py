@@ -3,6 +3,7 @@
 # See LICENSE file for licensing details.
 """A Juju charm for OpenTelemetry Collector on Kubernetes."""
 
+import json
 import logging
 import os
 import shutil
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 from constants import RECV_CA_CERT_FOLDER_PATH, CONFIG_PATH
 import yaml
+from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
@@ -25,28 +27,90 @@ from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
     Credentials,
     GrafanaCloudConfigRequirer,
 )
-from cosl import JujuTopology
+from cosl import JujuTopology, LZMABase64
 from ops import CharmBase, main, Container
-from ops.model import ActiveStatus, MaintenanceStatus
+from ops.model import ActiveStatus, MaintenanceStatus, Relation
 from ops.pebble import Layer
 
 from config import PORTS, Config, sha256
 
 logger = logging.getLogger(__name__)
-RulesMapping = namedtuple("RulesMapping", ["src", "dest"])
+PathMapping = namedtuple("PathMapping", ["src", "dest"])
 
 
-def _aggregate_alerts(rules: Dict, rule_path_map: RulesMapping, forward_alert_rules: bool):
+def _aggregate_alerts(rules: Dict, rule_path_map: PathMapping, forward_alert_rules: bool):
     rules = rules if forward_alert_rules else {}
     if os.path.exists(rule_path_map.dest):
         shutil.rmtree(rule_path_map.dest)
-    # TODO Why does scenario need this to find dirs
-    rule_path_map.src.mkdir(parents=True, exist_ok=True)
     shutil.copytree(rule_path_map.src, rule_path_map.dest)
     for topology_identifier, rule in rules.items():
         rule_file = Path(rule_path_map.dest) / f"juju_{topology_identifier}.rules"
         rule_file.write_text(yaml.safe_dump(rule))
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
+
+
+def get_dashboards(relations: List[Relation]) -> List[Dict[str, Any]]:
+    """Returns a deduplicated list of all dashboards received by this otelcol."""
+    aggregate = {}
+    for rel in relations:
+        dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
+        if "templates" not in dashboards:
+            continue
+        for template in dashboards["templates"]:
+            content = json.loads(
+                LZMABase64.decompress(dashboards["templates"][template].get("content"))
+            )
+            entry = {
+                "charm": dashboards["templates"][template].get("charm", "charm_name"),
+                "relation_id": rel.id,
+                "title": template,
+                "content": content,
+            }
+            aggregate[template] = entry
+
+    return list(aggregate.values())
+
+
+def forward_dashboards(charm: CharmBase):
+    """Instantiate the GrafanaDashboardProvider and update the dashboards in the relation databag.
+
+    First, dashboards from relations (including those bundled with Otelcol) and save them to disk.
+    Then, update the relation databag with these dashboards for Grafana.
+    """
+    charm_root = charm.charm_dir.absolute()
+    dashboard_paths = PathMapping(
+        src=charm_root.joinpath(*"src/grafana_dashboards".split("/")),
+        dest=charm_root.joinpath(*"grafana_dashboards".split("/")),
+    )
+    if not os.path.isdir(dashboard_paths.dest):
+        shutil.copytree(dashboard_paths.src, dashboard_paths.dest, dirs_exist_ok=True)
+
+    # The leader copies dashboards from relations and save them to disk."""
+    if not charm.unit.is_leader():
+        return
+    shutil.rmtree(dashboard_paths.dest)
+    shutil.copytree(dashboard_paths.src, dashboard_paths.dest)
+    for dash in get_dashboards(charm.model.relations["grafana-dashboards-consumer"]):
+        # Build dashboard custom filename
+        charm_name = dash.get("charm", "charm-name")
+        rel_id = dash.get("relation_id", "rel_id")
+        title = dash.get("title", "").replace(" ", "_").replace("/", "_").lower()
+        filename = f"juju_{title}-{charm_name}-{rel_id}.json"
+        with open(Path(dashboard_paths.dest, filename), mode="w", encoding="utf-8") as f:
+            f.write(json.dumps(dash["content"]))
+            logger.debug("updated dashboard file %s", f.name)
+
+    # Scan the built-in dashboards and update relations with changes
+    grafana_dashboards_provider = GrafanaDashboardProvider(
+        charm,
+        relation_name="grafana-dashboards-provider",
+        dashboards_path=dashboard_paths.dest,
+    )
+    grafana_dashboards_provider.reload_dashboards()
+
+    # TODO Do we need to implement dashboard status changed logic?
+    #   This propagates Grafana's errors to the charm which provided the dashboard
+    # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
 
 def receive_ca_certs(charm: CharmBase, container: Container) -> str:
@@ -97,8 +161,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         replan_sentinel: str = ""
         insecure_skip_verify = cast(bool, self.model.config.get("tls_insecure_skip_verify"))
 
+        forward_dashboards(self)
+
         # Logs setup
-        loki_rules_paths = RulesMapping(
+        loki_rules_paths = PathMapping(
             src=charm_root.joinpath(*self._loki_rules_src_path.split("/")),
             dest=charm_root.joinpath(*self._loki_rules_dest_path.split("/")),
         )
@@ -119,7 +185,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self._add_log_forwarding(loki_consumer.loki_endpoints, insecure_skip_verify)
 
         # Metrics setup
-        metrics_rules_paths = RulesMapping(
+        metrics_rules_paths = PathMapping(
             src=charm_root.joinpath(*self._metrics_rules_src_path.split("/")),
             dest=charm_root.joinpath(*self._metrics_rules_dest_path.split("/")),
         )
