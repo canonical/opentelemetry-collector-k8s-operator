@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
+
 """Feature: Opentelemetry-collector config builder."""
 
 import pytest

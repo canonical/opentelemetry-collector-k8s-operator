@@ -52,6 +52,10 @@ resources:
     upstream-source: ghcr.io/canonical/opentelemetry-collector:dev
 
 provides:
+  grafana-dashboards-provider:
+    interface: grafana_dashboard
+    description: |
+      Send own and aggregated dashboards to grafana.
   receive-loki-logs:
     interface: loki_push_api
     optional: true
@@ -61,6 +65,10 @@ provides:
   #   interface: prometheus_remote_write
 
 requires:
+  grafana-dashboards-consumer:
+    interface: grafana_dashboard
+    description: |
+      Collect dashboards to be forwarded to grafana.
   metrics-endpoint:
     interface: prometheus_scrape
     optional: true
