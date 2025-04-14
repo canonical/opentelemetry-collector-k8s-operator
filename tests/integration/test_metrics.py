@@ -31,7 +31,7 @@ async def _retry_prom_alerts_api(endpoint: str):
 @retry(stop=stop_after_attempt(7), wait=wait_fixed(5))
 async def _retry_prom_jobs_api(endpoint: str):
     job_names = json.loads(request("GET", endpoint).text)["data"]
-    assert any("avalanche-k8s" in item for item in job_names)
+    assert any("avalanche" in item for item in job_names)
     assert any("otel-collector-k8s" in item for item in job_names)
 
 
