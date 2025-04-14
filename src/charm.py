@@ -8,7 +8,7 @@ import os
 import shutil
 from collections import namedtuple
 from pathlib import Path
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List, Optional, cast
 from constants import RECV_CA_CERT_FOLDER_PATH, CONFIG_PATH
 import yaml
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
@@ -20,6 +20,10 @@ from charms.prometheus_k8s.v1.prometheus_remote_write import (
 )
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
+)
+from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
+    Credentials,
+    GrafanaCloudConfigRequirer,
 )
 from cosl import JujuTopology
 from ops import CharmBase, main, Container
@@ -92,6 +96,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container = self.unit.get_container(self._container_name)
         charm_root = self.charm_dir.absolute()
         forward_alert_rules = cast(bool, self.config["forward_alert_rules"])
+        replan_sentinel: str = ""
 
         # Logs setup
         loki_rules_paths = RulesMapping(
@@ -131,15 +136,27 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         remote_write.reload_alerts()
         self._add_remote_write(remote_write.endpoints)
 
-        # TLS: receive-ca-cert
-        replan_manifest = receive_ca_certs(self, container)
+        # Enable forwarding telemetry with GrafanaCloudIntegrator
+        cloud_integrator = GrafanaCloudConfigRequirer(self, relation_name="cloud-config")
+        # We're intentionally not getting the CA cert from Grafana Cloud Integrator;
+        # we decided that we should only get certs from receive-ca-cert.
+        self._add_cloud_integrator(
+            credentials=cloud_integrator.credentials,
+            prometheus_url=cloud_integrator.prometheus_url
+            if cloud_integrator.prometheus_ready
+            else None,
+            loki_url=cloud_integrator.loki_url if cloud_integrator.loki_ready else None,
+        )
 
-        # Deploy/update
+        # TLS: receive-ca-cert
+        replan_sentinel += receive_ca_certs(self, container)
+
+        # Push the config and Push the config and deploy/update
         container.push(CONFIG_PATH, self.otel_config.yaml, make_dirs=True)
-        replan_manifest += self.otel_config.hash
+        replan_sentinel += self.otel_config.hash
 
         container.add_layer(
-            self._container_name, self._pebble_layer(replan_manifest), combine=True
+            self._container_name, self._pebble_layer(replan_sentinel), combine=True
         )
         container.replan()
         self.unit.set_ports(
@@ -205,11 +222,15 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     @property
     def _outgoing_metrics(self) -> bool:
-        return any(self.model.relations.get("send-remote-write", []))
+        return any(self.model.relations.get("send-remote-write", [])) or any(
+            self.model.relations.get("cloud-config", [])
+        )
 
     @property
     def _outgoing_logs(self) -> bool:
-        return any(self.model.relations.get("send-loki-logs", []))
+        return any(self.model.relations.get("send-loki-logs", [])) or any(
+            self.model.relations.get("cloud-config", [])
+        )
 
     def _add_self_scrape(self):
         """Configure self-monitoring scrape jobs."""
@@ -220,12 +241,20 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "config": {
                     "scrape_configs": [
                         {
-                            "job_name": self.topology.identifier,  # This job name is overwritten with "otelcol" when remote-writing
+                            # This job name is overwritten with "otelcol" when remote-writing
+                            "job_name": f"juju_{self.topology.identifier}_self-monitoring",
                             "scrape_interval": "60s",
                             "static_configs": [
                                 {
                                     "targets": [f"0.0.0.0:{PORTS.METRICS}"],
-                                    "labels": self.topology.alert_expression_dict,
+                                    "labels": {
+                                        "instance": f"{self.topology.identifier}_{self.topology.unit}",
+                                        "juju_charm": self.topology.charm_name,
+                                        "juju_model": self.topology.model,
+                                        "juju_model_uuid": self.topology.model_uuid,
+                                        "juju_application": self.topology.application,
+                                        "juju_unit": self.topology.unit,
+                                    },
                                 }
                             ],
                         }
@@ -311,6 +340,43 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                             "value": "container, job, filename, juju_application, juju_charm, juju_model, juju_model_uuid, juju_unit",
                         },
                     ]
+                },
+                pipelines=["logs"],
+            )
+
+    def _add_cloud_integrator(
+        self,
+        credentials: Optional[Credentials],
+        prometheus_url: Optional[str],
+        loki_url: Optional[str],
+    ):
+        """Configure forwarding telemetry to the endpoints provided by a cloud-integrator charm."""
+        exporter_auth_config = {}
+        if credentials:
+            self.otel_config.add_extension(
+                "basicauth/cloud-integrator",
+                {
+                    "client_auth": {
+                        "username": credentials.username,
+                        "password": credentials.password,
+                    }
+                },
+            )
+            exporter_auth_config = {"auth": {"authenticator": "basicauth/cloud-integrator"}}
+        if prometheus_url:
+            self.otel_config.add_exporter(
+                "prometheusremotewrite/cloud-integrator",
+                {"endpoint": prometheus_url, **exporter_auth_config},
+                pipelines=["metrics"],
+            )
+        if loki_url:
+            self.otel_config.add_exporter(
+                "loki/cloud-integrator",
+                {
+                    "endpoint": loki_url,
+                    "default_labels_enabled": {"exporter": False, "job": True},
+                    "headers": {"Content-Encoding": "snappy"},  # TODO: check if this is needed
+                    **exporter_auth_config,
                 },
                 pipelines=["logs"],
             )
