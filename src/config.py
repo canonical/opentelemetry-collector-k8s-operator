@@ -256,6 +256,8 @@ class Config:
         IMPORTANT: This method should be run prior to rendering the config.
         """
         for exporter in config["exporters"]:
+            if exporter.split("/")[0] == "debug":
+                continue
             config["exporters"][exporter].setdefault("tls", {})["insecure_skip_verify"] = (
                 insecure_skip_verify
             )
