@@ -21,14 +21,22 @@ TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 def logs_contain_errors(logs):
     # TODO make assertions less brittle
+    # Receiver failure
     assert "Failed to scrape" in logs
     assert "unknown authority" in logs
+    # Exporter failure
+    assert "Exporting failed. Dropping data." in logs
+    assert "context deadline exceeded" in logs
 
 
 def logs_contain_no_errors(logs):
     # TODO make assertions less brittle
+    # Receiver failure
     assert "Failed to scrape" not in logs
     assert "unknown authority" not in logs
+    # Exporter failure
+    assert "Exporting failed. Dropping data." not in logs
+    assert "context deadline exceeded" not in logs
 
 
 async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
@@ -42,7 +50,7 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
         applications:
           am:
             charm: alertmanager-k8s
-            channel: latest/edge
+            channel: latest/stable
             revision: 158
             base: ubuntu@20.04/stable
             resources:
@@ -56,6 +64,16 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
             constraints: arch=amd64
             resources:
                 opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}
+          prom:
+            charm: prometheus-k8s
+            channel: latest/stable
+            revision: 234
+            base: ubuntu@20.04/stable
+            resources:
+              prometheus-image: 151
+            scale: 1
+            constraints: arch=amd64
+            trust: true
           ssc:
             charm: self-signed-certificates
             channel: 1/stable
@@ -67,6 +85,10 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
           - otelcol:metrics-endpoint
         - - am:certificates
           - ssc:certificates
+        - - ssc:certificates
+          - prom:certificates
+        - - prom:receive-remote-write
+          - otelcol:send-remote-write
     """)
     with tempfile.NamedTemporaryFile(dir=TEMP_DIR, suffix=".yaml") as f:
         f.write(bundle.encode())
@@ -80,7 +102,9 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
     time.sleep(lookback_window)
 
     # THEN scrape fails
-    logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
+    logs = sh.kubectl.logs(
+        "otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
+    )
     logs_contain_errors(logs)
 
     # Sample otelcol logs:
@@ -95,14 +119,18 @@ def test_insecure_skip_verify(juju: jubilant.Juju):
     # WHEN we skip certificate validation
     juju.config("otelcol", {"tls_insecure_skip_verify": True})
     time.sleep(lookback_window)  # Wait for scrape interval (1 minute) to elapse
-    logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
+    logs = sh.kubectl.logs(
+        "otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
+    )
     # THEN scrape succeeds
     logs_contain_no_errors(logs)
 
     # WHEN we validate certificates
     juju.config("otelcol", {"tls_insecure_skip_verify": False})
     time.sleep(lookback_window)  # Wait for scrape interval (1 minute) to elapse
-    logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
+    logs = sh.kubectl.logs(
+        "otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
+    )
     # THEN scrape fails
     logs_contain_errors(logs)
 
@@ -119,7 +147,9 @@ def test_with_ca_cert_forwarded(juju: jubilant.Juju):
     time.sleep(lookback_window)
 
     # THEN scrape succeeds
-    logs = sh.kubectl.logs("otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s")
+    logs = sh.kubectl.logs(
+        "otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
+    )
     logs_contain_no_errors(logs)
 
     # Sample otelcol log:

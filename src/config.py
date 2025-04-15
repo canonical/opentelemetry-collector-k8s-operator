@@ -42,15 +42,13 @@ class Config:
                 "telemetry": {},
             },
         }
-        self._insecure_skip_verify: bool = False
 
     @property
     def yaml(self) -> str:
         """Return the config as a string."""
         config = deepcopy(self)
         config._add_debug_exporters()
-        config_dict = config.add_exporter_insecure_skip_verify(config._config, self._insecure_skip_verify)
-        return yaml.dump(config_dict)
+        return yaml.dump(config._config)
 
     @property
     def hash(self):
@@ -239,29 +237,6 @@ class Config:
                     debug_exporter_required = True
         if debug_exporter_required:
             self.add_exporter("debug", {"verbosity": "basic"})
-
-    def set_exporter_insecure_skip_verify(self, insecure_skip_verify: bool):
-        """Enable skipping client (exporters) certificate validation."""
-        self._insecure_skip_verify = insecure_skip_verify
-
-    @classmethod
-    def add_exporter_insecure_skip_verify(
-        cls, config: dict, insecure_skip_verify: bool = False
-    ) -> dict:
-        """Update `tls::insecure_skip_verify` in the otelcol config with the charm's config per exporter.
-
-        This allows the charm admin to skip verifying the certificate. Since we use the root cert
-        store we do not fine-grain the certs per exporter.
-
-        IMPORTANT: This method should be run prior to rendering the config.
-        """
-        for exporter in config["exporters"]:
-            if exporter.split("/")[0] == "debug":
-                continue
-            config["exporters"][exporter].setdefault("tls", {})["insecure_skip_verify"] = (
-                insecure_skip_verify
-            )
-        return config
 
     def add_prometheus_scrape(self, jobs: List, incoming_metrics: bool):
         """Update the Prometheus receiver config with scrape jobs."""
