@@ -108,7 +108,7 @@ def forward_dashboards(charm: CharmBase):
     )
     grafana_dashboards_provider.reload_dashboards()
 
-    # TODO Do we need to implement dashboard status changed logic?
+    # TODO: Do we need to implement dashboard status changed logic?
     #   This propagates Grafana's errors to the charm which provided the dashboard
     # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
