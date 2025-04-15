@@ -49,3 +49,5 @@ relations:
   - prometheus:receive-remote-write
 - - otelcol:send-loki-logs
   - loki:logging
+- - otelcol:grafana-dashboards-provider
+  - grafana:grafana-dashboard
