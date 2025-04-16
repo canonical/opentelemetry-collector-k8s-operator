@@ -62,7 +62,8 @@ def charm_resources(metadata_file="charmcraft.yaml") -> Dict[str, str]:
     return resources
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def juju():
-    with jubilant.temp_model() as juju:
+    keep_models: bool = os.environ.get("KEEP_MODELS") is not None
+    with jubilant.temp_model(keep=keep_models) as juju:
         yield juju
