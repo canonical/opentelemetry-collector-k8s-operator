@@ -94,6 +94,14 @@ requires:
     optional: true
     limit: 1
     description: Forward telemetry to another Observability stack (Grafana Cloud, COS, etc.).
+  certificates:
+    interface: tls-certificates
+    optional: true
+    limit: 1
+    description: |
+      Obtain a certificate from a CA.
+      The charm sends a CSR over this relation and receives a signed certificate back.
+      That is the cert that would be presented to incoming TLS connections.
 
 config:
   options:
