@@ -1,0 +1,53 @@
+bundle: kubernetes
+applications:
+  avalanche:
+    charm: avalanche-k8s
+    channel: 1/edge
+    scale: 1
+    constraints: arch=amd64
+    trust: true
+  flog:
+    charm: flog-k8s
+    channel: latest/edge
+    scale: 1
+    constraints: arch=amd64
+    trust: true
+  grafana:
+    charm: grafana-k8s
+    channel: latest/edge
+    scale: 1
+    constraints: arch=amd64
+    trust: true
+  loki:
+    charm: loki-k8s
+    channel: latest/edge
+    scale: 1
+    constraints: arch=amd64
+    trust: true
+  otelcol:
+    charm: ../../opentelemetry-collector-k8s_ubuntu@24.04-amd64.charm
+    resources:
+      opentelemetry-collector-image: ubuntu/opentelemetry-collector:0.123-24.04
+    scale: 1
+    constraints: arch=amd64
+  prometheus:
+    charm: prometheus-k8s
+    channel: latest/edge
+    scale: 1
+    constraints: arch=amd64
+    trust: true
+relations:
+- - prometheus:grafana-source
+  - grafana:grafana-source
+- - loki:grafana-source
+  - grafana:grafana-source
+- - avalanche:metrics-endpoint
+  - otelcol:metrics-endpoint
+- - flog:log-proxy
+  - otelcol:receive-loki-logs
+- - otelcol:send-remote-write
+  - prometheus:receive-remote-write
+- - otelcol:send-loki-logs
+  - loki:logging
+- - otelcol:grafana-dashboards-provider
+  - grafana:grafana-dashboard
