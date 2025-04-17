@@ -238,7 +238,7 @@ class Config:
         if debug_exporter_required:
             self.add_exporter("debug", {"verbosity": "basic"})
 
-    def add_prometheus_scrape(self, jobs: List, incoming_metrics: bool):
+    def add_prometheus_scrape(self, jobs: List, incoming_metrics: bool, insecure_skip_verify: bool = False):
         """Update the Prometheus receiver config with scrape jobs."""
         # For now, the only incoming and outgoing metrics relations are remote-write/scrape,
         # so we don't need to mix and match between them yet.
@@ -248,6 +248,7 @@ class Config:
                 "config", {}
             ).setdefault("scrape_configs", [])
             for scrape_job in jobs:
+                scrape_job.update({"tls_config": {"insecure_skip_verify": insecure_skip_verify}})
                 self._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(
                     scrape_job
                 )

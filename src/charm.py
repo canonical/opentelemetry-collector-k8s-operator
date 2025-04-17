@@ -181,7 +181,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         _aggregate_alerts(loki_provider.alerts, loki_rules_paths, forward_alert_rules)
         loki_consumer.reload_alerts()
-        self._add_log_ingestion()
+        self._add_log_ingestion(insecure_skip_verify)
         self._add_log_forwarding(loki_consumer.loki_endpoints, insecure_skip_verify)
 
         # Metrics setup
@@ -192,8 +192,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Receive alert rules and scrape jobs
         metrics_consumer = MetricsEndpointConsumer(self)
         _aggregate_alerts(metrics_consumer.alerts, metrics_rules_paths, forward_alert_rules)
-        self._add_self_scrape()
-        self.otel_config.add_prometheus_scrape(metrics_consumer.jobs(), self._incoming_metrics)
+        self._add_self_scrape(insecure_skip_verify)
+        self.otel_config.add_prometheus_scrape(metrics_consumer.jobs(), self._incoming_metrics, insecure_skip_verify)
         # Forward alert rules and scrape jobs to Prometheus
         remote_write = PrometheusRemoteWriteConsumer(
             self, alert_rules_path=metrics_rules_paths.dest
@@ -211,7 +211,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             if cloud_integrator.prometheus_ready
             else None,
             loki_url=cloud_integrator.loki_url if cloud_integrator.loki_ready else None,
-            insecure_skip_verify=insecure_skip_verify
+            insecure_skip_verify=insecure_skip_verify,
         )
 
         # TLS: receive-ca-cert
@@ -297,7 +297,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.model.relations.get("cloud-config", [])
         )
 
-    def _add_self_scrape(self):
+    def _add_self_scrape(self, insecure_skip_verify: bool):
         """Configure self-monitoring scrape jobs."""
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusreceiver
         self.otel_config.add_receiver(
@@ -322,6 +322,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                                     },
                                 }
                             ],
+                            "tls_config": {"insecure_skip_verify": insecure_skip_verify}
                         }
                     ]
                 }
@@ -345,7 +346,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # TODO Receive alert rules via remote write
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
 
-    def _add_log_ingestion(self):
+    def _add_log_ingestion(self, insecure_skip_verify: bool):
         """Configure receiving logs, allowing Promtail instances to specify the Otelcol as their lokiAddress."""
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/lokireceiver
 
@@ -356,7 +357,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "loki",
                 {
                     "protocols": {
-                        "http": {"endpoint": f"0.0.0.0:{PORTS.LOKI_HTTP}"},
+                        "http": {
+                            "endpoint": f"0.0.0.0:{PORTS.LOKI_HTTP}",
+                            "tls": {"insecure_skip_verify": insecure_skip_verify},
+                        },
                     },
                     "use_incoming_timestamp": True,
                 },

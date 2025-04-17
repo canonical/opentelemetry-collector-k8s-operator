@@ -108,12 +108,15 @@ def test_add_prometheus_scrape():
                     "static_configs": [{"targets": ["*:9001"]}],
                     "job_name": "first_job",
                     "scrape_interval": "15s",
+                    # Added by add_prometheus_scrape
+                    "tls_config": {"insecure_skip_verify": True}
                 },
-            ]
+            ],
         }
     }
-    cfg.add_prometheus_scrape(first_job, True)
+    cfg.add_prometheus_scrape(first_job, True, insecure_skip_verify=True)
     # THEN it exists in the prometheus receiver config
+    # AND insecure_skip_verify is injected into the config
     assert cfg._config["receivers"]["prometheus"] == expected_prom_recv_cfg
 
     # WHEN more scrape jobs are added to the config
