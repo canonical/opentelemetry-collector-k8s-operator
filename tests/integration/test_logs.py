@@ -20,7 +20,6 @@ TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 async def test_logs_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: loki-to-loki formatted log forwarding."""
     sh.juju.switch(juju.model)
-
     # GIVEN a model with flog, otel-collector, and loki charms
     bundle = textwrap.dedent(f"""
         bundle: kubernetes
@@ -57,5 +56,9 @@ async def test_logs_pipeline(juju: jubilant.Juju, charm: str, charm_resources: D
         juju.deploy(f.name, trust=True)
     juju.wait(jubilant.all_active, delay=10, timeout=600)
     # THEN logs arrive in loki
-    task = juju.exec("/usr/bin/logcli labels", unit="loki/0")
-    assert "juju_application" in task.results.log
+    labels = sh.juju.ssh(
+        "--container=loki",
+        "loki/leader",
+        "/usr/bin/logcli labels",
+    )
+    assert "juju_application" in labels
