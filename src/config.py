@@ -42,13 +42,17 @@ class Config:
                 "telemetry": {},
             },
         }
+        self._insecure_skip_verify: bool = False
 
     @property
     def yaml(self) -> str:
         """Return the config as a string."""
         config = deepcopy(self)
         config._add_debug_exporters()
-        return yaml.dump(config._config)
+        config_dict = config.add_exporter_insecure_skip_verify(
+            config._config, self._insecure_skip_verify
+        )
+        return yaml.dump(config_dict)
 
     @property
     def hash(self):
@@ -238,18 +242,46 @@ class Config:
         if debug_exporter_required:
             self.add_exporter("debug", {"verbosity": "basic"})
 
-    def add_prometheus_scrape(self, jobs: List, incoming_metrics: bool, insecure_skip_verify: bool = False):
-        """Update the Prometheus receiver config with scrape jobs."""
-        # For now, the only incoming and outgoing metrics relations are remote-write/scrape,
-        # so we don't need to mix and match between them yet.
-        if incoming_metrics and jobs:
-            # create the scrape_configs key path if it does not exist
+    def set_exporter_insecure_skip_verify(self, insecure_skip_verify: bool):
+        """Enable skipping client (exporters) certificate validation."""
+        self._insecure_skip_verify = insecure_skip_verify
+
+    @classmethod
+    def add_exporter_insecure_skip_verify(
+        cls, config: dict, insecure_skip_verify: bool = False
+    ) -> dict:
+        """Update `tls::insecure_skip_verify` in the exporter's config with the juju config value.
+
+        This allows the charm admin to skip verifying the server's certificate. Since we use the root cert
+        store, we do not fine-grain the certs per exporter.
+
+        IMPORTANT: This method should be run prior to rendering the config.
+        """
+        for exporter in config["exporters"]:
+            if exporter.split("/")[0] == "debug":
+                continue
+            config["exporters"][exporter].setdefault("tls", {}).setdefault(
+                "insecure_skip_verify", insecure_skip_verify
+            )
+        return config
+
+    def add_prometheus_scrape(
+        self, jobs: List, incoming_metrics: bool, insecure_skip_verify: bool = False
+    ):
+        """Update the Prometheus receiver config with scrape jobs if an incoming relation demands it."""
+        if not incoming_metrics:
+            # TODO For now, the only incoming and outgoing metrics relations are remote-write/scrape,
+            # so we don't need to mix and match between them yet.
+            return self
+
+        # create the scrape_configs key path if it does not exist
+        if jobs:
             self._config["receivers"].setdefault("prometheus", {}).setdefault(
                 "config", {}
             ).setdefault("scrape_configs", [])
-            for scrape_job in jobs:
-                scrape_job.update({"tls_config": {"insecure_skip_verify": insecure_skip_verify}})
-                self._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(
-                    scrape_job
-                )
+        for scrape_job in jobs:
+            # Otelcol acts as a client and scrapes the metrics-generating server, so we enable
+            # toggling of skipping the validation of the server certificate
+            scrape_job.update({"tls_config": {"insecure_skip_verify": insecure_skip_verify}})
+            self._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(scrape_job)
         return self

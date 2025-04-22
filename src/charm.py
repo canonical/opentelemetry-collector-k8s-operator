@@ -193,7 +193,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         metrics_consumer = MetricsEndpointConsumer(self)
         _aggregate_alerts(metrics_consumer.alerts, metrics_rules_paths, forward_alert_rules)
         self._add_self_scrape(insecure_skip_verify)
-        self.otel_config.add_prometheus_scrape(metrics_consumer.jobs(), self._incoming_metrics, insecure_skip_verify)
+        self.otel_config.add_prometheus_scrape(
+            metrics_consumer.jobs(), self._incoming_metrics, insecure_skip_verify
+        )
         # Forward alert rules and scrape jobs to Prometheus
         remote_write = PrometheusRemoteWriteConsumer(
             self, alert_rules_path=metrics_rules_paths.dest
@@ -216,6 +218,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # TLS: receive-ca-cert
         replan_sentinel += receive_ca_certs(self, container)
+
+        # TLS: insecure-skip-verify
+        self.otel_config.set_exporter_insecure_skip_verify(
+            cast(bool, self.model.config.get("tls_insecure_skip_verify"))
+        )
 
         # Push the config and Push the config and deploy/update
         container.push(CONFIG_PATH, self.otel_config.yaml, make_dirs=True)
@@ -322,7 +329,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                                     },
                                 }
                             ],
-                            "tls_config": {"insecure_skip_verify": insecure_skip_verify}
+                            "tls_config": {"insecure_skip_verify": insecure_skip_verify},
                         }
                     ]
                 }

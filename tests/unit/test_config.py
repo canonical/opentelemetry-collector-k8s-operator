@@ -3,8 +3,11 @@
 
 """Feature: Opentelemetry-collector config builder."""
 
+from copy import deepcopy
+
 import pytest
 import yaml
+
 from src.config import Config
 
 
@@ -109,7 +112,7 @@ def test_add_prometheus_scrape():
                     "job_name": "first_job",
                     "scrape_interval": "15s",
                     # Added by add_prometheus_scrape
-                    "tls_config": {"insecure_skip_verify": True}
+                    "tls_config": {"insecure_skip_verify": True},
                 },
             ],
         }
@@ -148,3 +151,40 @@ def test_rendered_default_is_valid():
     pairs = [(len(p["receivers"]) > 0, len(p["exporters"]) > 0) for p in pipelines]
     # AND each pipeline has at least one receiver-exporter pair
     assert all(all(condition for condition in pair) for pair in pairs)
+
+
+def test_insecure_skip_verify():
+    # GIVEN an empty config without exporters
+    cfg = Config()
+    cfg_copy = deepcopy(cfg)
+    # WHEN updating the tls::insecure_skip_verify exporter configuration
+    config_dict = cfg.add_exporter_insecure_skip_verify(cfg._config, False)
+    # THEN it has no effect on the rendered config
+    assert config_dict == cfg_copy._config
+    # WHEN multiple exporters are added
+    cfg.add_exporter("foo", {"endpoint": "foo"})
+    cfg.add_exporter(
+        "bar",
+        {
+            "endpoint": "bar",
+            "tls": {"insecure_skip_verify": True},
+        },
+    )
+    # AND the tls::insecure_skip_verify configuration is added
+    config_dict = cfg.add_exporter_insecure_skip_verify(cfg._config, False)
+    # THEN tls::insecure_skip_verify is set for each exporter which was missing this configuration
+    assert config_dict["exporters"]["foo"]["tls"]["insecure_skip_verify"] is False
+    # AND any existing tls::insecure_skip_verify configuration is untouched
+    assert config_dict["exporters"]["bar"]["tls"]["insecure_skip_verify"] is True
+
+
+def test_debug_exporter_no_tls_config():
+    # GIVEN an empty config without exporters
+    cfg = Config()
+    # WHEN multiple debug exporters are added
+    cfg.add_exporter("debug", {"config": {"foo": "bar"}})
+    cfg.add_exporter("debug/descriptor", {"config": {"foo": "bar"}})
+    # AND the tls::insecure_skip_verify configuration is added
+    config_dict = cfg.add_exporter_insecure_skip_verify(cfg._config, True)
+    # THEN tls::insecure_skip_verify is not set for debug exporters
+    assert all("tls" not in exp.keys() for exp in config_dict["exporters"].values())
