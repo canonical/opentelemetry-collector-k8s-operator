@@ -359,7 +359,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     "protocols": {
                         "http": {
                             "endpoint": f"0.0.0.0:{PORTS.LOKI_HTTP}",
-                            "tls": {"insecure_skip_verify": insecure_skip_verify},
                         },
                     },
                     "use_incoming_timestamp": True,

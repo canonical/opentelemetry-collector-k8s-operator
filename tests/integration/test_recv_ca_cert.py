@@ -21,10 +21,11 @@ TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 def logs_contain_errors(logs):
     # TODO make assertions less brittle
-    # Receiver failure
+    # Receiver failure; otelcol is the client scraping Alertmanager
+    #   This is an edge case since otelcol 
     assert "Failed to scrape" in logs
     assert "unknown authority" in logs
-    # Exporter failure
+    # Exporter failure; otelcol is the client remote-writing to Prometheus
     assert "Exporting failed. Dropping data." in logs
     assert "context deadline exceeded" in logs
 
@@ -117,7 +118,7 @@ def test_insecure_skip_verify(juju: jubilant.Juju):
     scrape_interval = 60  # seconds!
     lookback_window = scrape_interval + 10  # seconds!
 
-    # WHEN we skip certificate validation
+    # WHEN we skip server certificate validation; Alertmanager for scraping and Prom for remote writing
     juju.config("otelcol", {"tls_insecure_skip_verify": True})
     time.sleep(lookback_window)  # Wait for scrape interval (1 minute) to elapse
     logs = sh.kubectl.logs(
@@ -126,7 +127,7 @@ def test_insecure_skip_verify(juju: jubilant.Juju):
     # THEN scrape succeeds
     logs_contain_no_errors(logs)
 
-    # WHEN we validate certificates
+    # WHEN we validate server certificates; Alertmanager for scraping and Prom for remote writing
     juju.config("otelcol", {"tls_insecure_skip_verify": False})
     time.sleep(lookback_window)  # Wait for scrape interval (1 minute) to elapse
     logs = sh.kubectl.logs(
