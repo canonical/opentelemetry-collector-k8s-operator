@@ -22,7 +22,7 @@ TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 def logs_contain_errors(logs):
     # TODO make assertions less brittle
     # Receiver failure; otelcol is the client scraping Alertmanager
-    #   This is an edge case since otelcol 
+    #   This is an edge case since otelcol
     assert "Failed to scrape" in logs
     assert "unknown authority" in logs
     # Exporter failure; otelcol is the client remote-writing to Prometheus
