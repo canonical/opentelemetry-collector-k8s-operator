@@ -16,3 +16,9 @@
 
 ## Upgrade Notes
 <!-- To upgrade from an older revision of the charm, ... -->
+
+
+## Checklist
+<!-- Common tasks related to charm modifications, ... -->
+- Are you adding an exporter or receiver to the config?
+  - [ ] If exporter (or a receiver which makes client-like requests to a server, i.e. prometheus scraping), did you add a `"tls": {"insecure_skip_verify": ...}` section to its config?
