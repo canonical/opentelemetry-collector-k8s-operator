@@ -59,7 +59,7 @@ provides:
   receive-loki-logs:
     interface: loki_push_api
     optional: true
-    description: To receive logs by allowing Promtail instances to specify the Otelcol as their Loki address.
+    description: To receive logs by allowing Promtail instances to specify otelcol as their Loki address.
   # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
   # receive-remote-write:
   #   interface: prometheus_remote_write
@@ -102,6 +102,14 @@ config:
         Toggle forwarding of alert rules.
       type: boolean
       default: true
+    tls_insecure_skip_verify:
+      description: |
+        Flag to skip the verification of certificates from servers we connect to with TLS.
+        If "true", self-signed certs can be used seamlessly; this setting will be applied
+        to all the otelcol exporter configurations and any receivers which actively make
+        requests to servers, e.g. the prometheus receiver scraping metrics endpoints.
+      type: boolean
+      default: false
 
 actions:
   reconcile:
