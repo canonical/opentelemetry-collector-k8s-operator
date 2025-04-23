@@ -250,7 +250,9 @@ class Config:
     def add_exporter_insecure_skip_verify(
         cls, config: dict, insecure_skip_verify: bool = False
     ) -> dict:
-        """Update `tls::insecure_skip_verify` in the exporter's config with the juju config value.
+        """Insert `tls::insecure_skip_verify` into every exporter's config with the juju config value.
+
+        If the key-value pair already exists, the value is not updated.
 
         This allows the charm admin to skip verifying the server's certificate. Since we use the root cert
         store, we do not fine-grain the certs per exporter.
@@ -268,7 +270,7 @@ class Config:
     def add_prometheus_scrape(
         self, jobs: List, incoming_metrics: bool, insecure_skip_verify: bool = False
     ):
-        """Update the Prometheus receiver config with scrape jobs if an incoming relation demands it."""
+        """Update the Prometheus receiver config with scrape jobs if an incoming relation requires it."""
         if not incoming_metrics:
             # TODO For now, the only incoming and outgoing metrics relations are remote-write/scrape,
             # so we don't need to mix and match between them yet.
