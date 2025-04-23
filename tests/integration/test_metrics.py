@@ -63,7 +63,6 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
           - otelcol:metrics-endpoint
         - - otelcol:send-remote-write
           - prometheus:receive-remote-write
-
     """)
     # WHEN they are related to scrape and remote-write
     with tempfile.NamedTemporaryFile(dir=TEMP_DIR, suffix=".yaml") as f:

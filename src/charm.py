@@ -236,6 +236,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         charm_root = self.charm_dir.absolute()
         forward_alert_rules = cast(bool, self.config["forward_alert_rules"])
         replan_sentinel: str = ""
+        insecure_skip_verify = cast(bool, self.model.config.get("tls_insecure_skip_verify"))
 
         forward_dashboards(self)
 
@@ -257,8 +258,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         _aggregate_alerts(loki_provider.alerts, loki_rules_paths, forward_alert_rules)
         loki_consumer.reload_alerts()
-        self._add_log_ingestion()
-        self._add_log_forwarding(loki_consumer.loki_endpoints)
+        self._add_log_ingestion(insecure_skip_verify)
+        self._add_log_forwarding(loki_consumer.loki_endpoints, insecure_skip_verify)
 
         # Metrics setup
         metrics_rules_paths = PathMapping(
@@ -268,14 +269,16 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Receive alert rules and scrape jobs
         metrics_consumer = MetricsEndpointConsumer(self)
         _aggregate_alerts(metrics_consumer.alerts, metrics_rules_paths, forward_alert_rules)
-        self._add_self_scrape()
-        self.otel_config.add_prometheus_scrape(metrics_consumer.jobs(), self._incoming_metrics)
+        self._add_self_scrape(insecure_skip_verify)
+        self.otel_config.add_prometheus_scrape(
+            metrics_consumer.jobs(), self._incoming_metrics, insecure_skip_verify
+        )
         # Forward alert rules and scrape jobs to Prometheus
         remote_write = PrometheusRemoteWriteConsumer(
             self, alert_rules_path=metrics_rules_paths.dest
         )
         remote_write.reload_alerts()
-        self._add_remote_write(remote_write.endpoints)
+        self._add_remote_write(remote_write.endpoints, insecure_skip_verify)
 
         # Enable forwarding telemetry with GrafanaCloudIntegrator
         cloud_integrator = GrafanaCloudConfigRequirer(self, relation_name="cloud-config")
@@ -287,6 +290,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             if cloud_integrator.prometheus_ready
             else None,
             loki_url=cloud_integrator.loki_url if cloud_integrator.loki_ready else None,
+            insecure_skip_verify=insecure_skip_verify,
         )
 
         # TLS: receive-ca-cert
@@ -297,6 +301,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if server_cert_on_disk := is_server_cert_on_disk(container):
             self.otel_config.enable_receiver_tls(SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH)
 
+        # TLS: insecure-skip-verify
+        self.otel_config.set_exporter_insecure_skip_verify(
+            cast(bool, self.model.config.get("tls_insecure_skip_verify"))
+        )
+
         # Push the config and Push the config and deploy/update
         container.push(CONFIG_PATH, self.otel_config.yaml, make_dirs=True)
         replan_sentinel += self.otel_config.hash
@@ -304,9 +313,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container.add_layer(
             self._container_name, self._pebble_layer(replan_sentinel), combine=True
         )
-        self.unit.set_ports(
-            *self.otel_config.ports
-        )  # TODO Conditionally open ports based on the otelcol config file rather than opening all ports
+        # TODO Conditionally open ports based on the otelcol config file rather than opening all ports
+        self.unit.set_ports(*self.otel_config.ports)
 
         if bool(self.model.relations.get("certificates")) and not server_cert_on_disk:
             # A tls relation to a CA was formed, but we didn't get the cert yet.
@@ -385,7 +393,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.model.relations.get("cloud-config", [])
         )
 
-    def _add_self_scrape(self):
+    def _add_self_scrape(self, insecure_skip_verify: bool):
         """Configure self-monitoring scrape jobs."""
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusreceiver
         self.otel_config.add_receiver(
@@ -410,6 +418,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                                     },
                                 }
                             ],
+                            "tls_config": {"insecure_skip_verify": insecure_skip_verify},
                         }
                     ]
                 }
@@ -417,7 +426,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             pipelines=["metrics"],
         )
 
-    def _add_remote_write(self, endpoints: List[Dict[str, str]]):
+    def _add_remote_write(self, endpoints: List[Dict[str, str]], insecure_skip_verify: bool):
         """Configure forwarding alert rules to prometheus/mimir via remote-write."""
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/prometheusremotewriteexporter
         for idx, endpoint in enumerate(endpoints):
@@ -425,7 +434,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 f"prometheusremotewrite/{idx}",
                 {
                     "endpoint": endpoint["url"],
-                    "tls": {"insecure": True},  # TODO TLS
+                    "tls": {"insecure_skip_verify": insecure_skip_verify},
                 },
                 pipelines=["metrics"],
             )
@@ -433,7 +442,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # TODO Receive alert rules via remote write
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
 
-    def _add_log_ingestion(self):
+    def _add_log_ingestion(self, insecure_skip_verify: bool):
         """Configure receiving logs, allowing Promtail instances to specify the Otelcol as their lokiAddress."""
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/lokireceiver
 
@@ -444,14 +453,16 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "loki",
                 {
                     "protocols": {
-                        "http": {"endpoint": f"0.0.0.0:{PORTS.LOKI_HTTP}"},
+                        "http": {
+                            "endpoint": f"0.0.0.0:{PORTS.LOKI_HTTP}",
+                        },
                     },
                     "use_incoming_timestamp": True,
                 },
                 pipelines=["logs"],
             )
 
-    def _add_log_forwarding(self, endpoints: List[dict]):
+    def _add_log_forwarding(self, endpoints: List[dict], insecure_skip_verify: bool):
         """Configure sending logs to Loki via the Loki push API endpoint.
 
         The LogRecord format is controlled with the `loki.format` hint.
@@ -467,6 +478,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 {
                     "endpoint": endpoint["url"],
                     "default_labels_enabled": {"exporter": False, "job": True},
+                    "tls": {"insecure_skip_verify": insecure_skip_verify},
                 },
                 pipelines=["logs"],
             )
@@ -503,6 +515,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         credentials: Optional[Credentials],
         prometheus_url: Optional[str],
         loki_url: Optional[str],
+        insecure_skip_verify: bool,
     ):
         """Configure forwarding telemetry to the endpoints provided by a cloud-integrator charm."""
         exporter_auth_config = {}
@@ -520,7 +533,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if prometheus_url:
             self.otel_config.add_exporter(
                 "prometheusremotewrite/cloud-integrator",
-                {"endpoint": prometheus_url, **exporter_auth_config},
+                {
+                    "endpoint": prometheus_url,
+                    "tls": {"insecure_skip_verify": insecure_skip_verify},
+                    **exporter_auth_config,
+                },
                 pipelines=["metrics"],
             )
         if loki_url:
@@ -528,6 +545,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "loki/cloud-integrator",
                 {
                     "endpoint": loki_url,
+                    "tls": {"insecure_skip_verify": insecure_skip_verify},
                     "default_labels_enabled": {"exporter": False, "job": True},
                     "headers": {"Content-Encoding": "snappy"},  # TODO: check if this is needed
                     **exporter_auth_config,
