@@ -8,30 +8,31 @@ Scenario: Standalone deployment
     Then all pebble checks pass
 """
 
+from typing import Dict, Optional
+
+import jubilant
 import sh
-from typing import Dict
-from pytest_operator.plugin import OpsTest
 
 # pyright: reportAttributeAccessIssue = false
 
 
 
-def _get_pebble_checks(ops_test: OpsTest, app_name: str):
+def _get_pebble_checks(model: Optional[str], app_name: str):
     """Get the pebble checks results."""
-    assert ops_test.model
+    assert model
     return sh.juju.ssh(
-        f"--model={ops_test.model.name}",
+        f"--model={model}",
         "--container=otelcol",
         f"{app_name}/leader",
         "pebble checks",
     )
 
 
-async def test_pebble_checks(ops_test: OpsTest, charm: str, charm_resources: Dict[str, str]):
+def test_pebble_checks(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Deploy the charm."""
-    assert ops_test.model
+    sh.juju.switch(juju.model)
     app_name = "otel-collector-k8s"
-    await ops_test.model.deploy(charm, app_name, resources=charm_resources)
-    await ops_test.model.wait_for_idle(apps=[app_name], status="active")
-    pebble_checks = _get_pebble_checks(ops_test=ops_test, app_name=app_name)
+    juju.deploy(charm, app_name, trust=True)
+    juju.wait(jubilant.all_active, delay=10, timeout=60)
+    pebble_checks = _get_pebble_checks(model=juju.model, app_name=app_name)
     assert "down" not in pebble_checks
