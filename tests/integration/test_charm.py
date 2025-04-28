@@ -32,7 +32,7 @@ def test_pebble_checks(juju: jubilant.Juju, charm: str, charm_resources: Dict[st
     """Deploy the charm."""
     sh.juju.switch(juju.model)
     app_name = "otel-collector-k8s"
-    juju.deploy(charm, app_name, trust=True)
+    juju.deploy(charm, app_name, resources=charm_resources)
     juju.wait(jubilant.all_active, delay=10, timeout=60)
     pebble_checks = _get_pebble_checks(model=juju.model, app_name=app_name)
     assert "down" not in pebble_checks
