@@ -51,7 +51,9 @@ class Config:
         """Return the config as a string."""
         config = deepcopy(self)
         config._add_debug_exporters()
-        config._config = config._add_receiver_tls(config._config, self._cert_file, self._key_file)
+        config._config = config._add_receiver_and_exporter_tls(
+            config._config, self._cert_file, self._key_file
+        )
         config._config = config._add_exporter_insecure_skip_verify(
             config._config, self._insecure_skip_verify
         )
@@ -285,7 +287,9 @@ class Config:
         self._key_file = None
 
     @classmethod
-    def _add_receiver_tls(cls, config:dict, cert_file: Optional[str], key_file: Optional[str]) -> dict:
+    def _add_receiver_and_exporter_tls(
+        cls, config: dict, cert_file: Optional[str], key_file: Optional[str]
+    ) -> dict:
         """Return the updated config in a new dict.
 
         Ref: https://github.com/open-telemetry/opentelemetry-collector/blob/main/config/configtls/README.md#server-configuration
@@ -301,10 +305,29 @@ class Config:
                 except KeyError:
                     continue
                 else:
-                    if "tls" not in section:
-                        section["tls"] = {}
+                    section.setdefault("tls", {})
                     section["tls"]["key_file"] = key_file
                     section["tls"]["cert_file"] = cert_file
+
+        # https://prometheus.io/docs/prometheus/latest/configuration/configuration/#tls_config
+        if "prometheus" in config["receivers"]:
+            scrape_configs = config["receivers"]["prometheus"]["config"].get("scrape_configs", {})
+            for scrape_job in scrape_configs:
+                scrape_job.setdefault("tls_config", {})
+                scrape_job["tls_config"].update(
+                    {
+                        "key_file": key_file,
+                        "cert_file": cert_file,
+                    }
+                )
+
+        for exporter in config.get("exporters", {}):
+            if exporter.split("/")[0] == "debug":
+                continue
+            section = config["exporters"][exporter]
+            section.setdefault("tls", {})
+            section["tls"]["key_file"] = key_file
+            section["tls"]["cert_file"] = cert_file
 
         return config
 
@@ -320,7 +343,8 @@ class Config:
 
         IMPORTANT: This method should be run prior to rendering the config.
         """
-        for exporter in self._config["exporters"]:
+        config = config.copy()
+        for exporter in config.get("exporters", {}):
             if exporter.split("/")[0] == "debug":
                 continue
             config["exporters"][exporter].setdefault("tls", {}).setdefault(

@@ -234,8 +234,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """Recreate the world state for the charm."""
         container = self.unit.get_container(self._container_name)
         charm_root = self.charm_dir.absolute()
-        forward_alert_rules = cast(bool, self.config["forward_alert_rules"])
         replan_sentinel: str = ""
+        forward_alert_rules = cast(bool, self.config["forward_alert_rules"])
         insecure_skip_verify = cast(bool, self.model.config.get("tls_insecure_skip_verify"))
 
         forward_dashboards(self)
@@ -418,6 +418,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                                     },
                                 }
                             ],
+                            # TODO Is this really needed since we self-scrape? I assume we won't need cert_file and key_file either
                             "tls_config": {"insecure_skip_verify": insecure_skip_verify},
                         }
                     ]

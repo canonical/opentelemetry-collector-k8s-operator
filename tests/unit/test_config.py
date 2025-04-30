@@ -95,7 +95,7 @@ def test_add_prometheus_scrape():
     with pytest.raises(KeyError):
         cfg._config["receivers"]["prometheus"]
 
-    # WHEN a scrape job is added to the config
+    # AND WHEN a scrape job is added to the config
     first_job = [
         {
             "metrics_path": "/metrics",
@@ -112,7 +112,7 @@ def test_add_prometheus_scrape():
                     "static_configs": [{"targets": ["*:9001"]}],
                     "job_name": "first_job",
                     "scrape_interval": "15s",
-                    # Added by add_prometheus_scrape
+                    # Added dynamically by add_prometheus_scrape
                     "tls_config": {"insecure_skip_verify": True},
                 },
             ],
@@ -123,7 +123,7 @@ def test_add_prometheus_scrape():
     # AND insecure_skip_verify is injected into the config
     assert cfg._config["receivers"]["prometheus"] == expected_prom_recv_cfg
 
-    # WHEN more scrape jobs are added to the config
+    # AND WHEN more scrape jobs are added to the config
     more_jobs = [
         {
             "metrics_path": "/metrics",
@@ -183,7 +183,11 @@ def test_receivers_tls_no_protocols():
 def test_receivers_tls_unknown_protocols():
     # GIVEN a config with an unknown protocols
     config = Config()
-    config.add_receiver("some_receiver", {"protocols": {"unknown_protocol_name": {"endpoint": "0.0.0.0:1234"}}}, pipelines=["metrics"])
+    config.add_receiver(
+        "some_receiver",
+        {"protocols": {"unknown_protocol_name": {"endpoint": "0.0.0.0:1234"}}},
+        pipelines=["metrics"],
+    )
     config_copy = copy.deepcopy(config)
 
     # WHEN tls is enabled
@@ -196,10 +200,26 @@ def test_receivers_tls_unknown_protocols():
 def test_receivers_tls_known_protocols():
     # GIVEN a config with known protocols (http, grpc)
     config = Config()
-    config.add_receiver("some-http-receiver", {"protocols": {"http": {"endpoint": "0.0.0.0:1234"}}}, pipelines=["metrics"])
-    config.add_receiver("another-http-receiver", {"protocols": {"http": {"endpoint": "0.0.0.0:1235"}}}, pipelines=["metrics"])
-    config.add_receiver("some-grpc-receiver", {"protocols": {"grpc": {"endpoint": "0.0.0.0:5678"}}}, pipelines=["metrics"])
-    config.add_receiver("another-grpc-receiver", {"protocols": {"grpc": {"endpoint": "0.0.0.0:5679"}}}, pipelines=["metrics"])
+    config.add_receiver(
+        "some-http-receiver",
+        {"protocols": {"http": {"endpoint": "0.0.0.0:1234"}}},
+        pipelines=["metrics"],
+    )
+    config.add_receiver(
+        "another-http-receiver",
+        {"protocols": {"http": {"endpoint": "0.0.0.0:1235"}}},
+        pipelines=["metrics"],
+    )
+    config.add_receiver(
+        "some-grpc-receiver",
+        {"protocols": {"grpc": {"endpoint": "0.0.0.0:5678"}}},
+        pipelines=["metrics"],
+    )
+    config.add_receiver(
+        "another-grpc-receiver",
+        {"protocols": {"grpc": {"endpoint": "0.0.0.0:5679"}}},
+        pipelines=["metrics"],
+    )
 
     # WHEN tls is enabled
     config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
