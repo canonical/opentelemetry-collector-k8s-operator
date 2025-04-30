@@ -17,7 +17,7 @@ import sh
 
 
 
-def _get_pebble_checks(model: Optional[str], app_name: str):
+def _get_pebble_checks(app_name: str, model: Optional[str]):
     """Get the pebble checks results."""
     assert model
     return sh.juju.ssh(
@@ -34,5 +34,5 @@ def test_pebble_checks(juju: jubilant.Juju, charm: str, charm_resources: Dict[st
     app_name = "otel-collector-k8s"
     juju.deploy(charm, app_name, resources=charm_resources)
     juju.wait(jubilant.all_active, delay=10, timeout=60)
-    pebble_checks = _get_pebble_checks(model=juju.model, app_name=app_name)
+    pebble_checks = _get_pebble_checks(app_name, juju.model)
     assert "down" not in pebble_checks
