@@ -40,6 +40,7 @@ def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict
     sh.juju.switch(juju.model)
 
     # GIVEN a model with avalanche, otel-collector, and prometheus charms
+    # TODO Add ./ in front of charm
     bundle = textwrap.dedent(f"""
         bundle: kubernetes
         applications:

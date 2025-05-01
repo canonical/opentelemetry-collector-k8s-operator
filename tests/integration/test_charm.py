@@ -9,7 +9,7 @@ Scenario: Standalone deployment
 """
 
 from typing import Dict, Optional
-
+from pytest_jubilant import _Result
 import jubilant
 import sh
 
@@ -28,11 +28,11 @@ def _get_pebble_checks(app_name: str, model: Optional[str]):
     )
 
 
-def test_pebble_checks(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+def test_pebble_checks(juju: jubilant.Juju, charm: str):
     """Deploy the charm."""
     sh.juju.switch(juju.model)
     app_name = "otel-collector-k8s"
-    juju.deploy(charm, app_name, resources=charm_resources)
+    juju.deploy(f"./{charm.charm}", app_name, resources=charm.resources)
     juju.wait(jubilant.all_active, delay=10, timeout=60)
     pebble_checks = _get_pebble_checks(app_name, juju.model)
     assert "down" not in pebble_checks

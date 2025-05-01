@@ -8,18 +8,19 @@ import logging
 import os
 from collections import defaultdict
 from datetime import datetime
-from typing import Dict
+from pathlib import Path
+from typing import Dict, Optional
 
-import pytest
-import yaml
-from pytest_operator.plugin import OpsTest
 import jubilant
+import pytest
+from pytest_jubilant import _Result, pack_charm
 
 logger = logging.getLogger(__name__)
 
 store = defaultdict(str)
 
 
+# TODO Luca: do we need this since CI only packs once and in local testing ...
 def timed_memoizer(func):
     """Cache the result of a function."""
 
@@ -42,26 +43,25 @@ def timed_memoizer(func):
 
 @pytest.fixture(scope="module")
 @timed_memoizer
-def charm(ops_test: OpsTest) -> str:
+def packed_charm() -> _Result:
     """Charm used for integration testing."""
     if charm_file := os.environ.get("CHARM_PATH"):
         return str(charm_file)
 
-    charm = ops_test.build_charm(".")
-    assert charm
-    return str(charm)
+    return pack_charm()
 
 
 @pytest.fixture(scope="module")
-def charm_resources(metadata_file="charmcraft.yaml") -> Dict[str, str]:
-    with open(metadata_file, "r") as file:
-        metadata = yaml.safe_load(file)
-    resources = {}
-    for res, data in metadata["resources"].items():
-        resources[res] = data["upstream-source"]
-    return resources
+def charm(packed_charm) -> Path:
+    return packed_charm.charm
 
 
+@pytest.fixture(scope="module")
+def resources(packed_charm) -> Optional[Dict[str, str]]:
+    return packed_charm.resources
+
+
+# TODO The main purpose of pytest-jubilant is the Juju fixture, can comment fixture below
 @pytest.fixture(scope="module")
 def juju():
     keep_models: bool = os.environ.get("KEEP_MODELS") is not None
