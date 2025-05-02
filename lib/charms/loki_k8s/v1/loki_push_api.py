@@ -1354,7 +1354,8 @@ class LokiPushApiProvider(Object):
 
         Return url to loki, including port number, but without the endpoint subpath.
         """
-        return "http://{}:{}".format(socket.getfqdn(), self.port)
+        return f"{self.scheme}://{socket.getfqdn()}:{self.port}"
+        # TODO Tandem PR and charmcraft fetch-lib
 
     def _endpoint(self, url) -> dict:
         """Get Loki push API endpoint for a given url.
