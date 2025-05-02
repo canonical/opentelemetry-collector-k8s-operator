@@ -6,10 +6,10 @@
 import pathlib
 import tempfile
 import textwrap
-from typing import Dict
 
 import jubilant
 import sh
+from pytest_jubilant import Juju
 
 # pyright: reportAttributeAccessIssue = false
 
@@ -17,7 +17,7 @@ import sh
 TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
-def test_logs_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+def test_logs_pipeline(juju: Juju, charm, charm_resources):
     """Scenario: loki-to-loki formatted log forwarding."""
     sh.juju.switch(juju.model)
     # GIVEN a model with flog, otel-collector, and loki charms

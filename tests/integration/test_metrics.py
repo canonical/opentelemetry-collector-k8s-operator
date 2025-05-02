@@ -3,16 +3,16 @@
 
 """Feature: Scraped metrics are remote-written."""
 
+import json
 import pathlib
 import tempfile
 import textwrap
-import sh
-import json
-from typing import Dict
-from tenacity import retry, stop_after_attempt, wait_fixed
-from requests import request
 
 import jubilant
+import sh
+from pytest_jubilant import Juju
+from requests import request
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 # pyright: reportAttributeAccessIssue = false
 
@@ -35,7 +35,7 @@ def _retry_prom_jobs_api(endpoint: str):
     assert any("otelcol" in item for item in job_names)
 
 
-def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+def test_metrics_pipeline(juju: Juju, charm, charm_resources):
     """Scenario: scrape-to-remote-write forwarding."""
     sh.juju.switch(juju.model)
 

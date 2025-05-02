@@ -1,13 +1,14 @@
 """Feature: Otelcol can form TLS connections with HTTPS servers."""
 
-import textwrap
-import sh
-from typing import Dict
-import tempfile
-import time
-import pathlib
 import logging
+import pathlib
+import tempfile
+import textwrap
+import time
+
 import jubilant
+import sh
+from pytest_jubilant import Juju
 
 # This is needed for sh.juju
 # pyright: reportAttributeAccessIssue = false
@@ -40,7 +41,7 @@ def logs_contain_no_errors(logs):
     assert "context deadline exceeded" not in logs
 
 
-def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+def test_unknown_authority(juju: Juju, charm, charm_resources):
     """Scenario: Otelcol fails to scrape metrics from a server signed by unknown authority."""
     sh.juju.switch(juju.model)
 
@@ -114,7 +115,7 @@ def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resources: Dic
     # 2025-04-17T20:58:53.728Z [otelcol] 2025-04-07T20:46:23.468Z error internal/queue_sender.go:128 Exporting failed. Dropping data.   {"otelcol.component.id": "prometheusremotewrite/0", "otelcol.component.kind": "Exporter", "otelcol.signal": "metrics", "error": "Permanent error: Permanent error: context deadline exceeded", "dropped_items": 5}
 
 
-def test_insecure_skip_verify(juju: jubilant.Juju):
+def test_insecure_skip_verify(juju: Juju):
     scrape_interval = 60  # seconds!
     lookback_window = scrape_interval + 10  # seconds!
 
@@ -137,7 +138,7 @@ def test_insecure_skip_verify(juju: jubilant.Juju):
     logs_contain_errors(logs)
 
 
-def test_with_ca_cert_forwarded(juju: jubilant.Juju):
+def test_with_ca_cert_forwarded(juju: Juju):
     """Scenario: Otelcol succeeds to scrape metrics from a server signed by a CA that otelcol trusts."""
     # WHEN otelcol trusts the CA that signed the scrape target
     sh.juju.relate("ssc", "otelcol:receive-ca-cert", m=juju.model)

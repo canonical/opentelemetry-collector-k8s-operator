@@ -8,10 +8,10 @@ Scenario: Standalone deployment
     Then all pebble checks pass
 """
 
-from typing import Dict, Optional
-from pytest_jubilant import _Result
+from typing import Optional
 import jubilant
 import sh
+from pytest_jubilant import Juju
 
 # pyright: reportAttributeAccessIssue = false
 
@@ -28,11 +28,11 @@ def _get_pebble_checks(app_name: str, model: Optional[str]):
     )
 
 
-def test_pebble_checks(juju: jubilant.Juju, charm: str):
+def test_pebble_checks(juju: Juju, charm, charm_resources):
     """Deploy the charm."""
     sh.juju.switch(juju.model)
     app_name = "otel-collector-k8s"
-    juju.deploy(f"./{charm.charm}", app_name, resources=charm.resources)
+    juju.deploy(f"./{charm.charm}", app_name, resources=charm_resources)
     juju.wait(jubilant.all_active, delay=10, timeout=60)
     pebble_checks = _get_pebble_checks(app_name, juju.model)
     assert "down" not in pebble_checks
