@@ -3,14 +3,15 @@
 
 """Feature: Otelcol server can run in HTTPS mode."""
 
+import json
 from unittest.mock import patch
 
 import pytest
-from helpers import get_otelcol_file
 from charms.tls_certificates_interface.v4.tls_certificates import (
     Certificate,
     TLSCertificatesRequiresV4,
 )
+from helpers import get_otelcol_file
 from ops.testing import Container, Relation, State
 
 from constants import CONFIG_PATH, SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH
@@ -93,10 +94,6 @@ def test_transitioned_from_http_to_https_to_http(ctx, execs, cert, cert_obj, pri
     for protocol in protocols:
         assert protocols[protocol]["tls"]["cert_file"] == SERVER_CERT_PATH
         assert protocols[protocol]["tls"]["key_file"] == SERVER_CERT_PRIVATE_KEY_PATH
-    # AND config file includes "key_file" and "cert_file" for the prometheus receiver
-    for scrape_job in otelcol_config["receivers"]["prometheus"]["config"]["scrape_configs"]:
-        assert scrape_job["tls_config"]["cert_file"] == SERVER_CERT_PATH
-        assert scrape_job["tls_config"]["key_file"] == SERVER_CERT_PRIVATE_KEY_PATH
     # AND config file includes "key_file" and "cert_file" for all (except debug) exporters
     for exporter in otelcol_config["exporters"]:
         if "debug" in exporter:
@@ -116,3 +113,29 @@ def test_transitioned_from_http_to_https_to_http(ctx, execs, cert, cert_obj, pri
         get_otelcol_file(state_out, ctx, SERVER_CERT_PRIVATE_KEY_PATH)
     # TODO: should we trust the CA that signed us? Add neg/pos assertion accordingly.
     # TODO https://matrix.to/#/!yAkGlrYcBFYzYRvOlQ:ubuntu.com/$oJzOQfuthK-OFjC1I9pG6o8vv5lmgl82KSbwV17NHjI?via=ubuntu.com&via=matrix.org&via=laquadrature.net
+
+
+def test_https_endpoint_is_provided(ctx, execs, cert, cert_obj, private_key):
+    """Scenario: Otelcol provides other charms its TLS endpoint."""
+    # GIVEN otelcol is in TLS mode
+    container = Container(name="otelcol", can_connect=True, execs=execs)
+    ssc = Relation(
+        endpoint="certificates",
+        interface="tls-certificate",
+    )
+    data_source = Relation(
+        endpoint="receive-loki-logs",
+        interface="loki_push_api",
+    )
+    state_in = State(relations=[ssc, data_source], containers=[container])
+    # WHEN a relation_changed event on the "receive-loki-logs" endpoint fires
+    with patch.object(
+        TLSCertificatesRequiresV4, "_find_available_certificates", return_value=None
+    ), patch.object(
+        TLSCertificatesRequiresV4, "get_assigned_certificate", return_value=(cert_obj, private_key)
+    ), patch.object(Certificate, "from_string", return_value=cert_obj):
+        state_out = ctx.run(ctx.on.relation_changed(data_source), state=state_in)
+    # THEN Otelcol provides its TLS endpoint in the databag
+    for relation in state_out.relations:
+        if relation.endpoint == "receive-loki-logs":
+            assert "https" in json.loads(relation.local_unit_data["endpoint"])["url"]

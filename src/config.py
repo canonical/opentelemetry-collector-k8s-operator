@@ -81,6 +81,8 @@ class Config:
                 {"protocols": {"http": {"endpoint": f"0.0.0.0:{PORTS.OTLP_HTTP}"}}},
                 pipelines=["logs", "metrics", "traces"],
             )
+            # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/healthcheckextension
+            # Add TLS config to extensions
             .add_extension("health_check", {"endpoint": f"0.0.0.0:{PORTS.HEALTH}"})
             .add_telemetry("logs", {"level": "DEBUG"})
             .add_telemetry("metrics", {"level": "normal"})
@@ -308,18 +310,6 @@ class Config:
                     section.setdefault("tls", {})
                     section["tls"]["key_file"] = key_file
                     section["tls"]["cert_file"] = cert_file
-
-        # https://prometheus.io/docs/prometheus/latest/configuration/configuration/#tls_config
-        if "prometheus" in config["receivers"]:
-            scrape_configs = config["receivers"]["prometheus"]["config"].get("scrape_configs", {})
-            for scrape_job in scrape_configs:
-                scrape_job.setdefault("tls_config", {})
-                scrape_job["tls_config"].update(
-                    {
-                        "key_file": key_file,
-                        "cert_file": cert_file,
-                    }
-                )
 
         for exporter in config.get("exporters", {}):
             if exporter.split("/")[0] == "debug":

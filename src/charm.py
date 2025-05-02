@@ -238,6 +238,19 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         forward_alert_rules = cast(bool, self.config["forward_alert_rules"])
         insecure_skip_verify = cast(bool, self.model.config.get("tls_insecure_skip_verify"))
 
+        # TLS: receive-ca-cert
+        replan_sentinel += receive_ca_certs(self, container)
+
+        # TLS: server cert
+        replan_sentinel += server_cert(self, container)
+        if server_cert_on_disk := is_server_cert_on_disk(container):
+            self.otel_config.enable_receiver_tls(SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH)
+
+        # TLS: insecure-skip-verify
+        self.otel_config.set_exporter_insecure_skip_verify(
+            cast(bool, self.model.config.get("tls_insecure_skip_verify"))
+        )
+
         forward_dashboards(self)
 
         # Logs setup
@@ -249,6 +262,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self,
             relation_name="receive-loki-logs",
             port=PORTS.LOKI_HTTP,
+            scheme="https" if is_server_cert_on_disk(container) else "http",
         )
         loki_consumer = LokiPushApiConsumer(
             self,
@@ -291,19 +305,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             else None,
             loki_url=cloud_integrator.loki_url if cloud_integrator.loki_ready else None,
             insecure_skip_verify=insecure_skip_verify,
-        )
-
-        # TLS: receive-ca-cert
-        replan_sentinel += receive_ca_certs(self, container)
-
-        # TLS: server cert
-        replan_sentinel += server_cert(self, container)
-        if server_cert_on_disk := is_server_cert_on_disk(container):
-            self.otel_config.enable_receiver_tls(SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH)
-
-        # TLS: insecure-skip-verify
-        self.otel_config.set_exporter_insecure_skip_verify(
-            cast(bool, self.model.config.get("tls_insecure_skip_verify"))
         )
 
         # Push the config and Push the config and deploy/update
@@ -357,13 +358,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     @property
     def _pebble_checks(self) -> Dict[str, Any]:
         """Pebble checks to run in the charm."""
-        scheme = "https" if is_server_cert_on_disk(self.unit.get_container(self._container_name)) else "http"
         checks = {
             "up": {
                 "override": "replace",
                 "level": "alive",
                 "period": "30s",
-                "http": {"url": f"{scheme}://localhost:{PORTS.HEALTH}/health"},
+                # TODO If we render TLS config for the extensions::health_check, switch to https
+                "http": {"url": f"http://localhost:{PORTS.HEALTH}/health"},
             },
             "valid-config": {
                 "override": "replace",
@@ -418,8 +419,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                                     },
                                 }
                             ],
-                            # TODO Is this really needed since we self-scrape? I assume we won't need cert_file and key_file either
-                            "tls_config": {"insecure_skip_verify": insecure_skip_verify},
                         }
                     ]
                 }
