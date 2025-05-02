@@ -94,12 +94,6 @@ def test_transitioned_from_http_to_https_to_http(ctx, execs, cert, cert_obj, pri
     for protocol in protocols:
         assert protocols[protocol]["tls"]["cert_file"] == SERVER_CERT_PATH
         assert protocols[protocol]["tls"]["key_file"] == SERVER_CERT_PRIVATE_KEY_PATH
-    # AND config file includes "key_file" and "cert_file" for all (except debug) exporters
-    for exporter in otelcol_config["exporters"]:
-        if "debug" in exporter:
-            continue
-        assert otelcol_config["exporters"][exporter]["tls"]["cert_file"] == SERVER_CERT_PATH
-        assert otelcol_config["exporters"][exporter]["tls"]["key_file"] == SERVER_CERT_PRIVATE_KEY_PATH
     # WHEN the tls-certificates relation is removed
     state_in = State(relations=[data_sink], containers=[container])
     state_out = ctx.run(ctx.on.update_status(), state=state_in)
@@ -111,8 +105,6 @@ def test_transitioned_from_http_to_https_to_http(ctx, execs, cert, cert_obj, pri
         get_otelcol_file(state_out, ctx, SERVER_CERT_PATH)
     with pytest.raises(AssertionError, match="file does not exist"):
         get_otelcol_file(state_out, ctx, SERVER_CERT_PRIVATE_KEY_PATH)
-    # TODO: should we trust the CA that signed us? Add neg/pos assertion accordingly.
-    # TODO https://matrix.to/#/!yAkGlrYcBFYzYRvOlQ:ubuntu.com/$oJzOQfuthK-OFjC1I9pG6o8vv5lmgl82KSbwV17NHjI?via=ubuntu.com&via=matrix.org&via=laquadrature.net
 
 
 def test_https_endpoint_is_provided(ctx, execs, cert, cert_obj, private_key):

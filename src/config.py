@@ -51,7 +51,7 @@ class Config:
         """Return the config as a string."""
         config = deepcopy(self)
         config._add_debug_exporters()
-        config._config = config._add_receiver_and_exporter_tls(
+        config._config = config._add_receiver_tls(
             config._config, self._cert_file, self._key_file
         )
         config._config = config._add_exporter_insecure_skip_verify(
@@ -283,7 +283,7 @@ class Config:
         self._key_file = key_file
 
     @classmethod
-    def _add_receiver_and_exporter_tls(
+    def _add_receiver_tls(
         cls, config: dict, cert_file: Optional[str], key_file: Optional[str]
     ) -> dict:
         """Return the updated config in a new dict.
@@ -304,14 +304,6 @@ class Config:
                     section.setdefault("tls", {})
                     section["tls"]["key_file"] = key_file
                     section["tls"]["cert_file"] = cert_file
-
-        for exporter in config.get("exporters", {}):
-            if exporter.split("/")[0] == "debug":
-                continue
-            section = config["exporters"][exporter]
-            section.setdefault("tls", {})
-            section["tls"]["key_file"] = key_file
-            section["tls"]["cert_file"] = cert_file
 
         return config
 
