@@ -282,12 +282,6 @@ class Config:
         self._cert_file = cert_file
         self._key_file = key_file
 
-    def disable_receiver_tls(self):
-        # TODO This isnt used anywhere
-        """Disable server (receivers) tls."""
-        self._cert_file = None
-        self._key_file = None
-
     @classmethod
     def _add_receiver_and_exporter_tls(
         cls, config: dict, cert_file: Optional[str], key_file: Optional[str]
