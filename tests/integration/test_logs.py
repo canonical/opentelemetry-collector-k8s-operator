@@ -9,7 +9,6 @@ import textwrap
 
 import jubilant
 import sh
-from pytest_jubilant import Juju
 
 # pyright: reportAttributeAccessIssue = false
 
@@ -17,7 +16,7 @@ from pytest_jubilant import Juju
 TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
-def test_logs_pipeline(juju: Juju, charm, charm_resources):
+def test_logs_pipeline(juju: jubilant.Juju, charm, charm_resources):
     """Scenario: loki-to-loki formatted log forwarding."""
     sh.juju.switch(juju.model)
     # GIVEN a model with flog, otel-collector, and loki charms
@@ -31,7 +30,7 @@ def test_logs_pipeline(juju: Juju, charm, charm_resources):
               workload-image: 2
             scale: 1
           otelcol:
-            charm: {charm}
+            charm: ../../{charm}
             scale: 1
             resources:
               opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}

@@ -10,7 +10,6 @@ import textwrap
 
 import jubilant
 import sh
-from pytest_jubilant import Juju
 from requests import request
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -35,7 +34,7 @@ def _retry_prom_jobs_api(endpoint: str):
     assert any("otelcol" in item for item in job_names)
 
 
-def test_metrics_pipeline(juju: Juju, charm, charm_resources):
+def test_metrics_pipeline(juju: jubilant.Juju, charm, charm_resources):
     """Scenario: scrape-to-remote-write forwarding."""
     sh.juju.switch(juju.model)
 
@@ -50,7 +49,7 @@ def test_metrics_pipeline(juju: Juju, charm, charm_resources):
             scale: 1
             trust: true
           otelcol:
-            charm: {charm}
+            charm: ../../{charm}
             scale: 1
             resources:
               opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}

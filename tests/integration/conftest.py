@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 store = defaultdict(str)
 
 
-# TODO Luca: do we need this since CI only packs once and in local testing ...
 def timed_memoizer(func):
     """Cache the result of a function."""
 
