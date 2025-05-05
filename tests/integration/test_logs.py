@@ -6,7 +6,6 @@
 import pathlib
 import tempfile
 import textwrap
-from typing import Dict
 
 import jubilant
 import sh
@@ -17,7 +16,7 @@ import sh
 TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
-async def test_logs_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+def test_logs_pipeline(juju: jubilant.Juju, charm, charm_resources):
     """Scenario: loki-to-loki formatted log forwarding."""
     sh.juju.switch(juju.model)
     # GIVEN a model with flog, otel-collector, and loki charms
@@ -31,7 +30,7 @@ async def test_logs_pipeline(juju: jubilant.Juju, charm: str, charm_resources: D
               workload-image: 2
             scale: 1
           otelcol:
-            charm: {charm}
+            charm: ../../{charm}
             scale: 1
             resources:
               opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}

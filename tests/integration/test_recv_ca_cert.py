@@ -1,13 +1,13 @@
 """Feature: Otelcol can form TLS connections with HTTPS servers."""
 
-import textwrap
-import sh
-from typing import Dict
-import tempfile
-import time
-import pathlib
 import logging
+import pathlib
+import tempfile
+import textwrap
+import time
+
 import jubilant
+import sh
 
 # This is needed for sh.juju
 # pyright: reportAttributeAccessIssue = false
@@ -40,7 +40,7 @@ def logs_contain_no_errors(logs):
     assert "context deadline exceeded" not in logs
 
 
-async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+def test_unknown_authority(juju: jubilant.Juju, charm, charm_resources):
     """Scenario: Otelcol fails to scrape metrics from a server signed by unknown authority."""
     sh.juju.switch(juju.model)
 
@@ -60,7 +60,7 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
             constraints: arch=amd64
             trust: true
           otelcol:
-            charm: {charm}
+            charm: ../../{charm}
             scale: 1
             constraints: arch=amd64
             resources:

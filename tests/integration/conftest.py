@@ -12,8 +12,7 @@ from typing import Dict
 
 import pytest
 import yaml
-from pytest_operator.plugin import OpsTest
-import jubilant
+from pytest_jubilant import pack_charm
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ def timed_memoizer(func):
     """Cache the result of a function."""
 
     @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
+    def wrapper(*args, **kwargs):
         fname = func.__qualname__
         logger.info("Started: %s" % fname)
         start_time = datetime.now()
@@ -32,7 +31,7 @@ def timed_memoizer(func):
             ret = store[fname]
         else:
             logger.info("Return for {} not cached".format(fname))
-            ret = await func(*args, **kwargs)
+            ret = func(*args, **kwargs)
             store[fname] = ret
         logger.info("Finished: {} in: {} seconds".format(fname, datetime.now() - start_time))
         return ret
@@ -42,14 +41,13 @@ def timed_memoizer(func):
 
 @pytest.fixture(scope="module")
 @timed_memoizer
-async def charm(ops_test: OpsTest) -> str:
+def charm():
     """Charm used for integration testing."""
     if charm_file := os.environ.get("CHARM_PATH"):
-        return str(charm_file)
+        return str(charm_file), None
 
-    charm = await ops_test.build_charm(".")
-    assert charm
-    return str(charm)
+    result = pack_charm()
+    return str(result.charm)
 
 
 @pytest.fixture(scope="module")
@@ -60,10 +58,3 @@ def charm_resources(metadata_file="charmcraft.yaml") -> Dict[str, str]:
     for res, data in metadata["resources"].items():
         resources[res] = data["upstream-source"]
     return resources
-
-
-@pytest.fixture(scope="module")
-def juju():
-    keep_models: bool = os.environ.get("KEEP_MODELS") is not None
-    with jubilant.temp_model(keep=keep_models) as juju:
-        yield juju
