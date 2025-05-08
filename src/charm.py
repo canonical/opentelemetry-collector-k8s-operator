@@ -11,7 +11,13 @@ import shutil
 from collections import namedtuple
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
-from constants import RECV_CA_CERT_FOLDER_PATH, CONFIG_PATH, SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH, SERVICE_NAME
+from constants import (
+    RECV_CA_CERT_FOLDER_PATH,
+    CONFIG_PATH,
+    SERVER_CERT_PATH,
+    SERVER_CERT_PRIVATE_KEY_PATH,
+    SERVICE_NAME,
+)
 import yaml
 from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
@@ -108,12 +114,13 @@ def forward_dashboards(charm: CharmBase):
             f.write(json.dumps(dash["content"]))
             logger.debug("updated dashboard file %s", f.name)
 
-    # Scan the built-in dashboards and update relations with changes
+    # GrafanaDashboardProvider is garbage collected, see the `_reconcile`` docstring for more details
     grafana_dashboards_provider = GrafanaDashboardProvider(
         charm,
         relation_name="grafana-dashboards-provider",
         dashboards_path=dashboard_paths.dest,
     )
+    # Scan the built-in dashboards and update relations with changes
     grafana_dashboards_provider.reload_dashboards()
 
     # TODO: Do we need to implement dashboard status changed logic?
@@ -158,16 +165,13 @@ def server_cert(charm: CharmBase, container: Container) -> str:
         mode=Mode.UNIT,
     )
 
-    # The TLSCertificatesRequiresV4 lib is very much events-based:
-    #   WARNING unit.otelcol/0.juju-log certificates:12:
-    #   Reference to ops.Object at path OpenTelemetryCollectorK8sCharm/TLSCertificatesRequiresV4[certificates] has been
-    #   garbage collected between when the charm was initialised and when the event was emitted.
-    #   Make sure you store a reference to the observer.
-    # So we need to call _configure() ourselves:
+    # TLSCertificatesRequiresV4 is garbage collected, see the `_reconcile`` docstring for more
+    # details. So we need to call _configure() ourselves:
     certificates._configure(None)  # type: ignore[reportArgumentType]
 
-    # TODO: add relation-joined guard?
-    provider_certificate, private_key = certificates.get_assigned_certificate(certificate_request=csr_attrs)
+    provider_certificate, private_key = certificates.get_assigned_certificate(
+        certificate_request=csr_attrs
+    )
     if not provider_certificate or not private_key:
         if not provider_certificate:
             logger.debug("TLS disabled: Certificate is not available")
@@ -179,13 +183,26 @@ def server_cert(charm: CharmBase, container: Container) -> str:
         container.remove_path(SERVER_CERT_PRIVATE_KEY_PATH, recursive=True)
         return sha256("")
 
-    existing_cert = container.pull(path=SERVER_CERT_PATH).read() if container.exists(path=SERVER_CERT_PATH) else ""
-    if not existing_cert or provider_certificate.certificate != Certificate.from_string(existing_cert):
-        container.push(path=f"{SERVER_CERT_PATH}", source=str(provider_certificate.certificate), make_dirs=True)
+    existing_cert = (
+        container.pull(path=SERVER_CERT_PATH).read()
+        if container.exists(path=SERVER_CERT_PATH)
+        else ""
+    )
+    if not existing_cert or provider_certificate.certificate != Certificate.from_string(
+        existing_cert
+    ):
+        container.push(
+            path=f"{SERVER_CERT_PATH}",
+            source=str(provider_certificate.certificate),
+            make_dirs=True,
+        )
         logger.info("Pushed certificate pushed to workload")
 
-    existing_key = container.pull(path=SERVER_CERT_PRIVATE_KEY_PATH).read() if container.exists(
-        path=SERVER_CERT_PRIVATE_KEY_PATH) else ""
+    existing_key = (
+        container.pull(path=SERVER_CERT_PRIVATE_KEY_PATH).read()
+        if container.exists(path=SERVER_CERT_PRIVATE_KEY_PATH)
+        else ""
+    )
     if not existing_key or private_key != PrivateKey.from_string(existing_key):
         container.push(
             path=f"{SERVER_CERT_PRIVATE_KEY_PATH}",
@@ -194,20 +211,14 @@ def server_cert(charm: CharmBase, container: Container) -> str:
         )
         logger.info("Pushed private key to workload")
 
-    # TODO somehow propagate config for the "tls" section
-    # - Having the tls-certificates relation in place semantically means we want TLS, so stop the service until we have
-    #   the cert.
-    # - When the cert is in ("TLS ready"), render the "tls:" section in the receivers' config.
-    #   - we need an external check, "is_tls_ready()". single source of truth: cert+key on disk.
-    # - if we don't store the CA cert then hot reload is enough
-
-    # TODO this is likely a reload sentinel, not a replan
     return sha256(str(private_key) + str(provider_certificate.certificate))
 
 
 def is_server_cert_on_disk(container: Container) -> bool:
     """Return True if the server cert and private key are present in the workload container."""
-    return container.exists(path=SERVER_CERT_PATH) and container.exists(path=SERVER_CERT_PRIVATE_KEY_PATH)
+    return container.exists(path=SERVER_CERT_PATH) and container.exists(
+        path=SERVER_CERT_PRIVATE_KEY_PATH
+    )
 
 
 class OpenTelemetryCollectorK8sCharm(CharmBase):
@@ -231,7 +242,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self._reconcile()
 
     def _reconcile(self):
-        """Recreate the world state for the charm."""
+        """Recreate the world state for the charm.
+
+        With this pattern, we do not hold instances as attributes. When using events-based
+        libraries, these instances will be garbage collected:
+        > Reference to ops.Object at path OpenTelemetryCollectorK8sCharm/INSTANCE has been
+        > garbage collected between when the charm was initialised and when the event was emitted.
+        """
         container = self.unit.get_container(self._container_name)
         charm_root = self.charm_dir.absolute()
         replan_sentinel: str = ""
@@ -264,6 +281,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             port=PORTS.LOKI_HTTP,
             scheme="https" if is_server_cert_on_disk(container) else "http",
         )
+        # LokiPushApiConsumer is garbage collected, see the `_reconcile`` docstring for more details
         loki_consumer = LokiPushApiConsumer(
             self,
             relation_name="send-loki-logs",
@@ -280,17 +298,19 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             src=charm_root.joinpath(*self._metrics_rules_src_path.split("/")),
             dest=charm_root.joinpath(*self._metrics_rules_dest_path.split("/")),
         )
-        # Receive alert rules and scrape jobs
+        # MetricsEndpointConsumer is garbage collected, see the `_reconcile`` docstring for more details
         metrics_consumer = MetricsEndpointConsumer(self)
+        # Receive alert rules and scrape jobs
         _aggregate_alerts(metrics_consumer.alerts, metrics_rules_paths, forward_alert_rules)
         self._add_self_scrape(insecure_skip_verify)
         self.otel_config.add_prometheus_scrape(
             metrics_consumer.jobs(), self._incoming_metrics, insecure_skip_verify
         )
-        # Forward alert rules and scrape jobs to Prometheus
+        # PrometheusRemoteWriteConsumer is garbage collected, see the `_reconcile`` docstring for more details
         remote_write = PrometheusRemoteWriteConsumer(
             self, alert_rules_path=metrics_rules_paths.dest
         )
+        # Forward alert rules and scrape jobs to Prometheus
         remote_write.reload_alerts()
         self._add_remote_write(remote_write.endpoints, insecure_skip_verify)
 

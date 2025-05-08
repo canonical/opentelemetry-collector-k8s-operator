@@ -220,6 +220,18 @@ def test_receivers_tls_known_protocols():
         {"protocols": {"grpc": {"endpoint": "0.0.0.0:5679"}}},
         pipelines=["metrics"],
     )
+    config.add_receiver(
+        "with-existing-tls",
+        {
+            "protocols": {
+                "grpc": {
+                    "endpoint": "0.0.0.0:5679",
+                    "tls": {"key_file": "foo", "cert_file": "bar"},
+                }
+            }
+        },
+        pipelines=["metrics"],
+    )
 
     # WHEN tls is enabled
     config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
@@ -236,6 +248,16 @@ def test_receivers_tls_known_protocols():
         assert tls_section["key_file"] == "/some/private.key"
         assert "cert_file" in tls_section
         assert tls_section["cert_file"] == "/some/cert.crt"
+
+    # AND receivers which had a configured tls section, keep their configuration
+    assert (
+        config_dict["receivers"]["with-existing-tls"]["protocols"]["grpc"]["tls"]["key_file"]
+        == "foo"
+    )
+    assert (
+        config_dict["receivers"]["with-existing-tls"]["protocols"]["grpc"]["tls"]["cert_file"]
+        == "bar"
+    )
 
 
 def test_insecure_skip_verify():

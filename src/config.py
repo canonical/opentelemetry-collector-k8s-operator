@@ -289,6 +289,10 @@ class Config:
         """Return the updated config in a new dict.
 
         Ref: https://github.com/open-telemetry/opentelemetry-collector/blob/main/config/configtls/README.md#server-configuration
+
+        If the key-value pair already exists, the value is not updated.
+
+        Since we use the root cert store, we do not fine-grain the certs per exporter.
         """
         config = config.copy()
         if not cert_file or not key_file:
@@ -302,8 +306,8 @@ class Config:
                     continue
                 else:
                     section.setdefault("tls", {})
-                    section["tls"]["key_file"] = key_file
-                    section["tls"]["cert_file"] = cert_file
+                    section["tls"].setdefault("key_file", key_file)
+                    section["tls"].setdefault("cert_file", cert_file)
 
         return config
 
