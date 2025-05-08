@@ -1,0 +1,44 @@
+
+bundle: kubernetes
+applications:
+  am:
+    charm: alertmanager-k8s
+    channel: latest/stable
+    revision: 158
+    base: ubuntu@20.04/stable
+    resources:
+      alertmanager-image: 99
+    scale: 1
+    trust: true
+  otelcol:
+    charm: ../../opentelemetry-collector-k8s_ubuntu@24.04-amd64.charm
+    resources:
+      opentelemetry-collector-image: ubuntu/opentelemetry-collector:0.123-24.04
+    scale: 1
+  prom:
+    charm: prometheus-k8s
+    channel: latest/stable
+    revision: 234
+    base: ubuntu@20.04/stable
+    resources:
+      prometheus-image: 151
+    scale: 1
+    trust: true
+  ssc:
+    charm: self-signed-certificates
+    channel: 1/stable
+    revision: 263
+    scale: 1
+relations:
+- - ssc:certificates
+  - otelcol:certificates
+- - ssc:send-ca-cert
+  - otelcol:receive-ca-cert
+- - ssc:certificates
+  - prom:certificates
+- - prom:receive-remote-write
+  - otelcol:send-remote-write
+- - am:self-metrics-endpoint
+  - otelcol:metrics-endpoint
+- - am:certificates
+  - ssc:certificates

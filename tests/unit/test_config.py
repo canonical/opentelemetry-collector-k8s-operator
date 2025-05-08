@@ -7,6 +7,7 @@ from copy import deepcopy
 
 import pytest
 import yaml
+import copy
 
 from src.config import Config
 
@@ -94,7 +95,7 @@ def test_add_prometheus_scrape():
     with pytest.raises(KeyError):
         cfg._config["receivers"]["prometheus"]
 
-    # WHEN a scrape job is added to the config
+    # AND WHEN a scrape job is added to the config
     first_job = [
         {
             "metrics_path": "/metrics",
@@ -111,7 +112,7 @@ def test_add_prometheus_scrape():
                     "static_configs": [{"targets": ["*:9001"]}],
                     "job_name": "first_job",
                     "scrape_interval": "15s",
-                    # Added by add_prometheus_scrape
+                    # Added dynamically by add_prometheus_scrape
                     "tls_config": {"insecure_skip_verify": True},
                 },
             ],
@@ -122,7 +123,7 @@ def test_add_prometheus_scrape():
     # AND insecure_skip_verify is injected into the config
     assert cfg._config["receivers"]["prometheus"] == expected_prom_recv_cfg
 
-    # WHEN more scrape jobs are added to the config
+    # AND WHEN more scrape jobs are added to the config
     more_jobs = [
         {
             "metrics_path": "/metrics",
@@ -153,12 +154,118 @@ def test_rendered_default_is_valid():
     assert all(all(condition for condition in pair) for pair in pairs)
 
 
+def test_receivers_tls_empty_config():
+    # GIVEN an "empty" config
+    config = Config()
+    # WHEN tls is enabled
+    config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
+    # THEN it has no effect on the rendered config
+    assert config.yaml == Config().yaml
+
+
+def test_receivers_tls_no_protocols():
+    # GIVEN a config without any protocols
+    config = Config()
+    config.add_receiver("prometheus", {"config": {"foo": "bar"}}, pipelines=["metrics"])
+
+    # TODO When we impl fluent config (with immutable builder), then we won't need to copy anymore, because we would:
+    #  yaml1 = config.enable_receiver_tls("foo", "bar").yaml
+    #  yaml2 = config.yaml
+    config_copy = copy.deepcopy(config)
+
+    # WHEN tls is enabled
+    config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
+
+    # THEN it has no effect on the rendered config
+    assert config.yaml == config_copy.yaml
+
+
+def test_receivers_tls_unknown_protocols():
+    # GIVEN a config with an unknown protocols
+    config = Config()
+    config.add_receiver(
+        "some_receiver",
+        {"protocols": {"unknown_protocol_name": {"endpoint": "0.0.0.0:1234"}}},
+        pipelines=["metrics"],
+    )
+    config_copy = copy.deepcopy(config)
+
+    # WHEN tls is enabled
+    config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
+
+    # THEN it has no effect on the rendered config
+    assert config.yaml == config_copy.yaml
+
+
+def test_receivers_tls_known_protocols():
+    # GIVEN a config with known protocols (http, grpc)
+    config = Config()
+    config.add_receiver(
+        "some-http-receiver",
+        {"protocols": {"http": {"endpoint": "0.0.0.0:1234"}}},
+        pipelines=["metrics"],
+    )
+    config.add_receiver(
+        "another-http-receiver",
+        {"protocols": {"http": {"endpoint": "0.0.0.0:1235"}}},
+        pipelines=["metrics"],
+    )
+    config.add_receiver(
+        "some-grpc-receiver",
+        {"protocols": {"grpc": {"endpoint": "0.0.0.0:5678"}}},
+        pipelines=["metrics"],
+    )
+    config.add_receiver(
+        "another-grpc-receiver",
+        {"protocols": {"grpc": {"endpoint": "0.0.0.0:5679"}}},
+        pipelines=["metrics"],
+    )
+    config.add_receiver(
+        "with-existing-tls",
+        {
+            "protocols": {
+                "grpc": {
+                    "endpoint": "0.0.0.0:5679",
+                    "tls": {"key_file": "foo", "cert_file": "bar"},
+                }
+            }
+        },
+        pipelines=["metrics"],
+    )
+
+    # WHEN tls is enabled
+    config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
+    config_dict = yaml.safe_load(config.yaml)
+
+    # THEN all receivers' http, grpc protocols gain a tls section
+    for tls_section in (
+        config_dict["receivers"]["some-http-receiver"]["protocols"]["http"]["tls"],
+        config_dict["receivers"]["another-http-receiver"]["protocols"]["http"]["tls"],
+        config_dict["receivers"]["some-grpc-receiver"]["protocols"]["grpc"]["tls"],
+        config_dict["receivers"]["another-grpc-receiver"]["protocols"]["grpc"]["tls"],
+    ):
+        assert "key_file" in tls_section
+        assert tls_section["key_file"] == "/some/private.key"
+        assert "cert_file" in tls_section
+        assert tls_section["cert_file"] == "/some/cert.crt"
+
+    # AND receivers which had a configured tls section, keep their configuration
+    assert (
+        config_dict["receivers"]["with-existing-tls"]["protocols"]["grpc"]["tls"]["key_file"]
+        == "foo"
+    )
+    assert (
+        config_dict["receivers"]["with-existing-tls"]["protocols"]["grpc"]["tls"]["cert_file"]
+        == "bar"
+    )
+
+
 def test_insecure_skip_verify():
     # GIVEN an empty config without exporters
     cfg = Config()
     cfg_copy = deepcopy(cfg)
     # WHEN updating the tls::insecure_skip_verify exporter configuration
-    config_dict = cfg.add_exporter_insecure_skip_verify(cfg._config, False)
+    config_dict = cfg._add_exporter_insecure_skip_verify(cfg._config, False)
     # THEN it has no effect on the rendered config
     assert config_dict == cfg_copy._config
     # WHEN multiple exporters are added
@@ -171,7 +278,7 @@ def test_insecure_skip_verify():
         },
     )
     # AND the tls::insecure_skip_verify configuration is added
-    config_dict = cfg.add_exporter_insecure_skip_verify(cfg._config, False)
+    config_dict = cfg._add_exporter_insecure_skip_verify(cfg._config, False)
     # THEN tls::insecure_skip_verify is set for each exporter which was missing this configuration
     assert config_dict["exporters"]["foo"]["tls"]["insecure_skip_verify"] is False
     # AND any existing tls::insecure_skip_verify configuration is untouched
@@ -185,6 +292,6 @@ def test_debug_exporter_no_tls_config():
     cfg.add_exporter("debug", {"config": {"foo": "bar"}})
     cfg.add_exporter("debug/descriptor", {"config": {"foo": "bar"}})
     # AND the tls::insecure_skip_verify configuration is added
-    config_dict = cfg.add_exporter_insecure_skip_verify(cfg._config, True)
+    config_dict = cfg._add_exporter_insecure_skip_verify(cfg._config, True)
     # THEN tls::insecure_skip_verify is not set for debug exporters
     assert all("tls" not in exp.keys() for exp in config_dict["exporters"].values())

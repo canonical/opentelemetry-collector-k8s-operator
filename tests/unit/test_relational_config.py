@@ -3,8 +3,9 @@
 
 """Feature: Relation-dependant Opentelemetry-collector config."""
 
-import yaml
+from helpers import get_otelcol_file
 from ops.testing import Container, Relation, State
+
 from constants import CONFIG_PATH
 
 
@@ -21,14 +22,8 @@ def test_no_relations(ctx, execs):
     state_in = State(containers=[Container(name="otelcol", can_connect=True, execs=execs)])
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state_in)
-    otelcol = state_out.get_container("otelcol")
-    # THEN the otelcol service has started
-    assert otelcol.services["otelcol"].is_running()
-    fs = otelcol.get_filesystem(ctx)
-    otelcol_config = fs.joinpath(*CONFIG_PATH.strip("/").split("/"))
-    # AND the otelcol config was pushed to the workload container
-    assert otelcol_config.exists()
-    cfg = yaml.safe_load(otelcol_config.read_text())
+    # THEN the config file exists and the pebble service is running
+    cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     # AND the pipelines are valid
     check_valid_pipelines(cfg)
 
@@ -50,14 +45,8 @@ def test_loki_exporter(ctx, execs):
     )
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state_in)
-    otelcol = state_out.get_container("otelcol")
-    # THEN the otelcol service has started
-    assert otelcol.services["otelcol"].is_running()
-    fs = otelcol.get_filesystem(ctx)
-    otelcol_config = fs.joinpath(*CONFIG_PATH.strip("/").split("/"))
-    # AND the otelcol config was pushed to the workload container
-    assert otelcol_config.exists()
-    cfg = yaml.safe_load(otelcol_config.read_text())
+    # THEN the config file exists and the pebble service is running
+    cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     # AND one exporter per loki unit in relation exists in the config
     prom_exporters = [f"loki/{idx}" for idx in range(len(remote_units_data))]
     assert set(prom_exporters).issubset(set(cfg["exporters"].keys()))
@@ -84,14 +73,8 @@ def test_prometheus_exporter(ctx, execs):
     )
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state_in)
-    otelcol = state_out.get_container("otelcol")
-    # THEN the otelcol service has started
-    assert otelcol.services["otelcol"].is_running()
-    fs = otelcol.get_filesystem(ctx)
-    otelcol_config = fs.joinpath(*CONFIG_PATH.strip("/").split("/"))
-    # AND the otelcol config was pushed to the workload container
-    assert otelcol_config.exists()
-    cfg = yaml.safe_load(otelcol_config.read_text())
+    # THEN the config file exists and the pebble service is running
+    cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     # AND one exporter per prometheus unit in relation exists in the config
     prom_exporters = [f"prometheusremotewrite/{idx}" for idx in range(len(remote_units_data))]
     assert set(prom_exporters).issubset(set(cfg["exporters"].keys()))
@@ -120,14 +103,8 @@ def test_cloud_integrator(ctx, execs):
     )
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state_in)
-    otelcol = state_out.get_container("otelcol")
-    # THEN the otelcol service has started
-    assert otelcol.services["otelcol"].is_running()
-    fs = otelcol.get_filesystem(ctx)
-    otelcol_config = fs.joinpath(*CONFIG_PATH.strip("/").split("/"))
-    # AND the otelcol config was pushed to the workload container
-    assert otelcol_config.exists()
-    cfg = yaml.safe_load(otelcol_config.read_text())
+    # THEN the config file exists and the pebble service is running
+    cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     # AND the exporters for the cloud-integrator exists in the config
     expected_exporters = {"loki/cloud-integrator", "prometheusremotewrite/cloud-integrator"}
     assert expected_exporters.issubset(set(cfg["exporters"].keys()))
