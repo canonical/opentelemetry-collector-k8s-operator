@@ -52,7 +52,7 @@ def test_waiting_for_cert(ctx, execs):
     container = Container(name="otelcol", can_connect=True, execs=execs)
     # WHEN a tls-certificates relation joins but the CA didn't reply with a cert yet
     ssc = Relation(
-        endpoint="certificates",
+        endpoint="receive-server-cert",
         interface="tls-certificate",
     )
     state_in = State(relations=[ssc], containers=[container])
@@ -66,7 +66,7 @@ def test_transitioned_from_http_to_https_to_http(ctx, execs, cert, cert_obj, pri
     # GIVEN otelcol has received a cert
     container = Container(name="otelcol", can_connect=True, execs=execs)
     ssc = Relation(
-        endpoint="certificates",
+        endpoint="receive-server-cert",
         interface="tls-certificate",
     )
     data_sink = Relation(
@@ -112,7 +112,7 @@ def test_https_endpoint_is_provided(ctx, execs, cert, cert_obj, private_key):
     # GIVEN otelcol is in TLS mode
     container = Container(name="otelcol", can_connect=True, execs=execs)
     ssc = Relation(
-        endpoint="certificates",
+        endpoint="receive-server-cert",
         interface="tls-certificate",
     )
     data_source = Relation(
