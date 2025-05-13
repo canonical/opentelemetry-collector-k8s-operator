@@ -31,7 +31,7 @@ applications:
     scale: 1
 relations:
 - - ssc:certificates
-  - otelcol:certificates
+  - otelcol:receive-server-cert
 - - ssc:send-ca-cert
   - otelcol:receive-ca-cert
 - - ssc:certificates

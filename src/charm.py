@@ -160,7 +160,7 @@ def server_cert(charm: CharmBase, container: Container) -> str:
     csr_attrs = CertificateRequestAttributes(common_name=common_name, sans_dns=frozenset({domain}))
     certificates = TLSCertificatesRequiresV4(
         charm=charm,
-        relationship_name="certificates",
+        relationship_name="receive-server-cert",
         certificate_requests=[csr_attrs],
         mode=Mode.UNIT,
     )
@@ -337,7 +337,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # TODO Conditionally open ports based on the otelcol config file rather than opening all ports
         self.unit.set_ports(*self.otel_config.ports)
 
-        if bool(self.model.relations.get("certificates")) and not server_cert_on_disk:
+        if bool(self.model.relations.get("receive-server-cert")) and not server_cert_on_disk:
             # A tls relation to a CA was formed, but we didn't get the cert yet.
             container.stop(SERVICE_NAME)
             self.unit.status = WaitingStatus("Waiting for cert")

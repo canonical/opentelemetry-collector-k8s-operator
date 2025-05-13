@@ -94,7 +94,7 @@ requires:
     optional: true
     limit: 1
     description: Forward telemetry to another Observability stack (Grafana Cloud, COS, etc.).
-  certificates:
+  receive-server-cert:
     interface: tls-certificates
     optional: true
     limit: 1
