@@ -9,7 +9,6 @@ import tempfile
 import textwrap
 from typing import Dict
 
-import sh
 from jubilant import Juju, all_active
 from requests import request
 from tenacity import retry, stop_after_attempt, wait_fixed

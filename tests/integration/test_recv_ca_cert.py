@@ -8,7 +8,7 @@ import time
 from typing import Dict
 
 import sh
-from jubilant import Juju, all_active
+from jubilant import Juju, all_active, all_agents_idle
 
 # This is needed for sh.juju
 # pyright: reportAttributeAccessIssue = false
@@ -119,7 +119,7 @@ def test_insecure_skip_verify(juju: Juju):
 
     # WHEN we skip server certificate validation; Alertmanager for scraping and Prom for remote writing
     juju.config("otelcol", {"tls_insecure_skip_verify": True})
-    juju.wait(jubilant.all_agents_idle, timeout=60)
+    juju.wait(all_agents_idle, timeout=60)
 
     # THEN scrape succeeds
     logger.info("Waiting for scrape interval (1 minute) to elapse...")
@@ -131,7 +131,7 @@ def test_insecure_skip_verify(juju: Juju):
 
     # WHEN we validate server certificates; Alertmanager for scraping and Prom for remote writing
     juju.config("otelcol", {"tls_insecure_skip_verify": False})
-    juju.wait(jubilant.all_agents_idle, timeout=60)
+    juju.wait(all_agents_idle, timeout=60)
 
     # THEN scrape fails
     # Note: the workload restarts on config change due to the reload sentinel, so the kubectl logs
