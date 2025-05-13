@@ -13,6 +13,7 @@ dependencies = [
   "cryptography",
   "lightkube>=0.11",
   "cosl",
+  "pydantic",
 ]
 
 [project.optional-dependencies]

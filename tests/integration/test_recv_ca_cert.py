@@ -119,20 +119,28 @@ def test_insecure_skip_verify(juju: Juju):
 
     # WHEN we skip server certificate validation; Alertmanager for scraping and Prom for remote writing
     juju.config("otelcol", {"tls_insecure_skip_verify": True})
+    juju.wait(jubilant.all_agents_idle, timeout=60)
+
+    # THEN scrape succeeds
+    logger.info("Waiting for scrape interval (1 minute) to elapse...")
     time.sleep(lookback_window)  # Wait for scrape interval (1 minute) to elapse
     logs = sh.kubectl.logs(
         "otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
     )
-    # THEN scrape succeeds
     logs_contain_no_errors(logs)
 
     # WHEN we validate server certificates; Alertmanager for scraping and Prom for remote writing
     juju.config("otelcol", {"tls_insecure_skip_verify": False})
+    juju.wait(jubilant.all_agents_idle, timeout=60)
+
+    # THEN scrape fails
+    # Note: the workload restarts on config change due to the reload sentinel, so the kubectl logs
+    # from the previous assertion are wiped and do not interfere with this assertion
+    logger.info("Waiting for scrape interval (1 minute) to elapse...")
     time.sleep(lookback_window)  # Wait for scrape interval (1 minute) to elapse
     logs = sh.kubectl.logs(
         "otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
     )
-    # THEN scrape fails
     logs_contain_errors(logs)
 
 

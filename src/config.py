@@ -42,6 +42,8 @@ class Config:
                 "telemetry": {},
             },
         }
+        self._cert_file: Optional[str] = None
+        self._key_file: Optional[str] = None
         self._insecure_skip_verify: bool = False
 
     @property
@@ -49,10 +51,13 @@ class Config:
         """Return the config as a string."""
         config = deepcopy(self)
         config._add_debug_exporters()
-        config_dict = config.add_exporter_insecure_skip_verify(
+        config._config = config._add_receiver_tls(
+            config._config, self._cert_file, self._key_file
+        )
+        config._config = config._add_exporter_insecure_skip_verify(
             config._config, self._insecure_skip_verify
         )
-        return yaml.dump(config_dict)
+        return yaml.dump(config._config)
 
     @property
     def hash(self):
@@ -76,6 +81,8 @@ class Config:
                 {"protocols": {"http": {"endpoint": f"0.0.0.0:{PORTS.OTLP_HTTP}"}}},
                 pipelines=["logs", "metrics", "traces"],
             )
+            # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/healthcheckextension
+            # Add TLS config to extensions
             .add_extension("health_check", {"endpoint": f"0.0.0.0:{PORTS.HEALTH}"})
             .add_telemetry("logs", {"level": "DEBUG"})
             .add_telemetry("metrics", {"level": "normal"})
@@ -242,31 +249,6 @@ class Config:
         if debug_exporter_required:
             self.add_exporter("debug", {"verbosity": "basic"})
 
-    def set_exporter_insecure_skip_verify(self, insecure_skip_verify: bool):
-        """Enable skipping client (exporters) certificate validation."""
-        self._insecure_skip_verify = insecure_skip_verify
-
-    @classmethod
-    def add_exporter_insecure_skip_verify(
-        cls, config: dict, insecure_skip_verify: bool = False
-    ) -> dict:
-        """Insert `tls::insecure_skip_verify` into every exporter's config with the juju config value.
-
-        If the key-value pair already exists, the value is not updated.
-
-        This allows the charm admin to skip verifying the server's certificate. Since we use the root cert
-        store, we do not fine-grain the certs per exporter.
-
-        IMPORTANT: This method should be run prior to rendering the config.
-        """
-        for exporter in config["exporters"]:
-            if exporter.split("/")[0] == "debug":
-                continue
-            config["exporters"][exporter].setdefault("tls", {}).setdefault(
-                "insecure_skip_verify", insecure_skip_verify
-            )
-        return config
-
     def add_prometheus_scrape(
         self, jobs: List, incoming_metrics: bool, insecure_skip_verify: bool = False
     ):
@@ -287,3 +269,69 @@ class Config:
             scrape_job.update({"tls_config": {"insecure_skip_verify": insecure_skip_verify}})
             self._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(scrape_job)
         return self
+
+    def enable_receiver_tls(self, cert_file: str, key_file: str):
+        """Enable server (receivers) tls. Both cert_file and key_file must be set.
+
+        Raises:
+            ValueError, if either cert_file or key_file are empty.
+        """
+        if not cert_file or not key_file:
+            raise ValueError("Both cert_file and key_file must be set.")
+
+        self._cert_file = cert_file
+        self._key_file = key_file
+
+    @classmethod
+    def _add_receiver_tls(
+        cls, config: dict, cert_file: Optional[str], key_file: Optional[str]
+    ) -> dict:
+        """Return the updated config in a new dict.
+
+        Ref: https://github.com/open-telemetry/opentelemetry-collector/blob/main/config/configtls/README.md#server-configuration
+
+        If the key-value pair already exists, the value is not updated.
+
+        Since we use the root cert store, we do not fine-grain the certs per exporter.
+        """
+        config = config.copy()
+        if not cert_file or not key_file:
+            return config
+
+        for receiver in config.get("receivers", {}):
+            for protocol in {"http", "grpc"}:
+                try:
+                    section = config["receivers"][receiver]["protocols"][protocol]
+                except KeyError:
+                    continue
+                else:
+                    section.setdefault("tls", {})
+                    section["tls"].setdefault("key_file", key_file)
+                    section["tls"].setdefault("cert_file", cert_file)
+
+        return config
+
+    def _add_exporter_insecure_skip_verify(
+        self, config: dict, insecure_skip_verify: bool = False
+    ) -> dict:
+        """Insert `tls::insecure_skip_verify` into every exporter's config with the juju config value.
+
+        If the key-value pair already exists, the value is not updated.
+
+        This allows the charm admin to skip verifying the server's certificate. Since we use the root cert
+        store, we do not fine-grain the certs per exporter.
+
+        IMPORTANT: This method should be run prior to rendering the config.
+        """
+        config = config.copy()
+        for exporter in config.get("exporters", {}):
+            if exporter.split("/")[0] == "debug":
+                continue
+            config["exporters"][exporter].setdefault("tls", {}).setdefault(
+                "insecure_skip_verify", insecure_skip_verify
+            )
+        return config
+
+    def set_exporter_insecure_skip_verify(self, insecure_skip_verify: bool):
+        """Enable skipping client (exporters) certificate validation."""
+        self._insecure_skip_verify = insecure_skip_verify

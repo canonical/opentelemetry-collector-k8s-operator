@@ -94,6 +94,14 @@ requires:
     optional: true
     limit: 1
     description: Forward telemetry to another Observability stack (Grafana Cloud, COS, etc.).
+  receive-server-cert:
+    interface: tls-certificates
+    optional: true
+    limit: 1
+    description: |
+      Obtain a certificate from a CA.
+      The charm sends a CSR over this relation and receives a signed certificate back.
+      That is the cert that would be presented to incoming TLS connections.
 
 config:
   options:
@@ -104,7 +112,7 @@ config:
       default: true
     tls_insecure_skip_verify:
       description: |
-        Flag to skip the verification of certificates from servers we connect to with TLS.
+        Flag to skip the validation of certificates from servers we connect to with TLS.
         If "true", self-signed certs can be used seamlessly; this setting will be applied
         to all the otelcol exporter configurations and any receivers which actively make
         requests to servers, e.g. the prometheus receiver scraping metrics endpoints.
