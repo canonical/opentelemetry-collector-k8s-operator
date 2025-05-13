@@ -1,13 +1,14 @@
 """Feature: Otelcol can form TLS connections with HTTPS servers."""
 
-import textwrap
-import sh
-from typing import Dict
-import tempfile
-import time
-import pathlib
 import logging
-import jubilant
+import pathlib
+import tempfile
+import textwrap
+import time
+from typing import Dict
+
+import sh
+from jubilant import Juju, all_active, all_agents_idle
 
 # This is needed for sh.juju
 # pyright: reportAttributeAccessIssue = false
@@ -40,10 +41,8 @@ def logs_contain_no_errors(logs):
     assert "context deadline exceeded" not in logs
 
 
-async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+def test_unknown_authority(juju: Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: Otelcol fails to scrape metrics from a server signed by unknown authority."""
-    sh.juju.switch(juju.model)
-
     # GIVEN a scrape target signed by a self-signed certificate
     # WHEN related to otelcol
     bundle = textwrap.dedent(f"""
@@ -95,7 +94,7 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
         f.write(bundle.encode())
         f.flush()
         juju.deploy(f.name, trust=True)
-    juju.wait(jubilant.all_active, delay=10, timeout=600)
+    juju.wait(all_active, delay=10, timeout=600)
 
     logger.info("Waiting for scrape interval (1 minute) to elapse...")
     scrape_interval = 60  # seconds!
@@ -114,13 +113,13 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
     # 2025-04-17T20:58:53.728Z [otelcol] 2025-04-07T20:46:23.468Z error internal/queue_sender.go:128 Exporting failed. Dropping data.   {"otelcol.component.id": "prometheusremotewrite/0", "otelcol.component.kind": "Exporter", "otelcol.signal": "metrics", "error": "Permanent error: Permanent error: context deadline exceeded", "dropped_items": 5}
 
 
-def test_insecure_skip_verify(juju: jubilant.Juju):
+def test_insecure_skip_verify(juju: Juju):
     scrape_interval = 60  # seconds!
     lookback_window = scrape_interval + 10  # seconds!
 
     # WHEN we skip server certificate validation; Alertmanager for scraping and Prom for remote writing
     juju.config("otelcol", {"tls_insecure_skip_verify": True})
-    juju.wait(jubilant.all_agents_idle, timeout=60)
+    juju.wait(all_agents_idle, timeout=60)
 
     # THEN scrape succeeds
     logger.info("Waiting for scrape interval (1 minute) to elapse...")
@@ -132,7 +131,7 @@ def test_insecure_skip_verify(juju: jubilant.Juju):
 
     # WHEN we validate server certificates; Alertmanager for scraping and Prom for remote writing
     juju.config("otelcol", {"tls_insecure_skip_verify": False})
-    juju.wait(jubilant.all_agents_idle, timeout=60)
+    juju.wait(all_agents_idle, timeout=60)
 
     # THEN scrape fails
     # Note: the workload restarts on config change due to the reload sentinel, so the kubectl logs
@@ -145,11 +144,11 @@ def test_insecure_skip_verify(juju: jubilant.Juju):
     logs_contain_errors(logs)
 
 
-def test_with_ca_cert_forwarded(juju: jubilant.Juju):
+def test_with_ca_cert_forwarded(juju: Juju):
     """Scenario: Otelcol succeeds to scrape metrics from a server signed by a CA that otelcol trusts."""
     # WHEN otelcol trusts the CA that signed the scrape target
     sh.juju.relate("ssc", "otelcol:receive-ca-cert", m=juju.model)
-    juju.wait(jubilant.all_active, delay=10, timeout=600)
+    juju.wait(all_active, delay=10, timeout=600)
 
     # Wait for scrape interval (1 minute) to elapse
     scrape_interval = 60  # seconds!
