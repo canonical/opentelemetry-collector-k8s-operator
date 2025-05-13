@@ -8,13 +8,12 @@ Scenario: Standalone deployment
     Then all pebble checks pass
 """
 
-from typing import Optional
+from typing import Dict, Optional
 
-import jubilant
 import sh
+from jubilant import Juju, all_active
 
 # pyright: reportAttributeAccessIssue = false
-
 
 
 def _get_pebble_checks(app_name: str, model: Optional[str]):
@@ -28,11 +27,11 @@ def _get_pebble_checks(app_name: str, model: Optional[str]):
     )
 
 
-def test_pebble_checks(juju: jubilant.Juju, charm, charm_resources):
+def test_pebble_checks(juju: Juju, charm: str, charm_resources: Dict[str, str]):
     """Deploy the charm."""
     sh.juju.switch(juju.model)
     app_name = "otel-collector-k8s"
-    juju.deploy(f"./{charm}", app_name, resources=charm_resources)
-    juju.wait(jubilant.all_active, delay=10, timeout=60)
+    juju.deploy(charm, app_name, resources=charm_resources)
+    juju.wait(all_active, delay=10, timeout=60)
     pebble_checks = _get_pebble_checks(app_name, juju.model)
     assert "down" not in pebble_checks

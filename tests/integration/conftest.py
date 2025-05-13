@@ -3,11 +3,10 @@
 # See LICENSE file for licensing details.
 """Conftest file for integration tests."""
 
-import functools
 import logging
 import os
+import subprocess
 from collections import defaultdict
-from datetime import datetime
 from typing import Dict
 
 import pytest
@@ -19,39 +18,31 @@ logger = logging.getLogger(__name__)
 store = defaultdict(str)
 
 
-def timed_memoizer(func):
-    """Cache the result of a function."""
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        fname = func.__qualname__
-        logger.info("Started: %s" % fname)
-        start_time = datetime.now()
-        if fname in store.keys():
-            ret = store[fname]
-        else:
-            logger.info("Return for {} not cached".format(fname))
-            ret = func(*args, **kwargs)
-            store[fname] = ret
-        logger.info("Finished: {} in: {} seconds".format(fname, datetime.now() - start_time))
-        return ret
-
-    return wrapper
-
+# pytest-jubilant has a module-level fixture which replaces the need for creating a jubilant fixture
 
 @pytest.fixture(scope="module")
-@timed_memoizer
-def charm():
+def charm() -> str:
     """Charm used for integration testing."""
     if charm_file := os.environ.get("CHARM_PATH"):
-        return str(charm_file), None
+        return str(charm_file)
 
-    result = pack_charm()
-    return str(result.charm)
+    # Intermittent issue where charmcraft fails to build the charm for an unknown reason.
+    # Retry building the charm
+    for _ in range(2):
+        logger.info("packing...")
+        try:
+            pth = str(pack_charm().charm.absolute())
+        except subprocess.CalledProcessError:
+            logger.warning("Failed to build charm. Trying again!")
+            continue
+        os.environ["CHARM_PATH"] = pth
+        return pth
+    raise RuntimeError("Failed to build the charm after 2 attempts.")
 
 
 @pytest.fixture(scope="module")
 def charm_resources(metadata_file="charmcraft.yaml") -> Dict[str, str]:
+    # TODO pytest_jubilant.pack_charm has a `resources` attribute we can use
     with open(metadata_file, "r") as file:
         metadata = yaml.safe_load(file)
     resources = {}

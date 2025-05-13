@@ -7,9 +7,10 @@ import json
 import pathlib
 import tempfile
 import textwrap
+from typing import Dict
 
-import jubilant
 import sh
+from jubilant import Juju, all_active
 from requests import request
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -34,12 +35,9 @@ def _retry_prom_jobs_api(endpoint: str):
     assert any("otelcol" in item for item in job_names)
 
 
-def test_metrics_pipeline(juju: jubilant.Juju, charm, charm_resources):
+def test_metrics_pipeline(juju: Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: scrape-to-remote-write forwarding."""
-    sh.juju.switch(juju.model)
-
     # GIVEN a model with avalanche, otel-collector, and prometheus charms
-    # TODO Add ./ in front of charm
     bundle = textwrap.dedent(f"""
         bundle: kubernetes
         applications:
@@ -49,7 +47,7 @@ def test_metrics_pipeline(juju: jubilant.Juju, charm, charm_resources):
             scale: 1
             trust: true
           otelcol:
-            charm: ../../{charm}
+            charm: {charm}
             scale: 1
             resources:
               opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}
@@ -69,7 +67,7 @@ def test_metrics_pipeline(juju: jubilant.Juju, charm, charm_resources):
         f.write(bundle.encode())
         f.flush()
         juju.deploy(f.name, trust=True)
-    juju.wait(jubilant.all_active, delay=10, timeout=600)
+    juju.wait(all_active, delay=10, timeout=600)
     # THEN rules arrive in prometheus
     prom_ip = juju.status().apps["prometheus"].units["prometheus/0"].address
     data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/rules").text)["data"]
