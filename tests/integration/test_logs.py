@@ -8,8 +8,8 @@ import tempfile
 import textwrap
 from typing import Dict
 
-import jubilant
 import sh
+from jubilant import Juju, all_active
 
 # pyright: reportAttributeAccessIssue = false
 
@@ -17,9 +17,8 @@ import sh
 TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
-async def test_logs_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+def test_logs_pipeline(juju: Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: loki-to-loki formatted log forwarding."""
-    sh.juju.switch(juju.model)
     # GIVEN a model with flog, otel-collector, and loki charms
     bundle = textwrap.dedent(f"""
         bundle: kubernetes
@@ -54,7 +53,7 @@ async def test_logs_pipeline(juju: jubilant.Juju, charm: str, charm_resources: D
         f.write(bundle.encode())
         f.flush()
         juju.deploy(f.name, trust=True)
-    juju.wait(jubilant.all_active, delay=10, timeout=600)
+    juju.wait(all_active, delay=10, timeout=600)
     # THEN logs arrive in loki
     labels = sh.juju.ssh(
         "--container=loki",

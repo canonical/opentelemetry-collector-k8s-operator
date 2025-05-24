@@ -3,16 +3,15 @@
 
 """Feature: Scraped metrics are remote-written."""
 
+import json
 import pathlib
 import tempfile
 import textwrap
-import sh
-import json
 from typing import Dict
-from tenacity import retry, stop_after_attempt, wait_fixed
-from requests import request
 
-import jubilant
+from jubilant import Juju, all_active
+from requests import request
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 # pyright: reportAttributeAccessIssue = false
 
@@ -21,7 +20,7 @@ TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
 @retry(stop=stop_after_attempt(7), wait=wait_fixed(5))
-async def _retry_prom_alerts_api(endpoint: str):
+def _retry_prom_alerts_api(endpoint: str):
     response = request("GET", endpoint).text
     data = json.loads(response)["data"]
     charm_names = [alert["labels"]["juju_charm"] for alert in data["alerts"]]
@@ -29,16 +28,14 @@ async def _retry_prom_alerts_api(endpoint: str):
 
 
 @retry(stop=stop_after_attempt(7), wait=wait_fixed(5))
-async def _retry_prom_jobs_api(endpoint: str):
+def _retry_prom_jobs_api(endpoint: str):
     job_names = json.loads(request("GET", endpoint).text)["data"]
     assert any("avalanche" in item for item in job_names)
     assert any("otelcol" in item for item in job_names)
 
 
-async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+def test_metrics_pipeline(juju: Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: scrape-to-remote-write forwarding."""
-    sh.juju.switch(juju.model)
-
     # GIVEN a model with avalanche, otel-collector, and prometheus charms
     bundle = textwrap.dedent(f"""
         bundle: kubernetes
@@ -69,16 +66,16 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
         f.write(bundle.encode())
         f.flush()
         juju.deploy(f.name, trust=True)
-    juju.wait(jubilant.all_active, delay=10, timeout=600)
+    juju.wait(all_active, delay=10, timeout=600)
     # THEN rules arrive in prometheus
     prom_ip = juju.status().apps["prometheus"].units["prometheus/0"].address
     data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/rules").text)["data"]
     group_names = [group["name"] for group in data["groups"]]
     assert any("_avalanche_" in item for item in group_names)
     # AND the AlwaysFiring alerts from Avalanche arrive in prometheus
-    await _retry_prom_alerts_api(f"http://{prom_ip}:9090/api/v1/alerts")
+    _retry_prom_alerts_api(f"http://{prom_ip}:9090/api/v1/alerts")
     # AND juju_application labels in prometheus contain otel-collector and avalanche
-    await _retry_prom_jobs_api(f"http://{prom_ip}:9090/api/v1/label/juju_application/values")
+    _retry_prom_jobs_api(f"http://{prom_ip}:9090/api/v1/label/juju_application/values")
     # AND avalanche metrics arrive in prometheus
     params = {"query": 'count({__name__=~"avalanche_metric_.+"})'}
     data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/query", params=params).text)[
