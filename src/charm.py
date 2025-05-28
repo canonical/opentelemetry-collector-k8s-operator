@@ -322,7 +322,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self._add_remote_write(remote_write.endpoints, insecure_skip_verify)
 
         # Enable traces ingestion with TracingEndpointProvider, i.e. configure the receivers
-        tracing_provider = TracingEndpointProvider(self, relation_name="tracing-provider")
+        tracing_provider = TracingEndpointProvider(self, relation_name="receive-traces")
         requested_tracing_protocols = set(tracing_provider.requested_protocols()).union(
             {
                 receiver
@@ -346,11 +346,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             )
         self._add_traces_ingestion(requested_tracing_protocols)
         # Add default processors to traces
-        # TODO: uncomment this after the rock contains tail sampling processor
-        # self._add_traces_processing()
+        self._add_traces_processing()
         # Enable pushing traces to a backend (i.e. Tempo) with TracingEndpointRequirer, i.e. configure the exporters
         tracing_requirer = TracingEndpointRequirer(
             self,
+            relation_name="send-traces",
             protocols=[
                 "otlp_http",  # for charm traces
                 "otlp_grpc",  # for forwarding workload traces
@@ -629,9 +629,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if tracing_otlp_http_endpoint:
             self.otel_config.add_exporter(
                 name="otlphttp/tempo",
-                exporter_config={
-                    "endpoint": tracing_otlp_http_endpoint
-                },  # TODO: make sure tls is added in config.py
+                exporter_config={"endpoint": tracing_otlp_http_endpoint},
                 pipelines=["traces"],
             )
 
@@ -680,7 +678,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             )
         if tempo_url:
             self.otel_config.add_exporter(
-                name="tempo/cloud-integrator",
+                name="otlphttp/cloud-integrator",
                 exporter_config={
                     "endpoint": tempo_url,
                     "tls": {"insecure_skip_verify": insecure_skip_verify},

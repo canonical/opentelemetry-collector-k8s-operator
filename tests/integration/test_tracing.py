@@ -14,9 +14,11 @@ import jubilant
 # pyright: reportAttributeAccessIssue = false
 
 
-@retry(stop=stop_after_attempt(10), wait=wait_fixed(5))
+@retry(stop=stop_after_attempt(10), wait=wait_fixed(10))
 async def check_grafana_traces(tempo_ip: str):
-    response = request("GET", f"{tempo_ip}:3200/api/search", params={"juju_charm": "grafana-k8s"})
+    response = request(
+        "GET", f"http://{tempo_ip}:3200/api/search", params={"juju_charm": "grafana-k8s"}
+    )
     traces = json.loads(response.text)["traces"]
     assert traces
 
@@ -67,13 +69,14 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
     juju.integrate("tempo:s3", "s3-tempo")
     juju.integrate("tempo:tempo-cluster", "tempo-worker")
     # WHEN we add relations to send traces to tempo
-    juju.integrate("otelcol:tracing-provider", "grafana:charm-tracing")
-    juju.integrate("otelcol:tracing-provider", "grafana:workload-tracing")
-    juju.integrate("otelcol:tracing", "tempo:tracing")
+    juju.integrate("otelcol:receive-traces", "grafana:charm-tracing")
+    juju.integrate("otelcol:receive-traces", "grafana:workload-tracing")
+    juju.integrate("otelcol:send-traces", "tempo:tracing")
     juju.wait(jubilant.all_active, delay=10, timeout=600)
 
     # AND some traces are produced
     juju.run("grafana/0", "get-admin-password")
+    juju.integrate("otelcol:grafana-dashboards-provider", "grafana")
 
     # THEN traces arrive in tempo
     tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address

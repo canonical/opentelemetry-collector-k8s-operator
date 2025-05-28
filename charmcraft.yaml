@@ -60,7 +60,7 @@ provides:
     interface: loki_push_api
     optional: true
     description: To receive logs by allowing Promtail instances to specify otelcol as their Loki address.
-  tracing-provider:
+  receive-traces:
     interface: tracing
     optional: true
     description: Integration to receive traces from other charms.
@@ -106,7 +106,7 @@ requires:
       Obtain a certificate from a CA.
       The charm sends a CSR over this relation and receives a signed certificate back.
       That is the cert that would be presented to incoming TLS connections.
-  tracing:
+  send-traces:
     interface: tracing
     limit: 1
     optional: true
