@@ -17,7 +17,7 @@ import jubilant
 @retry(stop=stop_after_attempt(10), wait=wait_fixed(10))
 async def check_grafana_traces(tempo_ip: str):
     response = request(
-        "GET", f"http://{tempo_ip}:3200/api/search", params={"juju_charm": "grafana-k8s"}
+        "GET", f"http://{tempo_ip}:3200/api/search", params={"juju_application": "grafana"}
     )
     traces = json.loads(response.text)["traces"]
     assert traces
