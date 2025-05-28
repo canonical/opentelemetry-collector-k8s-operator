@@ -20,9 +20,14 @@ def sha256(hashable) -> str:
 
 PORTS = SimpleNamespace(
     LOKI_HTTP=3500,
+    OTLP_GRPC=4317,
     OTLP_HTTP=4318,
     METRICS=8888,
     HEALTH=13133,
+    # Tracing
+    JAEGER_GRPC=14250,
+    JAEGER_THRIFT_HTTP=14268,
+    ZIPKIN=9411,
 )
 
 
@@ -51,9 +56,8 @@ class Config:
         """Return the config as a string."""
         config = deepcopy(self)
         config._add_debug_exporters()
-        config._config = config._add_receiver_tls(
-            config._config, self._cert_file, self._key_file
-        )
+        # add tracing
+        config._config = config._add_receiver_tls(config._config, self._cert_file, self._key_file)
         config._config = config._add_exporter_insecure_skip_verify(
             config._config, self._insecure_skip_verify
         )
@@ -75,10 +79,16 @@ class Config:
         return (
             cls()
             # Currently, we always include the OTLP receiver to ensure the config is valid at all times.
+            # We also need these receivers for tracing.
             # There must be at least one pipeline and it must have a valid receiver exporter pair.
             .add_receiver(
                 "otlp",
-                {"protocols": {"http": {"endpoint": f"0.0.0.0:{PORTS.OTLP_HTTP}"}}},
+                {
+                    "protocols": {
+                        "http": {"endpoint": f"0.0.0.0:{PORTS.OTLP_HTTP}"},
+                        "grpc": {"endpoint": f"0.0.0.0:{PORTS.OTLP_GRPC}"},
+                    },
+                },
                 pipelines=["logs", "metrics", "traces"],
             )
             # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/healthcheckextension
@@ -298,8 +308,9 @@ class Config:
         if not cert_file or not key_file:
             return config
 
+        # This doesn't add TLS to zipkin because it doesn't have a "protocols" section
         for receiver in config.get("receivers", {}):
-            for protocol in {"http", "grpc"}:
+            for protocol in {"http", "grpc", "thrift_http"}:
                 try:
                     section = config["receivers"][receiver]["protocols"][protocol]
                 except KeyError:
