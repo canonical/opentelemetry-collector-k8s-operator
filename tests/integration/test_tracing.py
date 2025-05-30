@@ -32,9 +32,7 @@ async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources:
     juju.deploy(
         charm=charm,
         app="otelcol",
-        resources={
-            "opentelemetry-collector-image": "ghcr.io/canonical/opentelemetry-collector:dev"
-        },
+        resources=charm_resources,
         trust=True,
     )
     juju.deploy(charm="grafana-k8s", app="grafana", channel="2/edge", trust=True)
