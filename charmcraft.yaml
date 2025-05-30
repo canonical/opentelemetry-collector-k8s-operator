@@ -49,6 +49,8 @@ resources:
   opentelemetry-collector-image:
     type: oci-image
     description: OCI image for opentelemetry-collector
+    # FIXME: use ubuntu/opentelemetry-collector:0.127-24.04
+    # https://github.com/canonical/oci-factory/pull/466
     upstream-source: ghcr.io/canonical/opentelemetry-collector:dev
 
 provides:
