@@ -56,7 +56,6 @@ class Config:
         """Return the config as a string."""
         config = deepcopy(self)
         config._add_debug_exporters()
-        # add tracing
         config._config = config._add_receiver_tls(config._config, self._cert_file, self._key_file)
         config._config = config._add_exporter_insecure_skip_verify(
             config._config, self._insecure_skip_verify
@@ -308,7 +307,7 @@ class Config:
         if not cert_file or not key_file:
             return config
 
-        # This doesn't add TLS to zipkin because it doesn't have a "protocols" section
+        # NOTE: TLS can't be added to zipkin because it doesn't have a "protocols" section
         for receiver in config.get("receivers", {}):
             for protocol in {"http", "grpc", "thrift_http"}:
                 try:

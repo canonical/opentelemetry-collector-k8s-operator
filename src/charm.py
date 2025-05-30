@@ -357,9 +357,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             ],
         )
         if tracing_requirer.is_ready():
-            self._add_traces_forwarding(
-                tracing_otlp_http_endpoint=tracing_requirer.get_endpoint("otlp_http")
-            )
+            if tracing_otlp_http_endpoint := tracing_requirer.get_endpoint("otlp_http"):
+                self.otel_config.add_exporter(
+                    name="otlphttp/tempo",
+                    exporter_config={"endpoint": tracing_otlp_http_endpoint},
+                    pipelines=["traces"],
+                )
 
         # Enable forwarding telemetry with GrafanaCloudIntegrator
         cloud_integrator = GrafanaCloudConfigRequirer(self, relation_name="cloud-config")
@@ -618,20 +621,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self.otel_config.add_processor(
             name="tail_sampling", processor_config=self._tracing_sampling, pipelines=["traces"]
         )
-
-    def _add_traces_forwarding(
-        self,
-        tracing_otlp_http_endpoint: Optional[str],
-    ):
-        """Configure the tracing exporter for otel-collector to send traces to Tempo."""
-        # This only supports one Tempo instance, otherwise we need to add exporters named tempo-x
-        # Currently, the tracing relation has limit: 1.
-        if tracing_otlp_http_endpoint:
-            self.otel_config.add_exporter(
-                name="otlphttp/tempo",
-                exporter_config={"endpoint": tracing_otlp_http_endpoint},
-                pipelines=["traces"],
-            )
 
     def _add_cloud_integrator(
         self,
