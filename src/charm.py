@@ -720,7 +720,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                                 "type": "probabilistic",
                                 "probabilistic": {
                                     "sampling_percentage": self.config.get(
-                                        "tracing_sample_rate_error"
+                                        "tracing_sampling_rate_error"
                                     )
                                 },
                             },
@@ -746,13 +746,14 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                                 "type": "probabilistic",
                                 "probabilistic": {
                                     "sampling_percentage": self.config.get(
-                                        "tracing_sample_rate_charm"
+                                        "tracing_sampling_rate_charm"
                                     )
                                 },
                             },
                         ]
                     },
                 },
+                # NOTE: this is the exact inverse match of the charm tracing policy
                 {
                     "name": "workload-traces-policy",
                     "type": "and",
@@ -773,7 +774,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                                 "type": "probabilistic",
                                 "probabilistic": {
                                     "sampling_percentage": self.config.get(
-                                        "tracing_sample_rate_workload"
+                                        "tracing_sampling_rate_workload"
                                     )
                                 },
                             },
