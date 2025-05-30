@@ -11,21 +11,18 @@ from requests import request
 
 import jubilant
 
-# pyright: reportAttributeAccessIssue = false
-
 
 @retry(stop=stop_after_attempt(10), wait=wait_fixed(10))
-async def check_grafana_traces(tempo_ip: str):
+async def check_traces_from_app(tempo_ip: str, app: str):
     response = request(
-        "GET", f"http://{tempo_ip}:3200/api/search", params={"juju_application": "grafana"}
+        "GET", f"http://{tempo_ip}:3200/api/search", params={"juju_application": app}
     )
     traces = json.loads(response.text)["traces"]
     assert traces
 
 
-async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
-    """Scenario: scrape-to-remote-write forwarding."""
-    # sh.juju.switch(juju.model)
+async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+    """Scenario: traces ingestion and forwarding."""
     minio_user = "accesskey"
     minio_pass = "secretkey"
     minio_bucket = "tempo"
@@ -80,4 +77,24 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
 
     # THEN traces arrive in tempo
     tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
-    await check_grafana_traces(tempo_ip)
+    await check_traces_from_app(tempo_ip=tempo_ip, app="grafana")
+
+
+async def test_traces_with_tls(juju: jubilant.Juju):
+    """Scenario: TLS is added to the tracing pipeline."""
+    # WHEN TLS is added to Tempo and to otelcol
+    juju.deploy(charm="grafana-k8s", app="coconut", channel="2/edge", trust=True)
+    juju.deploy(charm="self-signed-certificates", app="ssc", channel="edge")
+    juju.integrate("tempo:certificates", "ssc")
+    juju.integrate("otelcol:receive-ca-cert", "ssc")
+    juju.wait(jubilant.all_active, delay=10, timeout=600)
+    juju.integrate("otelcol:receive-traces", "coconut:charm-tracing")
+    juju.integrate("otelcol:receive-traces", "coconut:workload-tracing")
+
+    # AND some traces are produced
+    juju.run("coconut/0", "get-admin-password")
+    juju.run("otelcol:grafana-dashboards-provider", "coconut")
+
+    # THEN traces arrive in tempo
+    tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
+    await check_traces_from_app(tempo_ip=tempo_ip, app="coconut")

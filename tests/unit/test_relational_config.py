@@ -5,7 +5,7 @@
 
 import json
 from helpers import get_otelcol_file
-from ops.testing import Container, Context, Relation, State
+from ops.testing import Container, Relation, State
 
 from constants import CONFIG_PATH
 
