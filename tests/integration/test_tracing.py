@@ -8,6 +8,7 @@ from minio import Minio
 from typing import Dict
 from tenacity import retry, stop_after_attempt, wait_fixed
 from requests import request
+import pytest
 
 import jubilant
 
@@ -80,6 +81,10 @@ async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources:
     await check_traces_from_app(tempo_ip=tempo_ip, app="grafana")
 
 
+# https://github.com/canonical/cos-coordinated-workers/pull/8
+# Before removing the 'skip', check the 'uv.lock' in Tempo Coordinator
+# to make sure it's actually using the fixed library
+@pytest.mark.skip("currently skipping due to tempo bug")
 async def test_traces_with_tls(juju: jubilant.Juju):
     """Scenario: TLS is added to the tracing pipeline."""
     # WHEN TLS is added to Tempo and to otelcol
@@ -87,13 +92,15 @@ async def test_traces_with_tls(juju: jubilant.Juju):
     juju.deploy(charm="self-signed-certificates", app="ssc", channel="edge")
     juju.integrate("tempo:certificates", "ssc")
     juju.integrate("otelcol:receive-ca-cert", "ssc")
+    # Make sure tempo and otelcol are using TLS before sending new traces
     juju.wait(jubilant.all_active, delay=10, timeout=600)
     juju.integrate("otelcol:receive-traces", "coconut:charm-tracing")
     juju.integrate("otelcol:receive-traces", "coconut:workload-tracing")
+    juju.wait(jubilant.all_active, delay=10, timeout=600)
 
     # AND some traces are produced
     juju.run("coconut/0", "get-admin-password")
-    juju.run("otelcol:grafana-dashboards-provider", "coconut")
+    juju.integrate("otelcol:grafana-dashboards-provider", "coconut")
 
     # THEN traces arrive in tempo
     tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
