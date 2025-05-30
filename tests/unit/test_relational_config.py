@@ -3,8 +3,9 @@
 
 """Feature: Relation-dependant Opentelemetry-collector config."""
 
+import json
 from helpers import get_otelcol_file
-from ops.testing import Container, Relation, State
+from ops.testing import Container, Context, Relation, State
 
 from constants import CONFIG_PATH
 
@@ -119,5 +120,93 @@ def test_cloud_integrator(ctx, execs):
         cfg["exporters"]["prometheusremotewrite/cloud-integrator"]["auth"]["authenticator"]
         == "basicauth/cloud-integrator"
     )
+    # AND the pipelines are valid
+    check_valid_pipelines(cfg)
+
+
+def test_traces_receivers(ctx, execs):
+    """Scenario: Fan-out tracing architecture."""
+    # GIVEN a relation to a charm that sends traces
+    local_app_data = {
+        "receivers": json.dumps(
+            [
+                {
+                    "protocol": {"name": "otlp_grpc", "type": "grpc"},
+                    "url": "otel-0.otel-endpoints.ha-https-minio.svc.cluster.local:4317",
+                },
+                {
+                    "protocol": {"name": "otlp_http", "type": "http"},
+                    "url": "http://otel-0.otel-endpoints.ha-https-minio.svc.cluster.local:4318",
+                },
+                {
+                    "protocol": {"name": "jaeger_grpc", "type": "grpc"},
+                    "url": "http://otel-0.otel-endpoints.ha-https-minio.svc.cluster.local:14250",
+                },
+            ]
+        )
+    }
+    remote_app_data = {"receivers": json.dumps(["otlp_http", "jaeger_grpc"])}
+    data_sink = Relation(
+        endpoint="receive-traces",
+        interface="tracing",
+        remote_app_data=remote_app_data,
+        local_app_data=local_app_data,
+    )
+    container = Container(name="otelcol", can_connect=True, execs=execs)
+    state_in = State(
+        relations=[data_sink],
+        containers=[container],
+    )
+    # WHEN any event executes the reconciler
+    state_out: State = ctx.run(ctx.on.update_status(), state_in)
+    # THEN the config file exists and the pebble service is running
+    cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
+    # AND the receivers for tracing exists in the config
+    expected_receivers = {"otlp", "jaeger"}
+    assert expected_receivers.issubset(set(cfg["receivers"].keys()))
+    # AND the pipelines are valid
+    check_valid_pipelines(cfg)
+
+
+def test_traces_exporters(ctx, execs):
+    """Scenario: Fan-out tracing architecture to Tempo."""
+    # GIVEN a relation to a Tempo charm
+    remote_app_data = {
+        "receivers": json.dumps(
+            [
+                {
+                    "protocol": {"name": "otlp_grpc", "type": "grpc"},
+                    "url": "otel-0.otel-endpoints.ha-https-minio.svc.cluster.local:4317",
+                },
+                {
+                    "protocol": {"name": "otlp_http", "type": "http"},
+                    "url": "http://otel-0.otel-endpoints.ha-https-minio.svc.cluster.local:4318",
+                },
+                {
+                    "protocol": {"name": "jaeger_grpc", "type": "grpc"},
+                    "url": "http://otel-0.otel-endpoints.ha-https-minio.svc.cluster.local:14250",
+                },
+            ]
+        )
+    }
+    local_app_data = {"receivers": json.dumps(["otlp_http", "jaeger_grpc"])}
+    data_sink = Relation(
+        endpoint="send-traces",
+        interface="tracing",
+        remote_app_data=remote_app_data,
+        local_app_data=local_app_data,
+    )
+    container = Container(name="otelcol", can_connect=True, execs=execs)
+    state_in = State(
+        relations=[data_sink],
+        containers=[container],
+    )
+    # WHEN any event executes the reconciler
+    state_out: State = ctx.run(ctx.on.update_status(), state_in)
+    # THEN the config file exists and the pebble service is running
+    cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
+    # AND the exporters for tracing exists in the config
+    expected_exporters = {"otlphttp/tempo"}
+    assert expected_exporters.issubset(set(cfg["exporters"].keys()))
     # AND the pipelines are valid
     check_valid_pipelines(cfg)
