@@ -9,7 +9,13 @@ import pytest
 import yaml
 import copy
 
-from src.config import Config
+from src.config import Config, PORTS
+
+
+def test_ports_are_unique():
+    """Make sure that all the defined ports are unique."""
+    ports_values = list(vars(PORTS).values())
+    assert len(ports_values) == len(set(ports_values))
 
 
 @pytest.mark.parametrize("pipelines", ([], ["logs", "metrics", "traces"]))
