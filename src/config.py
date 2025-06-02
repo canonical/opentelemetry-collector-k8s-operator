@@ -18,6 +18,70 @@ def sha256(hashable) -> str:
     return hashlib.sha256(hashable).hexdigest()
 
 
+def tail_sampling_config(
+    tracing_sampling_rate_charm: float,
+    tracing_sampling_rate_workload: float,
+    tracing_sampling_rate_error: float,
+) -> Dict[str, Any]:
+    """The default configuration for the tail sampling processor used by tracing."""
+    # policies, as defined by tail sampling processor definition:
+    # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/tailsamplingprocessor
+    # each of them is evaluated separately and processor decides whether to pass the trace through or not
+    # see the description of tail sampling processor above for the full decision tree
+    return yaml.safe_load(
+        f"""
+        policies:
+          - name: error-traces-policy
+            type: and
+            and:
+              and_sub_policy:
+                # status_code processor is using span_status property of spans within a trace
+                # see https://opentelemetry.io/docs/concepts/signals/traces/#span-status for reference
+                - name: trace-status-policy
+                  type: status_code
+                  status_code:
+                    status_codes:
+                    - ERROR
+                - name: probabilistic-policy
+                  type: probabilistic
+                  probabilistic:
+                    sampling_percentage: {tracing_sampling_rate_error}
+          - name: charm-traces-policy
+            type: and
+            and:
+              and_sub_policy:
+                - name: service-name-policy
+                  type: string_attribute
+                  string_attribute:
+                    key: service.name
+                    values:
+                    - ".+-charm"
+                    enabled_regex_matching: true
+                - name: probabilistic-policy
+                  type: probabilistic
+                  probabilistic:
+                    sampling_percentage: {tracing_sampling_rate_charm}
+          # NOTE: this is the exact inverse match of the charm tracing policy
+          - name: workload-traces-policy
+            type: and
+            and:
+            and_sub_policy:
+              - name: service-name-policy
+                type: string_attribute
+                string_attribute:
+                  key: service.name
+                  values:
+                    - ".+-charm"
+                  enabled_regex_matching: true
+                  invert_match: true
+              - name: probabilistic-policy
+                type: probabilistic
+                probabilistic:
+                  sampling_percentage: {tracing_sampling_rate_workload}
+        """
+    )
+
+
 PORTS = SimpleNamespace(
     LOKI_HTTP=3500,
     OTLP_GRPC=4317,
