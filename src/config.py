@@ -65,19 +65,19 @@ def tail_sampling_config(
           - name: workload-traces-policy
             type: and
             and:
-            and_sub_policy:
-              - name: service-name-policy
-                type: string_attribute
-                string_attribute:
-                  key: service.name
-                  values:
+              and_sub_policy:
+                - name: service-name-policy
+                  type: string_attribute
+                  string_attribute:
+                    key: service.name
+                    values:
                     - ".+-charm"
-                  enabled_regex_matching: true
-                  invert_match: true
-              - name: probabilistic-policy
-                type: probabilistic
-                probabilistic:
-                  sampling_percentage: {tracing_sampling_rate_workload}
+                    enabled_regex_matching: true
+                    invert_match: true
+                - name: probabilistic-policy
+                  type: probabilistic
+                  probabilistic:
+                    sampling_percentage: {tracing_sampling_rate_workload}
         """
     )
 
