@@ -10,7 +10,7 @@ import os
 import shutil
 from collections import namedtuple
 from pathlib import Path
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Set, cast, get_args
 from constants import (
     RECV_CA_CERT_FOLDER_PATH,
     CONFIG_PATH,
@@ -34,6 +34,13 @@ from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
     Credentials,
     GrafanaCloudConfigRequirer,
 )
+from charms.tempo_coordinator_k8s.v0.tracing import (
+    ReceiverProtocol,
+    TracingEndpointProvider,
+    TracingEndpointRequirer,
+    TransportProtocolType,
+    receiver_protocol_to_transport_protocol,
+)
 from charms.tls_certificates_interface.v4.tls_certificates import (
     Certificate,
     CertificateRequestAttributes,
@@ -46,7 +53,7 @@ from ops import CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus, Relation
 from ops.pebble import Layer
 
-from config import PORTS, Config, sha256
+from config import PORTS, Config, sha256, tail_sampling_config
 
 logger = logging.getLogger(__name__)
 PathMapping = namedtuple("PathMapping", ["src", "dest"])
@@ -314,6 +321,49 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         remote_write.reload_alerts()
         self._add_remote_write(remote_write.endpoints, insecure_skip_verify)
 
+        # Enable traces ingestion with TracingEndpointProvider, i.e. configure the receivers
+        tracing_provider = TracingEndpointProvider(self, relation_name="receive-traces")
+        requested_tracing_protocols = set(tracing_provider.requested_protocols()).union(
+            {
+                receiver
+                for receiver in get_args(ReceiverProtocol)
+                if self.config.get(f"always_enable_{receiver}")
+            }
+        )
+        # Send tracing receivers over relation data to charms sending traces to otel collector
+        if self.unit.is_leader():
+            tracing_provider.publish_receivers(
+                tuple(
+                    (
+                        protocol,
+                        self._get_tracing_receiver_url(
+                            protocol=protocol,
+                            tls_enabled=is_server_cert_on_disk(container),
+                        ),
+                    )
+                    for protocol in requested_tracing_protocols
+                )
+            )
+        self._add_traces_ingestion(requested_tracing_protocols)
+        # Add default processors to traces
+        self._add_traces_processing()
+        # Enable pushing traces to a backend (i.e. Tempo) with TracingEndpointRequirer, i.e. configure the exporters
+        tracing_requirer = TracingEndpointRequirer(
+            self,
+            relation_name="send-traces",
+            protocols=[
+                "otlp_http",  # for charm traces
+                "otlp_grpc",  # for forwarding workload traces
+            ],
+        )
+        if tracing_requirer.is_ready():
+            if tracing_otlp_http_endpoint := tracing_requirer.get_endpoint("otlp_http"):
+                self.otel_config.add_exporter(
+                    name="otlphttp/tempo",
+                    exporter_config={"endpoint": tracing_otlp_http_endpoint},
+                    pipelines=["traces"],
+                )
+
         # Enable forwarding telemetry with GrafanaCloudIntegrator
         cloud_integrator = GrafanaCloudConfigRequirer(self, relation_name="cloud-config")
         # We're intentionally not getting the CA cert from Grafana Cloud Integrator;
@@ -324,6 +374,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             if cloud_integrator.prometheus_ready
             else None,
             loki_url=cloud_integrator.loki_url if cloud_integrator.loki_ready else None,
+            tempo_url=cloud_integrator.tempo_url if cloud_integrator.tempo_ready else None,
             insecure_skip_verify=insecure_skip_verify,
         )
 
@@ -530,11 +581,65 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 pipelines=["logs"],
             )
 
+    def _add_traces_ingestion(self, requested_tracing_protocols: Set[ReceiverProtocol]):
+        """Configure the tracing receivers for otel-collector to ingest traces.
+
+        Args:
+            requested_tracing_protocols: The tracing protocols for which to enable receivers.
+        """
+        # TODO: check with the team, do we keep this?
+        # TODO: should we just add the otlp protocols always? probably yes
+        if not requested_tracing_protocols:
+            logger.warning("No tempo receivers enabled: otel-collector cannot ingest traces.")
+            return
+
+        if "zipkin" in requested_tracing_protocols:
+            self.otel_config.add_receiver(
+                name="zipkin",
+                receiver_config={"endpoint": f"0.0.0.0:{PORTS.ZIPKIN}"},
+                pipelines=["traces"],
+            )
+        if (
+            "jaeger_grpc" in requested_tracing_protocols
+            or "jaeger_thrift_http" in requested_tracing_protocols
+        ):
+            jaeger_config = {"protocols": {}}
+            if "jaeger_grpc" in requested_tracing_protocols:
+                jaeger_config["protocols"].update(
+                    {"grpc": {"endpoint": f"0.0.0.0:{PORTS.JAEGER_GRPC}"}}
+                )
+            if "jaeger_thrift_http" in requested_tracing_protocols:
+                jaeger_config["protocols"].update(
+                    {"thrift_http": {"endpoint": f"0.0.0.0:{PORTS.JAEGER_THRIFT_HTTP}"}}
+                )
+            self.otel_config.add_receiver(
+                name="jaeger", receiver_config=jaeger_config, pipelines=["traces"]
+            )
+
+    def _add_traces_processing(self):
+        """Configure the processors for traces."""
+        self.otel_config.add_processor(
+            name="tail_sampling",
+            processor_config=tail_sampling_config(
+                tracing_sampling_rate_charm=cast(
+                    float, self.config.get("tracing_sampling_rate_charm")
+                ),
+                tracing_sampling_rate_workload=cast(
+                    float, self.config.get("tracing_sampling_rate_workload")
+                ),
+                tracing_sampling_rate_error=cast(
+                    float, self.config.get("tracing_sampling_rate_error")
+                ),
+            ),
+            pipelines=["traces"],
+        )
+
     def _add_cloud_integrator(
         self,
         credentials: Optional[Credentials],
         prometheus_url: Optional[str],
         loki_url: Optional[str],
+        tempo_url: Optional[str],
         insecure_skip_verify: bool,
     ):
         """Configure forwarding telemetry to the endpoints provided by a cloud-integrator charm."""
@@ -572,6 +677,34 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 },
                 pipelines=["logs"],
             )
+        if tempo_url:
+            self.otel_config.add_exporter(
+                name="otlphttp/cloud-integrator",
+                exporter_config={
+                    "endpoint": tempo_url,
+                    "tls": {"insecure_skip_verify": insecure_skip_verify},
+                    **exporter_auth_config,
+                },
+                pipelines=["traces"],
+            )
+
+    def _get_tracing_receiver_url(self, protocol: ReceiverProtocol, tls_enabled: bool):
+        """Build the endpoint for the tracing receiver based on the protocol and TLS.
+
+        Args:
+            protocol: The ReceiverProtocol of a certain receiver (e.g., 'otlp_grpc', 'zipkin').
+            tls_enabled: Flag indicating whether the endpoint should use 'https' or not.
+        """
+        scheme = "http"
+        if tls_enabled:
+            scheme = "https"
+
+        # The correct transport protocol is specified in the tracing library, and it's always
+        # either http or grpc.
+        # We assume the user of the receiver is in-model, since this charm doesn't have ingress.
+        if receiver_protocol_to_transport_protocol[protocol] == TransportProtocolType.grpc:
+            return f"{socket.getfqdn()}:{PORTS.OTLP_GRPC}"
+        return f"{scheme}://{socket.getfqdn()}:{PORTS.OTLP_HTTP}"
 
 
 if __name__ == "__main__":
