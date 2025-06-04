@@ -378,6 +378,15 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             insecure_skip_verify=insecure_skip_verify,
         )
 
+        # Add custom processors from Juju config
+        if processors_raw := cast(str, self.config.get("processors")):
+            for processor_name, processor_config in yaml.safe_load(processors_raw).items():
+                self.otel_config.add_processor(
+                    name=processor_name,
+                    processor_config=processor_config,
+                    pipelines=["metrics", "logs", "traces"],
+                )
+
         # Push the config and Push the config and deploy/update
         container.push(CONFIG_PATH, self.otel_config.yaml, make_dirs=True)
         replan_sentinel += self.otel_config.hash
