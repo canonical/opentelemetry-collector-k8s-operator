@@ -115,6 +115,28 @@ requires:
 
 config:
   options:
+    processors:
+      type: string
+      description: |
+        A global opentelemetry-collector "processors" config in YAML format, without the
+        "processors:" top-level key. For example, to represent a "processors" section
+        such as:
+        
+            processors:
+              batch:
+              memory_limiter:
+                limit_mib: 4000
+
+        you could use `juju config otelcol processors=@processors.yaml`, with:
+
+            # processors.yaml
+            batch:
+            memory_limiter:
+              limit_mib: 4000
+
+        The provided processors section will be applied to all relevant pipelines.
+
+        Reference: https://opentelemetry.io/docs/collector/configuration/#processors
     forward_alert_rules:
       description: >
         Toggle forwarding of alert rules.
@@ -128,6 +150,7 @@ config:
         requests to servers, e.g. the prometheus receiver scraping metrics endpoints.
       type: boolean
       default: false
+    # Tracing config options
     always_enable_zipkin:
       description: >
         Force-enable the receiver for the 'zipkin' protocol in OpenTelemetry Collector, 
