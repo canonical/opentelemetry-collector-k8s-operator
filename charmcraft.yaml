@@ -120,22 +120,22 @@ config:
       description: |
         A global opentelemetry-collector "processors" config in YAML format, without the
         "processors:" top-level key. For example, to represent a "processors" section
-         such as:
-
-            	processors:
-               batch:
-               memory_limiter:
-                 limit_mib: 4000
+        such as:
+        
+            processors:
+              batch:
+              memory_limiter:
+                limit_mib: 4000
 
         you could use `juju config otelcol processors=@processors.yaml`, with:
 
-            	# processors.yaml
-            	batch:
-            	memory_limiter:
-               limit_mib: 4000
+            # processors.yaml
+            batch:
+            memory_limiter:
+              limit_mib: 4000
 
         The provided processors section will be applied to all relevant pipelines.
-        
+
         Reference: https://opentelemetry.io/docs/collector/configuration/#processors
     forward_alert_rules:
       description: >
