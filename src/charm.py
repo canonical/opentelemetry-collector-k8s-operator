@@ -24,6 +24,7 @@ from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiPro
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
 )
+from charms.istio_beacon_k8s.v0.service_mesh import Endpoint, Method, Policy, ServiceMeshConsumer
 from charms.prometheus_k8s.v1.prometheus_remote_write import (
     PrometheusRemoteWriteConsumer,
 )
@@ -387,6 +388,32 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         # TODO Conditionally open ports based on the otelcol config file rather than opening all ports
         self.unit.set_ports(*self.otel_config.ports)
+
+        self._mesh = ServiceMeshConsumer(
+            self,
+            policies=[
+                Policy(
+                    relation="receive-loki-logs",
+                    endpoints=[
+                        Endpoint(
+                            ports=[PORTS.LOKI_HTTP],
+                            methods=[Method.post],
+                            paths=["/loki/api/v1/push"],
+                        )
+                    ],
+                ),
+                Policy(
+                    relation="receive-traces",
+                    endpoints=[
+                        Endpoint(
+                            ports=[PORTS.OTLP_HTTP, PORTS.OTLP_GRPC, PORTS.ZIPKIN, PORTS.JAEGER_GRPC, PORTS.JAEGER_THRIFT_HTTP],
+                            methods=[Method.post],
+                            paths=["/v1/traces", "/api/v2/spans", "/"],
+                        )
+                    ],
+                ),
+            ],
+        )
 
         if bool(self.model.relations.get("receive-server-cert")) and not server_cert_on_disk:
             # A tls relation to a CA was formed, but we didn't get the cert yet.
