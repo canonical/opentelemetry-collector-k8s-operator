@@ -406,10 +406,24 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     relation="receive-traces",
                     endpoints=[
                         Endpoint(
-                            ports=[PORTS.OTLP_HTTP, PORTS.OTLP_GRPC, PORTS.ZIPKIN, PORTS.JAEGER_GRPC, PORTS.JAEGER_THRIFT_HTTP],
+                            ports=[PORTS.OTLP_HTTP],
                             methods=[Method.post],
-                            paths=["/v1/traces", "/api/v2/spans", "/"],
-                        )
+                            paths=["/v1/traces"],
+                        ),
+                        Endpoint(
+                            ports=[PORTS.ZIPKIN],
+                            methods=[Method.post],
+                            paths=["/api/v2/spans"],
+                        ),
+                        Endpoint(
+                            ports=[PORTS.JAEGER_THRIFT_HTTP],
+                            methods=[Method.post],
+                            paths=["/api/traces"],
+                        ),
+                        Endpoint(
+                            ports=[PORTS.OTLP_GRPC, PORTS.JAEGER_GRPC],
+                            methods=[Method.post],
+                        ),
                     ],
                 ),
             ],
