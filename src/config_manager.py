@@ -237,7 +237,7 @@ class ConfigManager:
             pipelines=["metrics"],
         )
 
-    def add_prometheus_scrape_jobs(self, jobs: List[Dict]) -> None:
+    def add_prometheus_scrape_jobs(self, jobs: List[Dict]):
         """Add Prometheus scrape configurations to the collector.
 
         This method updates the Prometheus receiver configuration with the
@@ -264,7 +264,6 @@ class ConfigManager:
             self.config._config["receivers"]["prometheus"]["config"]["scrape_configs"].append(
                 scrape_job
             )
-        return self
 
     def add_remote_write(self, endpoints: List[Dict[str, str]]):
         """Configure forwarding alert rules to prometheus/mimir via remote-write."""
