@@ -13,7 +13,17 @@ logger = logging.getLogger(__name__)
 
 
 def sha256(hashable) -> str:
-    """Use instead of the builtin hash() for repeatable values."""
+    """Generate a SHA-256 hash of the input.
+
+    This function provides a consistent, repeatable hash value for the input,
+    unlike Python's built-in hash() which may vary between Python processes.
+
+    Args:
+        hashable: Input to be hashed. If a string, will be encoded to bytes.
+
+    Returns:
+        str: A hexadecimal string representing the SHA-256 hash of the input.
+    """
     if isinstance(hashable, str):
         hashable = hashable.encode("utf-8")
     return hashlib.sha256(hashable).hexdigest()
@@ -23,7 +33,18 @@ def sha256(hashable) -> str:
 # https://docs.python.org/3/library/enum.html#enum.StrEnum
 @unique
 class Port(int, Enum):
-    """Ports used by OpenTelemetry Collector."""
+    """Ports used by the OpenTelemetry Collector.
+
+    These ports are used for different protocols and services:
+    - loki_http: HTTP endpoint for Loki log ingestion
+    - otlp_grpc: gRPC endpoint for OTLP protocol
+    - otlp_http: HTTP endpoint for OTLP protocol
+    - metrics: Endpoint for Prometheus metrics scraping
+    - health: Health check endpoint
+    - jaeger_grpc: gRPC endpoint for Jaeger protocol
+    - jaeger_thrift_http: HTTP endpoint for Jaeger Thrift protocol
+    - zipkin: HTTP endpoint for Zipkin protocol
+    """
 
     loki_http = 3500
     otlp_grpc = 4317
@@ -40,11 +61,18 @@ class Port(int, Enum):
 class Component(str, Enum):
     """Pipeline components of the OpenTelemetry Collector configuration.
 
-    These are all the component types that can be part of a pipeline:
-    https://opentelemetry.io/docs/collector/configuration/#basics
+    These represent the different types of components that can be part of an
+    OpenTelemetry Collector pipeline.
 
-    The value of the enum corresponds to the top-level key under which
-    they're placed in the config file.
+    See https://opentelemetry.io/docs/collector/configuration/#basics for more details.
+
+    Attributes:
+        receiver: Components that receive data in various formats (e.g., OTLP, Jaeger, Zipkin).
+        processor: Components that process data between reception and export.
+        exporter: Components that send data to external systems or services.
+        connector: Components that connect pipelines together.
+
+    The enum values correspond to the top-level keys in the collector's config file.
     """
 
     receiver = "receivers"
@@ -54,10 +82,10 @@ class Component(str, Enum):
 
 
 class ConfigBuilder:
-    """Configuration builder for OpenTelemetry Collector.
+    """Builder for OpenTelemetry Collector configuration.
 
-    It takes care of assembling the configuration for the Collector at a low
-    level, composing the basic building blocks in the correct way.
+    This class handles the assembly of components (receivers, processors, exporters) into a valid
+    configuration that can be consumed by the Collector.
     """
 
     def __init__(self, receiver_tls: bool = False, exporter_skip_verify: bool = False):
@@ -84,13 +112,15 @@ class ConfigBuilder:
         self._exporter_skip_verify = exporter_skip_verify
 
     def build(self) -> str:
-        """Build the final configuration and return it as YAML.
+        """Build the final configuration and return it as a YAML string.
 
-        This function takes care of adding the missing debug exporters, in
-        order to produce a valid config for pipelines that don't have any.
+        This method performs several important tasks:
+        - Adds debug exporters to pipelines that don't have any exporters
+        - Injects TLS configuration to all receivers if enabled
+        - Configures TLS verification settings for all exporters
 
-        It also adds TLS information to all receivers, and the proper
-        insecure_skip_verify setting to all exporters.
+        Returns:
+            str: A YAML string representing the complete configuration.
         """
         self._add_missing_debug_exporters()
         if self._receiver_tls:
@@ -131,16 +161,18 @@ class ConfigBuilder:
         name: str,
         config: Dict[str, Any],
         pipelines: Optional[List[str]] = None,
-    ):
-        """Add a component to the config.
+    ) -> None:
+        """Add a component to the configuration.
 
-        Components are enabled by adding them to the appropriate pipelines within the service section.
+        Components are enabled when added to the appropriate "pipelines" within the service section.
 
         Args:
-            component: the type of Component to add
-            name: the component name, top-level key under which the component config is placed
-            config: a (potentially nested) dict containing the component config
-            pipelines: a list of strings for which service pipelines (logs, metrics, traces) the component should be added to
+            component: The type of component to add (receiver, processor, etc.)
+            name: Unique identifier for this component instance
+            config: Configuration dictionary for the component
+            pipelines: List of pipeline types ('logs', 'metrics', 'traces') to add
+                     this component to. If None, the component is defined but not
+                     added to any pipeline.
         """
         self._config[component.value][name] = config
         if pipelines:
@@ -182,13 +214,10 @@ class ConfigBuilder:
         """Add a pipeline component to the service::pipelines config.
 
         Args:
-            name: a string, uniquely identifying this pipeline component.
-            component: the type of component being added to the pipeline.
-            category: a string identifying thy type of pipeline component (receiver, exporter, processor, ...).
-            pipelines: a list of strings identifying which signal pipeline type(s) to assign the pipeline component to.
-
-        Returns:
-            Config since this is a builder method.
+            name: Unique identifier of the component to add
+            component: Type of the component (receiver, processor, etc.)
+            pipelines: List of pipeline types ('logs', 'metrics', 'traces') to add
+                     the component to
         """
         # Create the pipeline dict key chain if it doesn't exist
         for pipeline in pipelines:

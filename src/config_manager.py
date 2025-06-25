@@ -15,11 +15,30 @@ def tail_sampling_config(
     tracing_sampling_rate_workload: float,
     tracing_sampling_rate_error: float,
 ) -> Dict[str, Any]:
-    """The default configuration for the tail sampling processor used by tracing."""
-    # policies, as defined by tail sampling processor definition:
-    # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/tailsamplingprocessor
-    # each of them is evaluated separately and processor decides whether to pass the trace through or not
-    # see the description of tail sampling processor above for the full decision tree
+    """Generate configuration for the tail sampling processor.
+
+    This function creates a configuration dictionary for the tail sampling processor
+    that implements a multi-policy sampling strategy:
+    - Error traces: Samples a configurable percentage of traces with ERROR status
+    - Charm traces: Samples traces from charm services based on a configurable rate
+    - Workload traces: Samples traces from non-charm workloads based on a configurable rate
+
+    Args:
+        tracing_sampling_rate_charm: Sampling rate (0-100) for charm-originated traces
+        tracing_sampling_rate_workload: Sampling rate (0-100) for workload traces
+        tracing_sampling_rate_error: Sampling rate (0-100) for error traces
+
+    Returns:
+        Dict[str, Any]: A dictionary containing the tail sampling configuration
+                      in the format expected by the OpenTelemetry Collector.
+
+    Note:
+        The tail sampling processor evaluates each policy in order, and a trace
+        will be sampled if it matches any of the policies. The error policy
+        takes precedence over the others.
+        See the description of tail sampling processor for the full decision tree:
+        https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/tailsamplingprocessor
+    """
     return yaml.safe_load(
         f"""
         policies:
@@ -75,10 +94,12 @@ def tail_sampling_config(
 
 
 class ConfigManager:
-    """Configuration manager for OpenTelemetry Collector.
+    """High-level configuration manager for OpenTelemetry Collector.
 
-    It abstracts multiple low-level configuration operations into
-    feature-oriented methods.
+    This class provides a simplified interface for configuring the OpenTelemetry
+    Collector by abstracting away the low-level details of the configuration format.
+    It builds on top of the ConfigBuilder class to provide feature-oriented
+    methods for common configuration scenarios.
     """
 
     def __init__(self, receiver_tls: bool = False, insecure_skip_verify: bool = False):
@@ -97,10 +118,15 @@ class ConfigManager:
         )
         self.config.add_default_config()
 
-    def add_log_ingestion(self):
-        """Configure receiving logs, allowing Promtail instances to specify the Otelcol as their lokiAddress.
+    def add_log_ingestion(self) -> None:
+        """Configure the collector to receive logs via Loki protocol.
 
-        https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/lokireceiver
+        This method sets up the Loki receiver to accept log entries from sources
+        like Promtail. The receiver will be available on the port specified by
+        `Port.loki_http` and will be added to the 'logs' pipeline.
+
+        See Also:
+            https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/lokireceiver
         """
         self.config.add_component(
             Component.receiver,
@@ -116,8 +142,12 @@ class ConfigManager:
             pipelines=["logs"],
         )
 
-    def add_log_forwarding(self, endpoints: List[dict], insecure_skip_verify: bool):
-        """Configure sending logs to Loki via the Loki push API endpoint.
+    def add_log_forwarding(self, endpoints: List[dict], insecure_skip_verify: bool) -> None:
+        """Configure log forwarding to one or more Loki endpoints.
+
+        This method sets up the Loki exporter to forward logs to the specified
+        endpoints. It also configures appropriate processors to format the logs
+        and extract relevant attributes as Loki labels.
 
         The LogRecord format is controlled with the `loki.format` hint.
 
@@ -125,7 +155,8 @@ class ConfigManager:
         Configuring hints (e.g. `loki.attribute.labels`) specifies which attributes should be placed as labels.
         The hints are themselves attributes and will be ignored when exporting to Loki.
 
-        https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.122.0/exporter/lokiexporter
+        See Also:
+            https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.122.0/exporter/lokiexporter
         """
         for idx, endpoint in enumerate(endpoints):
             self.config.add_component(
@@ -169,9 +200,20 @@ class ConfigManager:
             pipelines=["logs"],
         )
 
-    def add_self_scrape(self, identifier: str, labels: Dict):
-        """Configure self-monitoring scrape jobs."""
-        # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusreceiver
+    def add_self_scrape(self, identifier: str, labels: Dict) -> None:
+        """Configure the collector to scrape its own metrics.
+
+        This sets up a Prometheus receiver that scrapes the collector's own
+        metrics endpoint and enriches the metrics with the provided labels.
+
+        Args:
+            identifier: Unique JujuTopology identifier for this collector instance,
+                      used in the job name
+            labels: Dictionary of labels to attach to all scraped metrics.
+        
+        See Also:
+            https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusreceiver
+        """
         self.config.add_component(
             Component.receiver,
             "prometheus",
@@ -195,8 +237,21 @@ class ConfigManager:
             pipelines=["metrics"],
         )
 
-    def add_prometheus_scrape_jobs(self, jobs: List):
-        """Update the Prometheus receiver config with scrape jobs."""
+    def add_prometheus_scrape_jobs(self, jobs: List[Dict]) -> None:
+        """Add Prometheus scrape configurations to the collector.
+
+        This method updates the Prometheus receiver configuration with the
+        provided scrape jobs. Each job should be a dictionary following the
+        Prometheus scrape configuration format.
+
+        Args:
+            jobs: List of Prometheus scrape job configurations. Each job should
+                 be a dictionary that matches the Prometheus scrape_config format.
+
+        Note:
+            The scrape jobs will be added to the Prometheus receiver configuration
+            with TLS verification settings inherited from the ConfigManager instance.
+        """
         # create the scrape_configs key path if it does not exist
         if jobs:
             self.config._config["receivers"].setdefault("prometheus", {}).setdefault(
@@ -231,14 +286,23 @@ class ConfigManager:
     def add_traces_ingestion(
         self,
         requested_tracing_protocols: Set[Literal["zipkin", "jaeger_grpc", "jaeger_thrift_http"]],
-    ):
-        """Configure the tracing receivers for otel-collector to ingest traces.
+    ) -> None:
+        """Configure trace ingestion for supported protocols.
+
+        Sets up the appropriate receivers based on the requested tracing protocols.
+        The supported protocols are:
+        - otlp: For traces in OpenTelemetry Protocol format (always enabled)
+        - zipkin: For traces in Zipkin format
+        - jaeger_grpc: For traces in Jaeger gRPC format
+        - jaeger_thrift_http: For traces in Jaeger Thrift over HTTP format
 
         Args:
-            requested_tracing_protocols: The tracing protocols for which to enable receivers.
+            requested_tracing_protocols: Set of protocol names to enable.
+                                      If empty, a warning will be logged.
+
+        Note:
+            The receivers will be added to the 'traces' pipeline.
         """
-        # TODO: check with the team, do we keep this?
-        # TODO: should we just add the otlp protocols always? probably yes
         if not requested_tracing_protocols:
             logger.warning("No tempo receivers enabled: otel-collector cannot ingest traces.")
             return
@@ -275,8 +339,23 @@ class ConfigManager:
         sampling_rate_charm: float,
         sampling_rate_workload: float,
         sampling_rate_error: float,
-    ):
-        """Configure the processors for traces."""
+    ) -> None:
+        """Configure trace sampling and processing.
+
+        Sets up the tail sampling processor with different sampling rates for:
+        - Error traces
+        - Traces from the charm
+        - Traces from the workload
+
+        Args:
+            sampling_rate_charm: Sampling rate (0-100) for charm-originated traces
+            sampling_rate_workload: Sampling rate (0-100) for workload traces
+            sampling_rate_error: Sampling rate (0-100) for error traces
+
+        Note:
+            Error traces are identified by their status code, while charm vs workload
+            traces are distinguished by the 'service.name' attribute.
+        """
         self.config.add_component(
             component=Component.processor,
             name="tail_sampling",
@@ -288,10 +367,17 @@ class ConfigManager:
             pipelines=["traces"],
         )
 
-    def add_traces_forwarding(self, endpoint: str):
-        """Configure the Tempo exporter to forward traces to and endpoint.
+    def add_traces_forwarding(self, endpoint: str) -> None:
+        """Configure trace forwarding to a Tempo endpoint.
 
-        The limit of adding only one endpoint is currently a Tempo charm limitation.
+        Sets up an OTLP HTTP exporter to forward traces to the specified endpoint.
+
+        Args:
+            endpoint: The URL of the Tempo endpoint to forward traces to.
+
+        Note:
+            Currently, only one endpoint is supported due to limitations in the
+            Tempo charm. The exporter will be added to the 'traces' pipeline.
         """
         self.config.add_component(
             component=Component.exporter,
@@ -307,8 +393,21 @@ class ConfigManager:
         prometheus_url: Optional[str],
         loki_url: Optional[str],
         tempo_url: Optional[str],
-    ):
-        """Configure forwarding telemetry to the endpoints provided by a cloud-integrator charm."""
+    ) -> None:
+        """Configure forwarding telemetry to the endpoints provided by a cloud-integrator charm.
+
+        Args:
+            username: Username for basic authentication (if required)
+            password: Password for basic authentication (if required)
+            prometheus_url: URL for forwarding metrics (e.g., Prometheus remote write)
+            loki_url: URL for forwarding logs to Loki
+            tempo_url: URL for forwarding traces to Tempo
+
+        Note:
+            If both username and password are provided, they will be used for
+            basic authentication with all configured endpoints. The TLS settings
+            (including insecure_skip_verify) will be inherited from the ConfigManager.
+        """
         exporter_auth_config = {}
         if username and password:
             self.config.add_extension(

@@ -125,16 +125,15 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _reconcile(self):
         """Recreate the world state for the charm.
 
-        In order to trigger a restart when needed, the changes that require one
-        are tracked via environment variables in the Pebble layer. A hash of
-        the configuration is put in the layer so that `.replan()` will trigger
-        a restart on changes.
-        A similar approach is used for server certificates.
+        In order to trigger a restart when needed, this method tracks configuration changes
+        via environment variables in the Pebble layer. A hash of the configuration is stored
+        in the layer, triggering a restart when changes are detected. The same approach is
+        used for managing server certificates.
 
-        With this pattern, we do not hold instances as attributes. When using events-based
-        libraries, these instances will be garbage collected:
-        > Reference to ops.Object at path OpenTelemetryCollectorK8sCharm/INSTANCE has been
-        > garbage collected between when the charm was initialised and when the event was emitted.
+        Note:
+            The pattern used in this charm avoids holding instances as attributes. When using   
+            event-based libraries, instances will be garbage collected between the charm
+            initialization and the event emission.
         """
         container = self.unit.get_container(self._container_name)
         charm_root = self.charm_dir.absolute()
@@ -297,10 +296,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.unit.status = ActiveStatus()
 
     def _pebble_layer(self, environment: Dict) -> Layer:
-        """Construct the Pebble layer information.
+        """Construct the Pebble layer configuration.
 
         Args:
-            environment: A dictionary to be passed as environment variables to the Pebble layer.
+            environment: Dictionary containing environment variables to be passed to the Pebble layer.
+
+        Returns:
+            Layer: A Pebble Layer object containing the service configuration.
         """
         layer = Layer(
             {
@@ -328,7 +330,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     @property
     def _pebble_checks(self) -> Dict[str, Any]:
-        """Pebble checks to run in the charm."""
+        """Define Pebble checks for the workload container.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing Pebble check configurations
+            for the OpenTelemetry Collector service.
+        """
         checks = {
             "up": {
                 "override": "replace",
@@ -365,8 +372,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.model.relations.get("cloud-config", [])
         )
 
-    def _add_custom_processors(self):
-        """Add custom processors from Juju config."""
+    def _add_custom_processors(self) -> None:
+        """Add custom processors from Juju configuration.
+
+        This method parses the 'processors' configuration option and adds it to
+        the OpenTelemetry Collector configuration.
+        """
         if processors_raw := cast(str, self.config.get("processors")):
             for processor_name, processor_config in yaml.safe_load(processors_raw).items():
                 self.config_manager.config.add_component(
@@ -497,12 +508,20 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         #   This propagates Grafana's errors to the charm which provided the dashboard
         # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
-    def _get_tracing_receiver_url(self, protocol: ReceiverProtocol, tls_enabled: bool):
-        """Build the endpoint for the tracing receiver based on the protocol and TLS.
+    def _get_tracing_receiver_url(self, protocol: ReceiverProtocol, tls_enabled: bool) -> str:
+        """Build the endpoint URL for a tracing receiver.
 
         Args:
-            protocol: The ReceiverProtocol of a certain receiver (e.g., 'otlp_grpc', 'zipkin').
-            tls_enabled: Flag indicating whether the endpoint should use 'https' or not.
+            protocol: The tracing protocol to build the URL for.
+            tls_enabled: Whether to use HTTPS (True) or HTTP (False) for the URL.
+
+
+        Returns:
+            str: The complete URL for the tracing receiver endpoint.
+
+        Note:
+            The method assumes the receiver is in the same model since the charm
+            doesn't have ingress support. The FQDN is used as the hostname.
         """
         scheme = "http"
         if tls_enabled:
@@ -510,7 +529,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # The correct transport protocol is specified in the tracing library, and it's always
         # either http or grpc.
-        # We assume the user of the receiver is in-model, since this charm doesn't have ingress.
         if receiver_protocol_to_transport_protocol[protocol] == TransportProtocolType.grpc:
             return f"{socket.getfqdn()}:{Port.otlp_grpc}"
         return f"{scheme}://{socket.getfqdn()}:{Port.otlp_http}"
