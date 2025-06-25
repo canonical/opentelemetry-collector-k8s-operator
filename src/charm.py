@@ -142,10 +142,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         pebble_extra_env = {}
 
         # Integrate with TLS relations
-        receive_ca_certs_hash = self.reconcile_receive_ca_cert(container)
+        receive_ca_certs_hash = self._reconcile_receive_ca_cert(container)
         pebble_extra_env["RECEIVE_CA_CERT"] = receive_ca_certs_hash
 
-        server_cert_hash = self.reconcile_server_cert(container)
+        server_cert_hash = self._reconcile_server_cert(container)
         pebble_extra_env["SERVER_CERT"] = server_cert_hash
 
         self.config_manager = ConfigManager(
@@ -154,7 +154,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
 
         # Dashboards setup
-        self.forward_dashboards()
+        self._forward_dashboards()
 
         # Logs setup
         loki_provider = LokiPushApiProvider(
@@ -387,7 +387,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     pipelines=["metrics", "logs", "traces"],
                 )
 
-    def reconcile_server_cert(self, container: Container) -> str:
+    def _reconcile_server_cert(self, container: Container) -> str:
         """Reconcile the certificate and private key for the charm from relation data.
 
         The certificate and key are obtained via the tls_certificates(v4) library,
@@ -445,7 +445,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         return sha256(str(provider_certificate.certificate) + str(private_key))
 
-    def reconcile_receive_ca_cert(self, container: Container) -> str:
+    def _reconcile_receive_ca_cert(self, container: Container) -> str:
         """Reconcile the certificates from the `receive-ca-cert` relation.
 
         This function saves the certificates to disk, and runs
@@ -471,7 +471,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # A hot-reload doesn't pick up new system certs - need to restart the service
         return sha256(yaml.safe_dump(ca_certs))
 
-    def forward_dashboards(self):
+    def _forward_dashboards(self):
         """Instantiate the GrafanaDashboardProvider and update the dashboards in the relation databag.
 
         First, dashboards from relations (including those bundled with Otelcol) and save them to disk.

@@ -2,7 +2,7 @@
 
 import hashlib
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from enum import Enum, unique
 
 import yaml
@@ -12,7 +12,7 @@ from constants import SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH
 logger = logging.getLogger(__name__)
 
 
-def sha256(hashable) -> str:
+def sha256(hashable: Union[str, bytes]) -> str:
     """Generate a SHA-256 hash of the input.
 
     This function provides a consistent, repeatable hash value for the input,
