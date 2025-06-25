@@ -131,7 +131,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         used for managing server certificates.
 
         Note:
-            The pattern used in this charm avoids holding instances as attributes. When using   
+            The pattern used in this charm avoids holding instances as attributes. When using
             event-based libraries, instances will be garbage collected between the charm
             initialization and the event emission.
         """
@@ -160,7 +160,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         loki_provider = LokiPushApiProvider(
             self,
             relation_name="receive-loki-logs",
-            port=Port.loki_http,
+            port=Port.loki_http.value,
             scheme="https" if is_server_cert_on_disk(container) else "http",
         )
         loki_consumer = LokiPushApiConsumer(
@@ -342,7 +342,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "level": "alive",
                 "period": "30s",
                 # TODO If we render TLS config for the extensions::health_check, switch to https
-                "http": {"url": f"http://localhost:{Port.health}/health"},
+                "http": {"url": f"http://localhost:{Port.health.value}/health"},
             },
             "valid-config": {
                 "override": "replace",
@@ -530,8 +530,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # The correct transport protocol is specified in the tracing library, and it's always
         # either http or grpc.
         if receiver_protocol_to_transport_protocol[protocol] == TransportProtocolType.grpc:
-            return f"{socket.getfqdn()}:{Port.otlp_grpc}"
-        return f"{scheme}://{socket.getfqdn()}:{Port.otlp_http}"
+            return f"{socket.getfqdn()}:{Port.otlp_grpc.value}"
+        return f"{scheme}://{socket.getfqdn()}:{Port.otlp_http.value}"
 
 
 if __name__ == "__main__":

@@ -134,7 +134,7 @@ class ConfigManager:
             {
                 "protocols": {
                     "http": {
-                        "endpoint": f"0.0.0.0:{Port.loki_http}",
+                        "endpoint": f"0.0.0.0:{Port.loki_http.value}",
                     },
                 },
                 "use_incoming_timestamp": True,
@@ -210,7 +210,7 @@ class ConfigManager:
             identifier: Unique JujuTopology identifier for this collector instance,
                       used in the job name
             labels: Dictionary of labels to attach to all scraped metrics.
-        
+
         See Also:
             https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusreceiver
         """
@@ -226,7 +226,7 @@ class ConfigManager:
                             "scrape_interval": "60s",
                             "static_configs": [
                                 {
-                                    "targets": [f"0.0.0.0:{Port.metrics}"],
+                                    "targets": [f"0.0.0.0:{Port.metrics.value}"],
                                     "labels": labels,
                                 }
                             ],
@@ -311,7 +311,7 @@ class ConfigManager:
             self.config.add_component(
                 component=Component.receiver,
                 name="zipkin",
-                config={"endpoint": f"0.0.0.0:{Port.zipkin}"},
+                config={"endpoint": f"0.0.0.0:{Port.zipkin.value}"},
                 pipelines=["traces"],
             )
         if (
@@ -321,11 +321,11 @@ class ConfigManager:
             jaeger_config = {"protocols": {}}
             if "jaeger_grpc" in requested_tracing_protocols:
                 jaeger_config["protocols"].update(
-                    {"grpc": {"endpoint": f"0.0.0.0:{Port.jaeger_grpc}"}}
+                    {"grpc": {"endpoint": f"0.0.0.0:{Port.jaeger_grpc.value}"}}
                 )
             if "jaeger_thrift_http" in requested_tracing_protocols:
                 jaeger_config["protocols"].update(
-                    {"thrift_http": {"endpoint": f"0.0.0.0:{Port.jaeger_thrift_http}"}}
+                    {"thrift_http": {"endpoint": f"0.0.0.0:{Port.jaeger_thrift_http.value}"}}
                 )
             self.config.add_component(
                 component=Component.receiver,

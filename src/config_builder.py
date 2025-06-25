@@ -143,15 +143,15 @@ class ConfigBuilder:
             "otlp",
             {
                 "protocols": {
-                    "http": {"endpoint": f"0.0.0.0:{Port.otlp_http}"},
-                    "grpc": {"endpoint": f"0.0.0.0:{Port.otlp_grpc}"},
+                    "http": {"endpoint": f"0.0.0.0:{Port.otlp_http.value}"},
+                    "grpc": {"endpoint": f"0.0.0.0:{Port.otlp_grpc.value}"},
                 },
             },
             pipelines=["logs", "metrics", "traces"],
         )
         # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/healthcheckextension
         # Add TLS config to extensions
-        self.add_extension("health_check", {"endpoint": f"0.0.0.0:{Port.health}"})
+        self.add_extension("health_check", {"endpoint": f"0.0.0.0:{Port.health.value}"})
         self.add_telemetry("logs", {"level": "DEBUG"})
         self.add_telemetry("metrics", {"level": "normal"})
 
