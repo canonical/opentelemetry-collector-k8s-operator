@@ -118,8 +118,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.unit.status = MaintenanceStatus("Waiting for otelcol to start")
             return
 
-        self.topology = JujuTopology.from_charm(self)
-
         self._reconcile()
 
     def _reconcile(self):
@@ -187,15 +185,16 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             src_path=charm_root.joinpath(*METRICS_RULES_SRC_PATH.split("/")),
             dest_path=charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
         )
+        topology = JujuTopology.from_charm(self)
         self.config_manager.add_self_scrape(
-            identifier=self.topology.identifier,
+            identifier=topology.identifier,
             labels={
-                "instance": f"{self.topology.identifier}_{self.topology.unit}",
-                "juju_charm": self.topology.charm_name,
-                "juju_model": self.topology.model,
-                "juju_model_uuid": self.topology.model_uuid,
-                "juju_application": self.topology.application,
-                "juju_unit": self.topology.unit,
+                "instance": f"{topology.identifier}_{topology.unit}",
+                "juju_charm": topology.charm_name,
+                "juju_model": topology.model,
+                "juju_model_uuid": topology.model_uuid,
+                "juju_application": topology.application,
+                "juju_unit": topology.unit,
             },
         )
         # For now, the only incoming and outgoing metrics relations are remote-write/scrape
