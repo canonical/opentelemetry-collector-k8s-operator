@@ -137,14 +137,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         charm_root = self.charm_dir.absolute()
         forward_alert_rules = cast(bool, self.config.get("forward_alert_rules"))
         insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
-        pebble_extra_env = {}
 
         # Integrate with TLS relations
         receive_ca_certs_hash = self._integrate_receive_ca_cert(container)
-        pebble_extra_env["RECEIVE_CA_CERT"] = receive_ca_certs_hash
 
         server_cert_hash = self._integrate_server_cert(container)
-        pebble_extra_env["SERVER_CERT"] = server_cert_hash
 
         self.config_manager = ConfigManager(
             receiver_tls=is_server_cert_on_disk(container),
@@ -274,8 +271,17 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Push the config and Push the config and deploy/update
         container.push(CONFIG_PATH, self.config_manager.config.build(), make_dirs=True)
-        pebble_extra_env["OTELCOL_CONFIG"] = self.config_manager.config.hash
 
+        # If the config file or any cert has changed, a change in this environment variable
+        # will trigger a restart
+        pebble_extra_env = {}
+        pebble_extra_env["_reload"] = ",".join(
+            [
+                self.config_manager.config.hash,
+                receive_ca_certs_hash,
+                server_cert_hash,
+            ]
+        )
         container.add_layer(
             self._container_name, self._pebble_layer(environment=pebble_extra_env), combine=True
         )
