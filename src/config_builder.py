@@ -2,7 +2,7 @@
 
 import hashlib
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from enum import Enum, unique
 
 import yaml
@@ -33,28 +33,25 @@ def sha256(hashable: Union[str, bytes]) -> str:
 # https://docs.python.org/3/library/enum.html#enum.StrEnum
 @unique
 class Port(int, Enum):
-    """Ports used by the OpenTelemetry Collector.
-
-    These ports are used for different protocols and services:
-    - loki_http: HTTP endpoint for Loki log ingestion
-    - otlp_grpc: gRPC endpoint for OTLP protocol
-    - otlp_http: HTTP endpoint for OTLP protocol
-    - metrics: Endpoint for Prometheus metrics scraping
-    - health: Health check endpoint
-    - jaeger_grpc: gRPC endpoint for Jaeger protocol
-    - jaeger_thrift_http: HTTP endpoint for Jaeger Thrift protocol
-    - zipkin: HTTP endpoint for Zipkin protocol
-    """
+    """Ports used by the OpenTelemetry Collector."""
 
     loki_http = 3500
+    """HTTP endpoint for Loki log ingestion."""
     otlp_grpc = 4317
+    """gRPC endpoint for OTLP protocol"""
     otlp_http = 4318
+    """HTTP endpoint for OTLP protocol"""
     metrics = 8888
+    """Endpoint for Prometheus metrics scraping"""
     health = 13133
+    """Health check endpoint"""
     # Tracing
     jaeger_grpc = 14250
+    """gRPC endpoint for Jaeger protocol"""
     jaeger_thrift_http = 14268
+    """HTTP endpoint for Jaeger Thrift protocol"""
     zipkin = 9411
+    """HTTP endpoint for Zipkin protocol"""
 
 
 @unique
@@ -194,20 +191,19 @@ class ConfigBuilder:
             self._config["service"]["extensions"].append(name)
         self._config["extensions"][name] = extension_config
 
-    def add_telemetry(self, category: str, telem_config: Any):
+    def add_telemetry(self, category: Literal["logs", "metrics", "traces"], telem_config: Dict):
         """Add internal telemetry to the config.
 
         Telemetry is enabled by adding it to the appropriate service section.
 
         Args:
             category: a string representing the pre-defined internal-telemetry types (logs, metrics, traces).
-            telem_config: a list of (potentially nested) dict(s) representing the config contents.
+            telem_config: a dict representing the telemetry config contents.
 
         Returns:
             Config since this is a builder method.
         """
         # https://opentelemetry.io/docs/collector/internal-telemetry
-        self._config["service"]["telemetry"].setdefault(category, {})
         self._config["service"]["telemetry"][category] = telem_config
 
     def _add_to_pipeline(self, name: str, component: Component, pipelines: List[str]):

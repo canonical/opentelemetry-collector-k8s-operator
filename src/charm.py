@@ -53,7 +53,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
 from cosl import JujuTopology, LZMABase64
 from ops import CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus, Relation
-from ops.pebble import Layer
+from ops.pebble import CheckDict, ExecDict, HttpDict, Layer
 
 from config_builder import Component, Port, sha256
 from config_manager import ConfigManager
@@ -140,10 +140,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         pebble_extra_env = {}
 
         # Integrate with TLS relations
-        receive_ca_certs_hash = self._reconcile_receive_ca_cert(container)
+        receive_ca_certs_hash = self._integrate_receive_ca_cert(container)
         pebble_extra_env["RECEIVE_CA_CERT"] = receive_ca_certs_hash
 
-        server_cert_hash = self._reconcile_server_cert(container)
+        server_cert_hash = self._integrate_server_cert(container)
         pebble_extra_env["SERVER_CERT"] = server_cert_hash
 
         self.config_manager = ConfigManager(
@@ -173,7 +173,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             dest_path=charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
         )
         loki_consumer.reload_alerts()
-        # For now, the only incoming and outgoing log relations are loki push api
         if self._incoming_logs:
             self.config_manager.add_log_ingestion()
         self.config_manager.add_log_forwarding(loki_consumer.loki_endpoints, insecure_skip_verify)
@@ -198,8 +197,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             },
         )
         # For now, the only incoming and outgoing metrics relations are remote-write/scrape
-        if self._incoming_metrics:
-            self.config_manager.add_prometheus_scrape_jobs(metrics_consumer.jobs())
+        self.config_manager.add_prometheus_scrape_jobs(metrics_consumer.jobs())
         remote_write = PrometheusRemoteWriteConsumer(
             self, alert_rules_path=METRICS_RULES_DEST_PATH
         )
@@ -289,7 +287,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         ):
             # A tls relation to a CA was formed, but we didn't get the cert yet.
             container.stop(SERVICE_NAME)
-            self.unit.status = WaitingStatus("Waiting for cert")
+            self.unit.status = WaitingStatus("CSR sent; otelcol down while waiting for a cert")
         else:
             container.replan()
             self.unit.status = ActiveStatus()
@@ -328,7 +326,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         return layer
 
     @property
-    def _pebble_checks(self) -> Dict[str, Any]:
+    def _pebble_checks(self) -> Dict[str, CheckDict]:
         """Define Pebble checks for the workload container.
 
         Returns:
@@ -336,18 +334,18 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             for the OpenTelemetry Collector service.
         """
         checks = {
-            "up": {
-                "override": "replace",
-                "level": "alive",
-                "period": "30s",
+            "up": CheckDict(
+                override="replace",
+                level="alive",
+                period="30s",
                 # TODO If we render TLS config for the extensions::health_check, switch to https
-                "http": {"url": f"http://localhost:{Port.health.value}/health"},
-            },
-            "valid-config": {
-                "override": "replace",
-                "level": "alive",
-                "exec": {"command": f"otelcol validate --config={CONFIG_PATH}"},
-            },
+                http=HttpDict(url=f"http://localhost:{Port.health.value}/health"),
+            ),
+            "valid-config": CheckDict(
+                override="replace",
+                level="alive",
+                exec=ExecDict(command=f"otelcol validate --config={CONFIG_PATH}"),
+            ),
         }
         return checks
 
@@ -386,7 +384,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     pipelines=["metrics", "logs", "traces"],
                 )
 
-    def _reconcile_server_cert(self, container: Container) -> str:
+    def _integrate_server_cert(self, container: Container) -> str:
         """Reconcile the certificate and private key for the charm from relation data.
 
         The certificate and key are obtained via the tls_certificates(v4) library,
@@ -444,7 +442,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         return sha256(str(provider_certificate.certificate) + str(private_key))
 
-    def _reconcile_receive_ca_cert(self, container: Container) -> str:
+    def _integrate_receive_ca_cert(self, container: Container) -> str:
         """Reconcile the certificates from the `receive-ca-cert` relation.
 
         This function saves the certificates to disk, and runs
