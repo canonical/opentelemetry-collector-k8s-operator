@@ -12,7 +12,7 @@ def test_no_recv_ca_cert_relations_present(ctx, execs):
     )
 
     # WHEN any event is emitted
-    with patch("charm.aggregate_alerts"):
+    with patch("integrations._aggregate_alerts"):
         out = ctx.run(ctx.on.update_status(), state)
 
     # THEN no recv_ca_cert-associated certs are present
@@ -45,7 +45,7 @@ def test_ca_forwarded_over_rel_data(ctx, execs):
     )
 
     # WHEN any event is emitted
-    with patch("charm.aggregate_alerts"):
+    with patch("integrations._aggregate_alerts"):
         out = ctx.run(ctx.on.update_status(), state)
 
     # THEN recv_ca_cert-associated certs are present
