@@ -454,3 +454,17 @@ class ConfigManager:
                 },
                 pipelines=["traces"],
             )
+
+    def add_custom_processors(self, processors_raw: str) -> None:
+        """Add custom processors from Juju configuration.
+
+        This method parses the 'processors' configuration option and adds it to
+        the OpenTelemetry Collector configuration.
+        """
+        for processor_name, processor_config in yaml.safe_load(processors_raw).items():
+            self.config.add_component(
+                component=Component.processor,
+                name=processor_name,
+                config=processor_config,
+                pipelines=["metrics", "logs", "traces"],
+            )

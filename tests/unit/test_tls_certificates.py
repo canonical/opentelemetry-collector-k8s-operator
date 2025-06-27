@@ -107,6 +107,7 @@ def test_transitioned_from_http_to_https_to_http(ctx, execs, cert, cert_obj, pri
         get_otelcol_file(state_out, ctx, SERVER_CERT_PRIVATE_KEY_PATH)
 
 
+@pytest.mark.skip(reason="https://github.com/canonical/operator/issues/1858")
 def test_https_endpoint_is_provided(ctx, execs, cert, cert_obj, private_key):
     """Scenario: Otelcol provides other charms its TLS endpoint."""
     # GIVEN otelcol is in TLS mode
