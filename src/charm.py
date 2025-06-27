@@ -102,7 +102,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     relation="receive-loki-logs",
                     endpoints=[
                         Endpoint(
-                            ports=[PORTS.LOKI_HTTP],
+                            ports=[Port.loki_http.value],
                             methods=[Method.post],
                             paths=["/loki/api/v1/push"],
                         )
@@ -112,22 +112,22 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     relation="receive-traces",
                     endpoints=[
                         Endpoint(
-                            ports=[PORTS.OTLP_HTTP],
+                            ports=[Port.otlp_http.value],
                             methods=[Method.post],
                             paths=["/v1/traces"],
                         ),
                         Endpoint(
-                            ports=[PORTS.ZIPKIN],
+                            ports=[Port.zipkin.value],
                             methods=[Method.post],
                             paths=["/api/v2/spans"],
                         ),
                         Endpoint(
-                            ports=[PORTS.JAEGER_THRIFT_HTTP],
+                            ports=[Port.jaeger_thrift_http.value],
                             methods=[Method.post],
                             paths=["/api/traces"],
                         ),
                         Endpoint(
-                            ports=[PORTS.OTLP_GRPC, PORTS.JAEGER_GRPC],
+                            ports=[Port.otlp_grpc.value, Port.jaeger_grpc.value],
                             methods=[Method.post],
                         ),
                     ],
