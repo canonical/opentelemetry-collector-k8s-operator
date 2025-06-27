@@ -3,6 +3,7 @@
 # See LICENSE file for licensing details.
 """A Juju charm for OpenTelemetry Collector on Kubernetes."""
 
+from functools import partial
 import logging
 import os
 from typing import Dict, cast
@@ -74,7 +75,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         receive_ca_certs_hash = integrations.receive_ca_cert(
             self,
             recv_ca_cert_folder_path=ContainerPath(RECV_CA_CERT_FOLDER_PATH, container=container),
-            refresh_certs=refresh_certs,
+            refresh_certs=partial(refresh_certs, container=container),
         )
         server_cert_hash = integrations.receive_server_cert(
             self,

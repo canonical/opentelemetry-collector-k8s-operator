@@ -1,6 +1,5 @@
 from pathlib import Path
 from shutil import copytree
-from unittest.mock import patch
 
 import pytest
 from ops.testing import Context, Exec
@@ -17,8 +16,7 @@ def ctx(tmp_path):
         source_path = Path("src") / src_dir
         target_path = tmp_path / "src" / src_dir
         copytree(source_path, target_path, dirs_exist_ok=True)
-    with patch("charm.refresh_certs", lambda: True):
-        yield Context(OpenTelemetryCollectorK8sCharm, charm_root=tmp_path)
+    yield Context(OpenTelemetryCollectorK8sCharm, charm_root=tmp_path)
 
 
 @pytest.fixture
