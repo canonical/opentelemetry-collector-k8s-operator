@@ -12,7 +12,7 @@ def test_no_recv_ca_cert_relations_present(ctx, execs):
     )
 
     # WHEN any event is emitted
-    with patch("charm._aggregate_alerts"):
+    with patch("charm.aggregate_alerts"):
         out = ctx.run(ctx.on.update_status(), state)
 
     # THEN no recv_ca_cert-associated certs are present
@@ -35,13 +35,17 @@ def test_ca_forwarded_over_rel_data(ctx, execs):
         leader=True,
         containers={Container("otelcol", can_connect=True, execs=execs)},
         relations=[
-            Relation("receive-ca-cert", remote_app_data={"certificates": json.dumps([cert1a, cert1b])}),
-            Relation("receive-ca-cert", remote_app_data={"certificates": json.dumps([cert2a, cert2b])}),
-        ]
+            Relation(
+                "receive-ca-cert", remote_app_data={"certificates": json.dumps([cert1a, cert1b])}
+            ),
+            Relation(
+                "receive-ca-cert", remote_app_data={"certificates": json.dumps([cert2a, cert2b])}
+            ),
+        ],
     )
 
     # WHEN any event is emitted
-    with patch("charm._aggregate_alerts"):
+    with patch("charm.aggregate_alerts"):
         out = ctx.run(ctx.on.update_status(), state)
 
     # THEN recv_ca_cert-associated certs are present

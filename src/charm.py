@@ -8,12 +8,17 @@ import logging
 import socket
 import os
 import shutil
-from collections import namedtuple
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, cast, get_args
+from typing import Any, Dict, List, cast, get_args
 from constants import (
+    DASHBOARDS_DEST_PATH,
+    DASHBOARDS_SRC_PATH,
     RECV_CA_CERT_FOLDER_PATH,
     CONFIG_PATH,
+    METRICS_RULES_SRC_PATH,
+    METRICS_RULES_DEST_PATH,
+    LOKI_RULES_SRC_PATH,
+    LOKI_RULES_DEST_PATH,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
     SERVICE_NAME,
@@ -31,7 +36,6 @@ from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
 )
 from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
-    Credentials,
     GrafanaCloudConfigRequirer,
 )
 from charms.tempo_coordinator_k8s.v0.tracing import (
@@ -42,30 +46,34 @@ from charms.tempo_coordinator_k8s.v0.tracing import (
     receiver_protocol_to_transport_protocol,
 )
 from charms.tls_certificates_interface.v4.tls_certificates import (
-    Certificate,
     CertificateRequestAttributes,
     Mode,
-    PrivateKey,
     TLSCertificatesRequiresV4,
 )
 from cosl import JujuTopology, LZMABase64
 from ops import CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus, Relation
-from ops.pebble import Layer
+from ops.pebble import CheckDict, ExecDict, HttpDict, Layer
 
-from config import PORTS, Config, sha256, tail_sampling_config
+from config_builder import Component, Port, sha256
+from config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
-PathMapping = namedtuple("PathMapping", ["src", "dest"])
 
 
-def _aggregate_alerts(rules: Dict, rule_path_map: PathMapping, forward_alert_rules: bool):
-    rules = rules if forward_alert_rules else {}
-    if os.path.exists(rule_path_map.dest):
-        shutil.rmtree(rule_path_map.dest)
-    shutil.copytree(rule_path_map.src, rule_path_map.dest)
-    for topology_identifier, rule in rules.items():
-        rule_file = Path(rule_path_map.dest) / f"juju_{topology_identifier}.rules"
+def aggregate_alerts(alerts: Dict, src_path: Path, dest_path: Path):
+    """Aggregate the alerts in src_path with the ones passed to the function.
+
+    Args:
+        alerts: Dictionary of alerts to aggregate with the ones present in src_path
+        src_path: Path to some already-existing alerts
+        dest_path: Path to the folder where both alert sources will be aggregated
+    """
+    if os.path.exists(dest_path):
+        shutil.rmtree(dest_path)
+    shutil.copytree(src_path, dest_path)
+    for topology_identifier, rule in alerts.items():
+        rule_file = Path(dest_path) / f"juju_{topology_identifier}.rules"
         rule_file.write_text(yaml.safe_dump(rule))
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
 
@@ -92,135 +100,6 @@ def get_dashboards(relations: List[Relation]) -> List[Dict[str, Any]]:
     return list(aggregate.values())
 
 
-def forward_dashboards(charm: CharmBase):
-    """Instantiate the GrafanaDashboardProvider and update the dashboards in the relation databag.
-
-    First, dashboards from relations (including those bundled with Otelcol) and save them to disk.
-    Then, update the relation databag with these dashboards for Grafana.
-    """
-    charm_root = charm.charm_dir.absolute()
-    dashboard_paths = PathMapping(
-        src=charm_root.joinpath(*"src/grafana_dashboards".split("/")),
-        dest=charm_root.joinpath(*"grafana_dashboards".split("/")),
-    )
-    if not os.path.isdir(dashboard_paths.dest):
-        shutil.copytree(dashboard_paths.src, dashboard_paths.dest, dirs_exist_ok=True)
-
-    # The leader copies dashboards from relations and save them to disk."""
-    if not charm.unit.is_leader():
-        return
-    shutil.rmtree(dashboard_paths.dest)
-    shutil.copytree(dashboard_paths.src, dashboard_paths.dest)
-    for dash in get_dashboards(charm.model.relations["grafana-dashboards-consumer"]):
-        # Build dashboard custom filename
-        charm_name = dash.get("charm", "charm-name")
-        rel_id = dash.get("relation_id", "rel_id")
-        title = dash.get("title", "").replace(" ", "_").replace("/", "_").lower()
-        filename = f"juju_{title}-{charm_name}-{rel_id}.json"
-        with open(Path(dashboard_paths.dest, filename), mode="w", encoding="utf-8") as f:
-            f.write(json.dumps(dash["content"]))
-            logger.debug("updated dashboard file %s", f.name)
-
-    # GrafanaDashboardProvider is garbage collected, see the `_reconcile`` docstring for more details
-    grafana_dashboards_provider = GrafanaDashboardProvider(
-        charm,
-        relation_name="grafana-dashboards-provider",
-        dashboards_path=dashboard_paths.dest,
-    )
-    # Scan the built-in dashboards and update relations with changes
-    grafana_dashboards_provider.reload_dashboards()
-
-    # TODO: Do we need to implement dashboard status changed logic?
-    #   This propagates Grafana's errors to the charm which provided the dashboard
-    # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
-
-
-def receive_ca_certs(charm: CharmBase, container: Container) -> str:
-    """Returns a 'pebble replan sentinel' (hash of all certs), for pebble to determine whether a replan is required."""
-    # Obtain certs from relation data
-    certificate_transfer = CertificateTransferRequires(charm, "receive-ca-cert")
-    ca_certs = certificate_transfer.get_all_certificates()
-
-    # Clean-up previously existing certs
-    container.remove_path(RECV_CA_CERT_FOLDER_PATH, recursive=True)
-
-    # Write current certs
-    for i, cert in enumerate(ca_certs):
-        container.push(RECV_CA_CERT_FOLDER_PATH + f"/{i}.crt", cert, make_dirs=True)
-
-    # Refresh system certs
-    container.exec(["update-ca-certificates", "--fresh"]).wait()
-
-    # A hot-reload doesn't pick up new system certs - need to restart the service
-    return sha256(yaml.safe_dump(ca_certs))
-
-
-def server_cert(charm: CharmBase, container: Container) -> str:
-    """Write private key (from juju secret) and server cert (from relation data) to the workload container.
-
-    Returns:
-        Hash of server cert and private key, to be used as reload sentinel.
-    """
-    # Common name length must be >= 1 and <= 64, so fqdn is too long.
-    common_name = charm.unit.name.replace("/", "-")
-    domain = socket.getfqdn()
-    csr_attrs = CertificateRequestAttributes(common_name=common_name, sans_dns=frozenset({domain}))
-    certificates = TLSCertificatesRequiresV4(
-        charm=charm,
-        relationship_name="receive-server-cert",
-        certificate_requests=[csr_attrs],
-        mode=Mode.UNIT,
-    )
-
-    # TLSCertificatesRequiresV4 is garbage collected, see the `_reconcile`` docstring for more
-    # details. So we need to call _configure() ourselves:
-    certificates._configure(None)  # type: ignore[reportArgumentType]
-
-    provider_certificate, private_key = certificates.get_assigned_certificate(
-        certificate_request=csr_attrs
-    )
-    if not provider_certificate or not private_key:
-        if not provider_certificate:
-            logger.debug("TLS disabled: Certificate is not available")
-        if not private_key:
-            logger.debug("TLS disabled: Private key is not available")
-
-        # Cleanup, in case this happens is after a "revoked" or "renewal" events.
-        container.remove_path(SERVER_CERT_PATH, recursive=True)
-        container.remove_path(SERVER_CERT_PRIVATE_KEY_PATH, recursive=True)
-        return sha256("")
-
-    existing_cert = (
-        container.pull(path=SERVER_CERT_PATH).read()
-        if container.exists(path=SERVER_CERT_PATH)
-        else ""
-    )
-    if not existing_cert or provider_certificate.certificate != Certificate.from_string(
-        existing_cert
-    ):
-        container.push(
-            path=f"{SERVER_CERT_PATH}",
-            source=str(provider_certificate.certificate),
-            make_dirs=True,
-        )
-        logger.info("Pushed certificate pushed to workload")
-
-    existing_key = (
-        container.pull(path=SERVER_CERT_PRIVATE_KEY_PATH).read()
-        if container.exists(path=SERVER_CERT_PRIVATE_KEY_PATH)
-        else ""
-    )
-    if not existing_key or private_key != PrivateKey.from_string(existing_key):
-        container.push(
-            path=f"{SERVER_CERT_PRIVATE_KEY_PATH}",
-            source=str(private_key),
-            make_dirs=True,
-        )
-        logger.info("Pushed private key to workload")
-
-    return sha256(str(private_key) + str(provider_certificate.certificate))
-
-
 def is_server_cert_on_disk(container: Container) -> bool:
     """Return True if the server cert and private key are present in the workload container."""
     return container.exists(path=SERVER_CERT_PATH) and container.exists(
@@ -232,10 +111,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
     _container_name = "otelcol"
-    _metrics_rules_src_path = "src/prometheus_alert_rules"
-    _metrics_rules_dest_path = "prometheus_alert_rules"
-    _loki_rules_src_path = "src/loki_alert_rules"
-    _loki_rules_dest_path = "loki_alert_rules"
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -243,84 +118,92 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.unit.status = MaintenanceStatus("Waiting for otelcol to start")
             return
 
-        self.topology = JujuTopology.from_charm(self)
-        self.otel_config = Config.default_config()
-
         self._reconcile()
 
     def _reconcile(self):
         """Recreate the world state for the charm.
 
-        With this pattern, we do not hold instances as attributes. When using events-based
-        libraries, these instances will be garbage collected:
-        > Reference to ops.Object at path OpenTelemetryCollectorK8sCharm/INSTANCE has been
-        > garbage collected between when the charm was initialised and when the event was emitted.
+        In order to trigger a restart when needed, this method tracks configuration changes
+        via environment variables in the Pebble layer. A hash of the configuration is stored
+        in the layer, triggering a restart when changes are detected. The same approach is
+        used for managing server certificates.
+
+        Note:
+            The pattern used in this charm avoids holding instances as attributes. When using
+            event-based libraries, instances will be garbage collected between the charm
+            initialization and the event emission.
         """
         container = self.unit.get_container(self._container_name)
         charm_root = self.charm_dir.absolute()
-        replan_sentinel: str = ""
-        forward_alert_rules = cast(bool, self.config["forward_alert_rules"])
-        insecure_skip_verify = cast(bool, self.model.config.get("tls_insecure_skip_verify"))
+        forward_alert_rules = cast(bool, self.config.get("forward_alert_rules"))
+        insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
 
-        # TLS: receive-ca-cert
-        replan_sentinel += receive_ca_certs(self, container)
+        # Integrate with TLS relations
+        receive_ca_certs_hash = self._integrate_receive_ca_cert(container)
 
-        # TLS: server cert
-        replan_sentinel += server_cert(self, container)
-        if server_cert_on_disk := is_server_cert_on_disk(container):
-            self.otel_config.enable_receiver_tls(SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH)
+        server_cert_hash = self._integrate_server_cert(container)
 
-        # TLS: insecure-skip-verify
-        self.otel_config.set_exporter_insecure_skip_verify(
-            cast(bool, self.model.config.get("tls_insecure_skip_verify"))
+        self.config_manager = ConfigManager(
+            receiver_tls=is_server_cert_on_disk(container),
+            insecure_skip_verify=cast(bool, self.config.get("tls_insecure_skip_verify")),
         )
 
-        forward_dashboards(self)
+        # Dashboards setup
+        self._forward_dashboards()
 
         # Logs setup
-        loki_rules_paths = PathMapping(
-            src=charm_root.joinpath(*self._loki_rules_src_path.split("/")),
-            dest=charm_root.joinpath(*self._loki_rules_dest_path.split("/")),
-        )
         loki_provider = LokiPushApiProvider(
             self,
             relation_name="receive-loki-logs",
-            port=PORTS.LOKI_HTTP,
+            port=Port.loki_http.value,
             scheme="https" if is_server_cert_on_disk(container) else "http",
         )
-        # LokiPushApiConsumer is garbage collected, see the `_reconcile`` docstring for more details
         loki_consumer = LokiPushApiConsumer(
             self,
             relation_name="send-loki-logs",
-            alert_rules_path=loki_rules_paths.dest,
+            alert_rules_path=LOKI_RULES_DEST_PATH,
             forward_alert_rules=forward_alert_rules,
         )
-        _aggregate_alerts(loki_provider.alerts, loki_rules_paths, forward_alert_rules)
+        aggregate_alerts(
+            alerts=loki_provider.alerts if forward_alert_rules else {},
+            src_path=charm_root.joinpath(*LOKI_RULES_SRC_PATH.split("/")),
+            dest_path=charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
+        )
         loki_consumer.reload_alerts()
-        self._add_log_ingestion(insecure_skip_verify)
-        self._add_log_forwarding(loki_consumer.loki_endpoints, insecure_skip_verify)
+        if self._incoming_logs:
+            self.config_manager.add_log_ingestion()
+        self.config_manager.add_log_forwarding(loki_consumer.loki_endpoints, insecure_skip_verify)
 
         # Metrics setup
-        metrics_rules_paths = PathMapping(
-            src=charm_root.joinpath(*self._metrics_rules_src_path.split("/")),
-            dest=charm_root.joinpath(*self._metrics_rules_dest_path.split("/")),
-        )
-        # MetricsEndpointConsumer is garbage collected, see the `_reconcile`` docstring for more details
         metrics_consumer = MetricsEndpointConsumer(self)
-        # Receive alert rules and scrape jobs
-        _aggregate_alerts(metrics_consumer.alerts, metrics_rules_paths, forward_alert_rules)
-        self._add_self_scrape(insecure_skip_verify)
-        self.otel_config.add_prometheus_scrape(
-            metrics_consumer.jobs(), self._incoming_metrics, insecure_skip_verify
+        aggregate_alerts(
+            alerts=metrics_consumer.alerts if forward_alert_rules else {},
+            src_path=charm_root.joinpath(*METRICS_RULES_SRC_PATH.split("/")),
+            dest_path=charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
         )
-        # PrometheusRemoteWriteConsumer is garbage collected, see the `_reconcile`` docstring for more details
+        topology = JujuTopology.from_charm(self)
+        self.config_manager.add_self_scrape(
+            identifier=topology.identifier,
+            labels={
+                "instance": f"{topology.identifier}_{topology.unit}",
+                "juju_charm": topology.charm_name,
+                "juju_model": topology.model,
+                "juju_model_uuid": topology.model_uuid,
+                "juju_application": topology.application,
+                "juju_unit": topology.unit,
+            },
+        )
+        # For now, the only incoming and outgoing metrics relations are remote-write/scrape
+        self.config_manager.add_prometheus_scrape_jobs(metrics_consumer.jobs())
         remote_write = PrometheusRemoteWriteConsumer(
-            self, alert_rules_path=metrics_rules_paths.dest
+            self, alert_rules_path=METRICS_RULES_DEST_PATH
         )
-        # Forward alert rules and scrape jobs to Prometheus
+        # TODO: add alerts from remote write
+        # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
         remote_write.reload_alerts()
-        self._add_remote_write(remote_write.endpoints, insecure_skip_verify)
+        self.config_manager.add_remote_write(remote_write.endpoints)
 
+        # Tracing setup
         # Enable traces ingestion with TracingEndpointProvider, i.e. configure the receivers
         tracing_provider = TracingEndpointProvider(self, relation_name="receive-traces")
         requested_tracing_protocols = set(tracing_provider.requested_protocols()).union(
@@ -344,9 +227,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     for protocol in requested_tracing_protocols
                 )
             )
-        self._add_traces_ingestion(requested_tracing_protocols)
+        self.config_manager.add_traces_ingestion(requested_tracing_protocols)
         # Add default processors to traces
-        self._add_traces_processing()
+        self.config_manager.add_traces_processing(
+            sampling_rate_charm=cast(bool, self.config.get("tracing_sampling_rate_charm")),
+            sampling_rate_workload=cast(bool, self.config.get("tracing_sampling_rate_workload")),
+            sampling_rate_error=cast(bool, self.config.get("tracing_sampling_rate_error")),
+        )
         # Enable pushing traces to a backend (i.e. Tempo) with TracingEndpointRequirer, i.e. configure the exporters
         tracing_requirer = TracingEndpointRequirer(
             self,
@@ -358,52 +245,67 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         if tracing_requirer.is_ready():
             if tracing_otlp_http_endpoint := tracing_requirer.get_endpoint("otlp_http"):
-                self.otel_config.add_exporter(
-                    name="otlphttp/tempo",
-                    exporter_config={"endpoint": tracing_otlp_http_endpoint},
-                    pipelines=["traces"],
-                )
+                self.config_manager.add_traces_forwarding(tracing_otlp_http_endpoint)
 
         # Enable forwarding telemetry with GrafanaCloudIntegrator
         cloud_integrator = GrafanaCloudConfigRequirer(self, relation_name="cloud-config")
         # We're intentionally not getting the CA cert from Grafana Cloud Integrator;
         # we decided that we should only get certs from receive-ca-cert.
-        self._add_cloud_integrator(
-            credentials=cloud_integrator.credentials,
+        username, password = (
+            (cloud_integrator.credentials.username, cloud_integrator.credentials.password)
+            if cloud_integrator.credentials
+            else (None, None)
+        )
+        self.config_manager.add_cloud_integrator(
+            username=username,
+            password=password,
             prometheus_url=cloud_integrator.prometheus_url
             if cloud_integrator.prometheus_ready
             else None,
             loki_url=cloud_integrator.loki_url if cloud_integrator.loki_ready else None,
             tempo_url=cloud_integrator.tempo_url if cloud_integrator.tempo_ready else None,
-            insecure_skip_verify=insecure_skip_verify,
         )
 
         # Add custom processors from Juju config
         self._add_custom_processors()
 
         # Push the config and Push the config and deploy/update
-        container.push(CONFIG_PATH, self.otel_config.yaml, make_dirs=True)
-        replan_sentinel += self.otel_config.hash
+        container.push(CONFIG_PATH, self.config_manager.config.build(), make_dirs=True)
 
-        container.add_layer(
-            self._container_name, self._pebble_layer(replan_sentinel), combine=True
+        # If the config file or any cert has changed, a change in this environment variable
+        # will trigger a restart
+        pebble_extra_env = {}
+        pebble_extra_env["_reload"] = ",".join(
+            [
+                self.config_manager.config.hash,
+                receive_ca_certs_hash,
+                server_cert_hash,
+            ]
         )
-        # TODO Conditionally open ports based on the otelcol config file rather than opening all ports
-        self.unit.set_ports(*self.otel_config.ports)
+        container.add_layer(
+            self._container_name, self._pebble_layer(environment=pebble_extra_env), combine=True
+        )
+        # TODO: Conditionally open ports based on the otelcol config file rather than opening all ports
+        self.unit.set_ports(*[port.value for port in Port])
 
-        if bool(self.model.relations.get("receive-server-cert")) and not server_cert_on_disk:
+        if bool(self.model.relations.get("receive-server-cert")) and not is_server_cert_on_disk(
+            container
+        ):
             # A tls relation to a CA was formed, but we didn't get the cert yet.
             container.stop(SERVICE_NAME)
-            self.unit.status = WaitingStatus("Waiting for cert")
+            self.unit.status = WaitingStatus("CSR sent; otelcol down while waiting for a cert")
         else:
             container.replan()
             self.unit.status = ActiveStatus()
 
-    def _pebble_layer(self, sentinel: str) -> Layer:
-        """Construct the Pebble layer information.
+    def _pebble_layer(self, environment: Dict) -> Layer:
+        """Construct the Pebble layer configuration.
 
         Args:
-            sentinel: A value indicative of a change that should prompt a replan.
+            environment: Dictionary containing environment variables to be passed to the Pebble layer.
+
+        Returns:
+            Layer: A Pebble Layer object containing the service configuration.
         """
         layer = Layer(
             {
@@ -416,10 +318,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                         "command": f"/usr/bin/otelcol --config={CONFIG_PATH}",
                         "startup": "enabled",
                         "environment": {
-                            "_config_hash": sentinel,  # Restarts the service via pebble replan
                             "https_proxy": os.environ.get("JUJU_CHARM_HTTPS_PROXY", ""),
                             "http_proxy": os.environ.get("JUJU_CHARM_HTTP_PROXY", ""),
                             "no_proxy": os.environ.get("JUJU_CHARM_NO_PROXY", ""),
+                            **environment,
                         },
                     }
                 },
@@ -430,21 +332,26 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         return layer
 
     @property
-    def _pebble_checks(self) -> Dict[str, Any]:
-        """Pebble checks to run in the charm."""
+    def _pebble_checks(self) -> Dict[str, CheckDict]:
+        """Define Pebble checks for the workload container.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing Pebble check configurations
+            for the OpenTelemetry Collector service.
+        """
         checks = {
-            "up": {
-                "override": "replace",
-                "level": "alive",
-                "period": "30s",
+            "up": CheckDict(
+                override="replace",
+                level="alive",
+                period="30s",
                 # TODO If we render TLS config for the extensions::health_check, switch to https
-                "http": {"url": f"http://localhost:{PORTS.HEALTH}/health"},
-            },
-            "valid-config": {
-                "override": "replace",
-                "level": "alive",
-                "exec": {"command": f"otelcol validate --config={CONFIG_PATH}"},
-            },
+                http=HttpDict(url=f"http://localhost:{Port.health.value}/health"),
+            ),
+            "valid-config": CheckDict(
+                override="replace",
+                level="alive",
+                exec=ExecDict(command=f"otelcol validate --config={CONFIG_PATH}"),
+            ),
         }
         return checks
 
@@ -468,245 +375,156 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.model.relations.get("cloud-config", [])
         )
 
-    def _add_custom_processors(self):
-        """Add custom processors from Juju config."""
+    def _add_custom_processors(self) -> None:
+        """Add custom processors from Juju configuration.
+
+        This method parses the 'processors' configuration option and adds it to
+        the OpenTelemetry Collector configuration.
+        """
         if processors_raw := cast(str, self.config.get("processors")):
             for processor_name, processor_config in yaml.safe_load(processors_raw).items():
-                self.otel_config.add_processor(
+                self.config_manager.config.add_component(
+                    component=Component.processor,
                     name=processor_name,
-                    processor_config=processor_config,
+                    config=processor_config,
                     pipelines=["metrics", "logs", "traces"],
                 )
 
-    def _add_self_scrape(self, insecure_skip_verify: bool):
-        """Configure self-monitoring scrape jobs."""
-        # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusreceiver
-        self.otel_config.add_receiver(
-            "prometheus",
-            {
-                "config": {
-                    "scrape_configs": [
-                        {
-                            # This job name is overwritten with "otelcol" when remote-writing
-                            "job_name": f"juju_{self.topology.identifier}_self-monitoring",
-                            "scrape_interval": "60s",
-                            "static_configs": [
-                                {
-                                    "targets": [f"0.0.0.0:{PORTS.METRICS}"],
-                                    "labels": {
-                                        "instance": f"{self.topology.identifier}_{self.topology.unit}",
-                                        "juju_charm": self.topology.charm_name,
-                                        "juju_model": self.topology.model,
-                                        "juju_model_uuid": self.topology.model_uuid,
-                                        "juju_application": self.topology.application,
-                                        "juju_unit": self.topology.unit,
-                                    },
-                                }
-                            ],
-                        }
-                    ]
-                }
-            },
-            pipelines=["metrics"],
+    def _integrate_server_cert(self, container: Container) -> str:
+        """Reconcile the certificate and private key for the charm from relation data.
+
+        The certificate and key are obtained via the tls_certificates(v4) library,
+        and pushed to the workload container.
+
+        Returns:
+            Hash of server cert and private key, to be used as reload trigger if it changed.
+        """
+        # Common name length must be >= 1 and <= 64, so fqdn is too long.
+        common_name = self.unit.name.replace("/", "-")
+        domain = socket.getfqdn()
+        csr_attrs = CertificateRequestAttributes(
+            common_name=common_name, sans_dns=frozenset({domain})
+        )
+        certificates = TLSCertificatesRequiresV4(
+            charm=self,
+            relationship_name="receive-server-cert",
+            certificate_requests=[csr_attrs],
+            mode=Mode.UNIT,
         )
 
-    def _add_remote_write(self, endpoints: List[Dict[str, str]], insecure_skip_verify: bool):
-        """Configure forwarding alert rules to prometheus/mimir via remote-write."""
-        # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/prometheusremotewriteexporter
-        for idx, endpoint in enumerate(endpoints):
-            self.otel_config.add_exporter(
-                f"prometheusremotewrite/{idx}",
-                {
-                    "endpoint": endpoint["url"],
-                    "tls": {"insecure_skip_verify": insecure_skip_verify},
-                },
-                pipelines=["metrics"],
-            )
+        # Request a certificate
+        # TLSCertificatesRequiresV4 is garbage collected, see the `_reconcile`` docstring for more
+        # details. So we need to call _configure() ourselves:
+        certificates._configure(None)  # type: ignore[reportArgumentType]
 
-        # TODO Receive alert rules via remote write
-        # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
+        provider_certificate, private_key = certificates.get_assigned_certificate(
+            certificate_request=csr_attrs
+        )
+        # If there no certificate or private key coming from relation data, cleanup
+        # the existing ones. This typically happens after a "revoked" or "renewal"
+        # event.
+        if not provider_certificate or not private_key:
+            if not provider_certificate:
+                logger.debug("TLS disabled: Certificate is not available")
+            if not private_key:
+                logger.debug("TLS disabled: Private key is not available")
 
-    def _add_log_ingestion(self, insecure_skip_verify: bool):
-        """Configure receiving logs, allowing Promtail instances to specify the Otelcol as their lokiAddress."""
-        # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/lokireceiver
+            container.remove_path(SERVER_CERT_PATH, recursive=True)
+            container.remove_path(SERVER_CERT_PRIVATE_KEY_PATH, recursive=True)
+            return sha256("")
 
-        # For now, the only incoming and outgoing log relations are loki push api,
-        # so we don't need to mix and match between them yet.
-        if self._incoming_logs:
-            self.otel_config.add_receiver(
-                "loki",
-                {
-                    "protocols": {
-                        "http": {
-                            "endpoint": f"0.0.0.0:{PORTS.LOKI_HTTP}",
-                        },
-                    },
-                    "use_incoming_timestamp": True,
-                },
-                pipelines=["logs"],
-            )
+        # Push the certificate and key to disk
+        container.push(
+            path=SERVER_CERT_PATH,
+            source=str(provider_certificate.certificate),
+            make_dirs=True,
+        )
+        container.push(
+            path=f"{SERVER_CERT_PRIVATE_KEY_PATH}",
+            source=str(private_key),
+            make_dirs=True,
+        )
+        logger.info("Certificate and private key have been pushed to workload container")
 
-    def _add_log_forwarding(self, endpoints: List[dict], insecure_skip_verify: bool):
-        """Configure sending logs to Loki via the Loki push API endpoint.
+        return sha256(str(provider_certificate.certificate) + str(private_key))
 
-        The LogRecord format is controlled with the `loki.format` hint.
+    def _integrate_receive_ca_cert(self, container: Container) -> str:
+        """Reconcile the certificates from the `receive-ca-cert` relation.
 
-        The Loki exporter converts OTLP resource and log attributes into Loki labels, which are indexed.
-        Configuring hints (e.g. `loki.attribute.labels`) specifies which attributes should be placed as labels.
-        The hints are themselves attributes and will be ignored when exporting to Loki.
+        This function saves the certificates to disk, and runs
+        `update-ca-certificates` to trust them.
+
+        Returns:
+            Hash of the certificates to trust, to be used as reload trigger when changed.
         """
-        # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.122.0/exporter/lokiexporter
-        for idx, endpoint in enumerate(endpoints):
-            self.otel_config.add_exporter(
-                f"loki/{idx}",
-                {
-                    "endpoint": endpoint["url"],
-                    "default_labels_enabled": {"exporter": False, "job": True},
-                    "tls": {"insecure_skip_verify": insecure_skip_verify},
-                },
-                pipelines=["logs"],
-            )
-        if self._outgoing_logs:
-            self.otel_config.add_processor(
-                "resource",
-                {
-                    "attributes": [
-                        {
-                            "action": "insert",
-                            "key": "loki.format",
-                            "value": "raw",  # logfmt, json, raw
-                        },
-                    ]
-                },
-                pipelines=["logs"],
-            ).add_processor(
-                "attributes",
-                {
-                    "actions": [
-                        {
-                            "action": "upsert",
-                            "key": "loki.attribute.labels",
-                            # These labels are set in `_scrape_configs` of the `v1.loki_push_api` lib
-                            "value": "container, job, filename, juju_application, juju_charm, juju_model, juju_model_uuid, juju_unit",
-                        },
-                    ]
-                },
-                pipelines=["logs"],
-            )
+        # Obtain certs from relation data
+        certificate_transfer = CertificateTransferRequires(self, "receive-ca-cert")
+        ca_certs = certificate_transfer.get_all_certificates()
 
-    def _add_traces_ingestion(self, requested_tracing_protocols: Set[ReceiverProtocol]):
-        """Configure the tracing receivers for otel-collector to ingest traces.
+        # Clean-up previously existing certs
+        container.remove_path(RECV_CA_CERT_FOLDER_PATH, recursive=True)
 
-        Args:
-            requested_tracing_protocols: The tracing protocols for which to enable receivers.
+        # Write current certs
+        for i, cert in enumerate(ca_certs):
+            container.push(RECV_CA_CERT_FOLDER_PATH + f"/{i}.crt", cert, make_dirs=True)
+
+        # Refresh system certs
+        container.exec(["update-ca-certificates", "--fresh"]).wait()
+
+        # A hot-reload doesn't pick up new system certs - need to restart the service
+        return sha256(yaml.safe_dump(ca_certs))
+
+    def _forward_dashboards(self):
+        """Instantiate the GrafanaDashboardProvider and update the dashboards in the relation databag.
+
+        First, dashboards from relations (including those bundled with Otelcol) and save them to disk.
+        Then, update the relation databag with these dashboards for Grafana.
         """
-        # TODO: check with the team, do we keep this?
-        # TODO: should we just add the otlp protocols always? probably yes
-        if not requested_tracing_protocols:
-            logger.warning("No tempo receivers enabled: otel-collector cannot ingest traces.")
+        src_path = self.charm_dir.absolute().joinpath(*DASHBOARDS_SRC_PATH.split("/"))
+        dest_path = self.charm_dir.absolute().joinpath(*DASHBOARDS_DEST_PATH.split("/"))
+
+        # The leader copies dashboards from relations and save them to disk."""
+        if not self.unit.is_leader():
             return
+        shutil.rmtree(dest_path, ignore_errors=True)
+        shutil.copytree(src_path, dest_path)
+        for dash in get_dashboards(self.model.relations["grafana-dashboards-consumer"]):
+            # Build dashboard custom filename
+            charm_name = dash.get("charm", "charm-name")
+            rel_id = dash.get("relation_id", "rel_id")
+            title = dash.get("title", "").replace(" ", "_").replace("/", "_").lower()
+            filename = f"juju_{title}-{charm_name}-{rel_id}.json"
+            with open(Path(dest_path, filename), mode="w", encoding="utf-8") as f:
+                f.write(json.dumps(dash["content"]))
+                logger.debug("updated dashboard file %s", f.name)
 
-        if "zipkin" in requested_tracing_protocols:
-            self.otel_config.add_receiver(
-                name="zipkin",
-                receiver_config={"endpoint": f"0.0.0.0:{PORTS.ZIPKIN}"},
-                pipelines=["traces"],
-            )
-        if (
-            "jaeger_grpc" in requested_tracing_protocols
-            or "jaeger_thrift_http" in requested_tracing_protocols
-        ):
-            jaeger_config = {"protocols": {}}
-            if "jaeger_grpc" in requested_tracing_protocols:
-                jaeger_config["protocols"].update(
-                    {"grpc": {"endpoint": f"0.0.0.0:{PORTS.JAEGER_GRPC}"}}
-                )
-            if "jaeger_thrift_http" in requested_tracing_protocols:
-                jaeger_config["protocols"].update(
-                    {"thrift_http": {"endpoint": f"0.0.0.0:{PORTS.JAEGER_THRIFT_HTTP}"}}
-                )
-            self.otel_config.add_receiver(
-                name="jaeger", receiver_config=jaeger_config, pipelines=["traces"]
-            )
-
-    def _add_traces_processing(self):
-        """Configure the processors for traces."""
-        self.otel_config.add_processor(
-            name="tail_sampling",
-            processor_config=tail_sampling_config(
-                tracing_sampling_rate_charm=cast(
-                    float, self.config.get("tracing_sampling_rate_charm")
-                ),
-                tracing_sampling_rate_workload=cast(
-                    float, self.config.get("tracing_sampling_rate_workload")
-                ),
-                tracing_sampling_rate_error=cast(
-                    float, self.config.get("tracing_sampling_rate_error")
-                ),
-            ),
-            pipelines=["traces"],
+        # GrafanaDashboardProvider is garbage collected, see the `_reconcile`` docstring for more details
+        grafana_dashboards_provider = GrafanaDashboardProvider(
+            self,
+            relation_name="grafana-dashboards-provider",
+            dashboards_path=dest_path.as_posix(),
         )
+        # Scan the built-in dashboards and update relations with changes
+        grafana_dashboards_provider.reload_dashboards()
 
-    def _add_cloud_integrator(
-        self,
-        credentials: Optional[Credentials],
-        prometheus_url: Optional[str],
-        loki_url: Optional[str],
-        tempo_url: Optional[str],
-        insecure_skip_verify: bool,
-    ):
-        """Configure forwarding telemetry to the endpoints provided by a cloud-integrator charm."""
-        exporter_auth_config = {}
-        if credentials:
-            self.otel_config.add_extension(
-                "basicauth/cloud-integrator",
-                {
-                    "client_auth": {
-                        "username": credentials.username,
-                        "password": credentials.password,
-                    }
-                },
-            )
-            exporter_auth_config = {"auth": {"authenticator": "basicauth/cloud-integrator"}}
-        if prometheus_url:
-            self.otel_config.add_exporter(
-                "prometheusremotewrite/cloud-integrator",
-                {
-                    "endpoint": prometheus_url,
-                    "tls": {"insecure_skip_verify": insecure_skip_verify},
-                    **exporter_auth_config,
-                },
-                pipelines=["metrics"],
-            )
-        if loki_url:
-            self.otel_config.add_exporter(
-                "loki/cloud-integrator",
-                {
-                    "endpoint": loki_url,
-                    "tls": {"insecure_skip_verify": insecure_skip_verify},
-                    "default_labels_enabled": {"exporter": False, "job": True},
-                    "headers": {"Content-Encoding": "snappy"},  # TODO: check if this is needed
-                    **exporter_auth_config,
-                },
-                pipelines=["logs"],
-            )
-        if tempo_url:
-            self.otel_config.add_exporter(
-                name="otlphttp/cloud-integrator",
-                exporter_config={
-                    "endpoint": tempo_url,
-                    "tls": {"insecure_skip_verify": insecure_skip_verify},
-                    **exporter_auth_config,
-                },
-                pipelines=["traces"],
-            )
+        # TODO: Do we need to implement dashboard status changed logic?
+        #   This propagates Grafana's errors to the charm which provided the dashboard
+        # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
-    def _get_tracing_receiver_url(self, protocol: ReceiverProtocol, tls_enabled: bool):
-        """Build the endpoint for the tracing receiver based on the protocol and TLS.
+    def _get_tracing_receiver_url(self, protocol: ReceiverProtocol, tls_enabled: bool) -> str:
+        """Build the endpoint URL for a tracing receiver.
 
         Args:
-            protocol: The ReceiverProtocol of a certain receiver (e.g., 'otlp_grpc', 'zipkin').
-            tls_enabled: Flag indicating whether the endpoint should use 'https' or not.
+            protocol: The tracing protocol to build the URL for.
+            tls_enabled: Whether to use HTTPS (True) or HTTP (False) for the URL.
+
+
+        Returns:
+            str: The complete URL for the tracing receiver endpoint.
+
+        Note:
+            The method assumes the receiver is in the same model since the charm
+            doesn't have ingress support. The FQDN is used as the hostname.
         """
         scheme = "http"
         if tls_enabled:
@@ -714,10 +532,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # The correct transport protocol is specified in the tracing library, and it's always
         # either http or grpc.
-        # We assume the user of the receiver is in-model, since this charm doesn't have ingress.
         if receiver_protocol_to_transport_protocol[protocol] == TransportProtocolType.grpc:
-            return f"{socket.getfqdn()}:{PORTS.OTLP_GRPC}"
-        return f"{scheme}://{socket.getfqdn()}:{PORTS.OTLP_HTTP}"
+            return f"{socket.getfqdn()}:{Port.otlp_grpc.value}"
+        return f"{scheme}://{socket.getfqdn()}:{Port.otlp_http.value}"
 
 
 if __name__ == "__main__":
