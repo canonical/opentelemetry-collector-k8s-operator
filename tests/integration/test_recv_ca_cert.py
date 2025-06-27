@@ -51,11 +51,7 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
         applications:
           am:
             charm: alertmanager-k8s
-            channel: latest/stable
-            revision: 158
-            base: ubuntu@20.04/stable
-            resources:
-              alertmanager-image: 99
+            channel: 2/edge
             scale: 1
             constraints: arch=amd64
             trust: true
@@ -67,11 +63,7 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
                 opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}
           prom:
             charm: prometheus-k8s
-            channel: latest/stable
-            revision: 234
-            base: ubuntu@20.04/stable
-            resources:
-              prometheus-image: 151
+            channel: 2/edge
             scale: 1
             constraints: arch=amd64
             trust: true
