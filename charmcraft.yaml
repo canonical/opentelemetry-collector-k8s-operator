@@ -67,6 +67,11 @@ provides:
   # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
   # receive-remote-write:
   #   interface: prometheus_remote_write
+  provide-cmr-mesh:
+    interface: cross_model_mesh
+    description: |
+      Access a cross-model application from otel via the service mesh.
+      This relation provides additional data required by the service mesh to enforce cross-model authorization policies
 
 requires:
   grafana-dashboards-consumer:
@@ -112,6 +117,16 @@ requires:
     limit: 1
     optional: true
     description: Send traces to a charmed Tempo instance.
+  service-mesh:
+    limit: 1
+    interface: service_mesh
+    description: |
+      Subscribe this charm into a service mesh to enforce authorization policies.
+  require-cmr-mesh:
+    interface: cross_model_mesh
+    description: |
+      Allow a cross-model application access to otel via the service mesh.
+      This relation provides additional data required by the service mesh to enforce cross-model authorization policies.
 
 config:
   options:

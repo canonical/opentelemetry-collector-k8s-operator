@@ -29,6 +29,7 @@ from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiPro
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
 )
+from charms.istio_beacon_k8s.v0.service_mesh import Endpoint, Method, Policy, ServiceMeshConsumer
 from charms.prometheus_k8s.v1.prometheus_remote_write import (
     PrometheusRemoteWriteConsumer,
 )
@@ -287,6 +288,47 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         # TODO: Conditionally open ports based on the otelcol config file rather than opening all ports
         self.unit.set_ports(*[port.value for port in Port])
+
+
+        self._mesh = ServiceMeshConsumer(
+            self,
+            policies=[
+                Policy(
+                    relation="receive-loki-logs",
+                    endpoints=[
+                        Endpoint(
+                            ports=[Port.loki_http.value],
+                            methods=[Method.post],
+                            paths=["/loki/api/v1/push"],
+                        )
+                    ],
+                ),
+                Policy(
+                    relation="receive-traces",
+                    endpoints=[
+                        Endpoint(
+                            ports=[Port.otlp_http.value],
+                            methods=[Method.post],
+                            paths=["/v1/traces"],
+                        ),
+                        Endpoint(
+                            ports=[Port.zipkin.value],
+                            methods=[Method.post],
+                            paths=["/api/v2/spans"],
+                        ),
+                        Endpoint(
+                            ports=[Port.jaeger_thrift_http.value],
+                            methods=[Method.post],
+                            paths=["/api/traces"],
+                        ),
+                        Endpoint(
+                            ports=[Port.otlp_grpc.value, Port.jaeger_grpc.value],
+                            methods=[Method.post],
+                        ),
+                    ],
+                ),
+            ],
+        )
 
         if bool(self.model.relations.get("receive-server-cert")) and not is_server_cert_on_disk(
             container
