@@ -142,7 +142,7 @@ def test_receivers_tls_unknown_protocols():
     config.add_component(
         Component.receiver,
         "some_receiver",
-        {"protocols": {"unknown_protocol_name": {"endpoint": "0.0.0.0:1234"}}},
+        {"protocols": {"unknown_protocol_name": {"endpoint": "localhost:1234"}}},
         pipelines=["metrics"],
     )
     config_copy = copy.deepcopy(config)
@@ -160,25 +160,25 @@ def test_receivers_tls_known_protocols():
     config.add_component(
         Component.receiver,
         "some-http-receiver",
-        {"protocols": {"http": {"endpoint": "0.0.0.0:1234"}}},
+        {"protocols": {"http": {"endpoint": "localhost:1234"}}},
         pipelines=["metrics"],
     )
     config.add_component(
         Component.receiver,
         "another-http-receiver",
-        {"protocols": {"http": {"endpoint": "0.0.0.0:1235"}}},
+        {"protocols": {"http": {"endpoint": "localhost:1235"}}},
         pipelines=["metrics"],
     )
     config.add_component(
         Component.receiver,
         "some-grpc-receiver",
-        {"protocols": {"grpc": {"endpoint": "0.0.0.0:5678"}}},
+        {"protocols": {"grpc": {"endpoint": "localhost:5678"}}},
         pipelines=["metrics"],
     )
     config.add_component(
         Component.receiver,
         "another-grpc-receiver",
-        {"protocols": {"grpc": {"endpoint": "0.0.0.0:5679"}}},
+        {"protocols": {"grpc": {"endpoint": "localhost:5679"}}},
         pipelines=["metrics"],
     )
     config.add_component(
@@ -187,7 +187,7 @@ def test_receivers_tls_known_protocols():
         {
             "protocols": {
                 "grpc": {
-                    "endpoint": "0.0.0.0:5679",
+                    "endpoint": "localhost:5679",
                     "tls": {"key_file": "foo", "cert_file": "bar"},
                 }
             }

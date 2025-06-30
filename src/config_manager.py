@@ -134,7 +134,7 @@ class ConfigManager:
             {
                 "protocols": {
                     "http": {
-                        "endpoint": f"0.0.0.0:{Port.loki_http.value}",
+                        "endpoint": f"localhost:{Port.loki_http.value}",
                     },
                 },
                 "use_incoming_timestamp": True,
@@ -226,7 +226,7 @@ class ConfigManager:
                             "scrape_interval": "60s",
                             "static_configs": [
                                 {
-                                    "targets": [f"0.0.0.0:{Port.metrics.value}"],
+                                    "targets": [f"localhost:{Port.metrics.value}"],
                                     "labels": labels,
                                 }
                             ],
@@ -310,7 +310,7 @@ class ConfigManager:
             self.config.add_component(
                 component=Component.receiver,
                 name="zipkin",
-                config={"endpoint": f"0.0.0.0:{Port.zipkin.value}"},
+                config={"endpoint": f"localhost:{Port.zipkin.value}"},
                 pipelines=["traces"],
             )
         if (
@@ -320,11 +320,11 @@ class ConfigManager:
             jaeger_config = {"protocols": {}}
             if "jaeger_grpc" in requested_tracing_protocols:
                 jaeger_config["protocols"].update(
-                    {"grpc": {"endpoint": f"0.0.0.0:{Port.jaeger_grpc.value}"}}
+                    {"grpc": {"endpoint": f"localhost:{Port.jaeger_grpc.value}"}}
                 )
             if "jaeger_thrift_http" in requested_tracing_protocols:
                 jaeger_config["protocols"].update(
-                    {"thrift_http": {"endpoint": f"0.0.0.0:{Port.jaeger_thrift_http.value}"}}
+                    {"thrift_http": {"endpoint": f"localhost:{Port.jaeger_thrift_http.value}"}}
                 )
             self.config.add_component(
                 component=Component.receiver,
