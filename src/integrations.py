@@ -60,6 +60,8 @@ logger = logging.getLogger(__name__)
 def _aggregate_alerts(alerts: Dict, src_path: Path, dest_path: Path):
     """Aggregate the alerts in src_path with the ones passed to the function.
 
+    For K8s charms, alerts are aggregated in the charm container.
+
     Args:
         alerts: Dictionary of alerts to aggregate with the ones present in src_path
         src_path: Path to some already-existing alerts
@@ -77,7 +79,7 @@ def _aggregate_alerts(alerts: Dict, src_path: Path, dest_path: Path):
 def receive_loki_logs(charm: CharmBase, tls: bool):
     """Integrate with other charms via the receive-loki-logs relation endpoint.
 
-    This function should be called before `send_loki_logs`, so that the charm
+    This function must be called before `send_loki_logs`, so that the charm
     can gather all the alerts from relation data before sending them all
     to Loki.
     """
@@ -98,6 +100,8 @@ def receive_loki_logs(charm: CharmBase, tls: bool):
 
 def send_loki_logs(charm: CharmBase) -> List[Dict]:
     """Integrate with Loki via the send-loki-logs relation endpoint.
+
+    If used together with `receive_loki_logs`, this function must be called after.
 
     Returns:
         A list of dictionaries with Loki Push API endpoints, for instance:
@@ -121,7 +125,7 @@ def send_loki_logs(charm: CharmBase) -> List[Dict]:
 def scrape_metrics(charm: CharmBase) -> List:
     """Integrate with other charms via the metrics-endpoint relation endpoint.
 
-    This function should be called before `send_remote_write`, so that the charm
+    This function must be called before `send_remote_write`, so that the charm
     can gather all the alerts from relation data before sending them all.
 
     Returns:
