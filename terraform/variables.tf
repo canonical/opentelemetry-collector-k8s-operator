@@ -23,7 +23,7 @@ variable "constraints" {
   default     = ""
 }
 
-variable "model_name" {
+variable "model" {
   description = "Model name"
   type        = string
 }
