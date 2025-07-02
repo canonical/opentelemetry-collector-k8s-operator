@@ -6,7 +6,7 @@ output "endpoints" {
   value = {
     # Requires
     metrics_endpoint            = "metrics-endpoint",
-    send_remote_write           = "send_remote_write",
+    send_remote_write           = "send-remote-write",
     send_loki_logs              = "send-loki-logs",
     receive_ca_cert             = "receive-ca-cert",
     grafana_dashboards_consumer = "grafana-dashboards-consumer",
