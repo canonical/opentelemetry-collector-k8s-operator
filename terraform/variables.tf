@@ -35,6 +35,12 @@ variable "revision" {
   default     = null
 }
 
+variable "storage_directives" {
+  description = "Map of storage used by the application, which defaults to 1 GB, allocated by Juju"
+  type        = map(string)
+  default     = {}
+}
+
 variable "units" {
   description = "Number of units"
   type        = number
