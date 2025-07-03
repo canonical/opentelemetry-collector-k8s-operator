@@ -23,7 +23,7 @@ variable "constraints" {
   default     = ""
 }
 
-variable "model_name" {
+variable "model" {
   description = "Model name"
   type        = string
 }
@@ -33,6 +33,12 @@ variable "revision" {
   type        = number
   nullable    = true
   default     = null
+}
+
+variable "storage_directives" {
+  description = "Map of storage used by the application, which defaults to 1 GB, allocated by Juju"
+  type        = map(string)
+  default     = {}
 }
 
 variable "units" {
