@@ -72,11 +72,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
         integrations.cleanup()
 
-        # Mandatory relation pairs
-        missing_relations = integrations.get_missing_mandatory_relations(self)
-        if missing_relations:
-            self.unit.status = BlockedStatus(missing_relations)
-
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
             self,
@@ -124,13 +119,16 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         requested_tracing_protocols = integrations.receive_traces(
             self, tls=is_tls_ready(container)
         )
-        config_manager.add_traces_ingestion(requested_tracing_protocols)
-        # Add default processors to traces
-        config_manager.add_traces_processing(
-            sampling_rate_charm=cast(bool, self.config.get("tracing_sampling_rate_charm")),
-            sampling_rate_workload=cast(bool, self.config.get("tracing_sampling_rate_workload")),
-            sampling_rate_error=cast(bool, self.config.get("tracing_sampling_rate_error")),
-        )
+        if self._incoming_traces:
+            config_manager.add_traces_ingestion(requested_tracing_protocols)
+            # Add default processors to traces
+            config_manager.add_traces_processing(
+                sampling_rate_charm=cast(bool, self.config.get("tracing_sampling_rate_charm")),
+                sampling_rate_workload=cast(
+                    bool, self.config.get("tracing_sampling_rate_workload")
+                ),
+                sampling_rate_error=cast(bool, self.config.get("tracing_sampling_rate_error")),
+            )
         tracing_otlp_http_endpoint = integrations.send_traces(self)
         if tracing_otlp_http_endpoint:
             config_manager.add_traces_forwarding(tracing_otlp_http_endpoint)
@@ -179,6 +177,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         else:
             container.replan()
             self.unit.status = ActiveStatus()
+
+        # Mandatory relation pairs
+        missing_relations = integrations.get_missing_mandatory_relations(self)
+        if missing_relations:
+            self.unit.status = BlockedStatus(missing_relations)
 
     def _pebble_layer(self, environment: Dict) -> Layer:
         """Construct the Pebble layer configuration.
@@ -240,6 +243,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     @property
     def _incoming_logs(self) -> bool:
         return any(self.model.relations.get("receive-loki-logs", []))
+
+    @property
+    def _incoming_traces(self) -> bool:
+        return any(self.model.relations.get("receive-traces", []))
 
     @property
     def _has_server_cert_relation(self) -> bool:
