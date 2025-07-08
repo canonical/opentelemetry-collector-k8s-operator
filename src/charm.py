@@ -19,7 +19,7 @@ from constants import (
 
 
 from cosl import JujuTopology
-from ops import CharmBase, main, Container
+from ops import BlockedStatus, CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import CheckDict, ExecDict, HttpDict, Layer
 
@@ -71,6 +71,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container = self.unit.get_container(self._container_name)
         insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
         integrations.cleanup()
+
+        # Mandatory relation pairs
+        missing_relations = integrations.get_missing_mandatory_relations(self)
+        if missing_relations:
+            self.unit.status = BlockedStatus(missing_relations)
 
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
