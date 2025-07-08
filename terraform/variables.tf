@@ -20,7 +20,9 @@ variable "config" {
 variable "constraints" {
   description = "Constraints to be applied"
   type        = string
-  default     = ""
+  # FIXME: Passing an empty constraints value to the Juju Terraform provider currently
+  # causes the operation to fail due to https://github.com/juju/terraform-provider-juju/issues/344
+  default = "arch=amd64"
 }
 
 variable "model" {
