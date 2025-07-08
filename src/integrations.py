@@ -485,22 +485,24 @@ def get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
         pairs={
             "metrics-endpoint": [  # must be paired with:
                 {"send-remote-write"},  # or
-                {"grafana-cloud-config"},
+                {"cloud-config"},
             ],
-            "logging-provider": [  # must be paired with:
-                {"logging-consumer"},  # or
-                {"grafana-cloud-config"},
+            "receive-loki-logs": [  # must be paired with:
+                {"send-loki-logs"},  # or
+                {"cloud-config"},
             ],
-            "tracing-provider": [  # must be paired with:
-                {"tracing"},  # or
-                {"grafana-cloud-config"},
+            "receive-traces": [  # must be paired with:
+                {"send-traces"},  # or
+                {"cloud-config"},
             ],
             "grafana-dashboards-consumer": [  # must be paired with:
                 {"grafana-dashboards-provider"},  # or
-                {"grafana-cloud-config"},
+                {"cloud-config"},
             ],
         }
     )
     active_relations = {name for name, relation in charm.model.relations.items() if relation}
+    logger.info(f"+++ Active relations: {active_relations}")
     missing_str = relation_pairs.get_missing_as_str(*active_relations)
+    logger.info(f"+++ Missing relations: {missing_str}")
     return missing_str or None
