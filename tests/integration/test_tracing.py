@@ -22,15 +22,6 @@ async def check_traces_from_app(tempo_ip: str, app: str):
     assert traces
 
 
-@retry(stop=stop_after_attempt(10), wait=wait_fixed(10))
-async def check_traces_from_service_name(tempo_ip: str, service_name: str):
-    response = request(
-        "GET", f"http://{tempo_ip}:3200/api/search", params={"service.name": service_name}
-    )
-    traces = json.loads(response.text)["traces"]
-    assert traces
-
-
 async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: traces ingestion and forwarding."""
     minio_user = "accesskey"
@@ -73,29 +64,23 @@ async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources:
     )
     juju.integrate("tempo:s3", "s3-tempo")
     juju.integrate("tempo:tempo-cluster", "tempo-worker")
-    # WHEN we add relations to send traces to tempo
+    # WHEN we add relations to send charm traces to tempo
+    juju.integrate("otelcol:send-charm-traces", "tempo:tracing")
+    # THEN charm traces arrive in tempo
+    tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
+    await check_traces_from_app(tempo_ip=tempo_ip, app="otelcol")
+
+    # AND WHEN we add relations to send traces to tempo
     juju.integrate("otelcol:receive-traces", "grafana:charm-tracing")
     juju.integrate("otelcol:receive-traces", "grafana:workload-tracing")
     juju.integrate("otelcol:send-traces", "tempo:tracing")
     juju.wait(jubilant.all_active, delay=10, timeout=600)
-
     # AND some traces are produced
     juju.run("grafana/0", "get-admin-password")
     juju.integrate("otelcol:grafana-dashboards-provider", "grafana")
 
     # THEN traces arrive in tempo
-    tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
     await check_traces_from_app(tempo_ip=tempo_ip, app="grafana")
-
-
-async def test_charm_tracing(juju: jubilant.Juju):
-    """Scenario: charm-tracing is enabled."""
-    # GIVEN a model with grafana, otel-collector, and tempo charms
-    # WHEN we add relation to send charm traces to tempo
-    juju.integrate("otelcol:send-charm-traces", "tempo:tracing")
-    # THEN charm traces arrive in tempo
-    tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
-    await check_traces_from_service_name(tempo_ip=tempo_ip, service_name="otelcol-charm")
 
 
 # https://github.com/canonical/cos-coordinated-workers/pull/8
