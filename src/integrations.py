@@ -47,6 +47,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
 from cosl import LZMABase64
 from ops import CharmBase
 from ops.model import Relation
+from ops import tracing
 
 from config_builder import Port, sha256
 
@@ -260,6 +261,21 @@ def send_traces(charm: CharmBase) -> Optional[str]:
     if not tracing_requirer.is_ready():
         return None
     return tracing_requirer.get_endpoint("otlp_http")
+
+
+def send_charm_traces(charm: CharmBase) -> Optional[str]:
+    """Integrate with Tempo via the send-charm-traces relation endpoint.
+
+    Returns:
+        The tracing OTLP HTTP endpoint if the Provider is ready, None otherwise
+    """
+    # Enable pushing traces to a backend (i.e. Tempo) with TracingEndpointRequirer, i.e. configure the exporters
+    charm_tracing_requirer = tracing.Tracing(
+        charm,
+        tracing_relation_name="send-traces",
+        ca_relation_name="receive-ca-cert",
+    )
+    charm.__setattr__("charm_tracing_requirer", charm_tracing_requirer)
 
 
 def _get_dashboards(relations: List[Relation]) -> List[Dict[str, Any]]:
