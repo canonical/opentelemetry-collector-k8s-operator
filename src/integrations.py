@@ -2,22 +2,22 @@
 # See LICENSE file for licensing details.
 """A helper module to manage integrations for the charm."""
 
-from dataclasses import dataclass
 import json
 import logging
-import socket
 import shutil
+import socket
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, cast, get_args
-from constants import (
-    DASHBOARDS_DEST_PATH,
-    DASHBOARDS_SRC_PATH,
-    METRICS_RULES_SRC_PATH,
-    METRICS_RULES_DEST_PATH,
-    LOKI_RULES_SRC_PATH,
-    LOKI_RULES_DEST_PATH,
-)
+
 import yaml
+from charmlibs.pathops import PathProtocol
+from charms.certificate_transfer_interface.v1.certificate_transfer import (
+    CertificateTransferRequires,
+)
+from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
+    GrafanaCloudConfigRequirer,
+)
 from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
 from charms.prometheus_k8s.v0.prometheus_scrape import (
@@ -25,12 +25,6 @@ from charms.prometheus_k8s.v0.prometheus_scrape import (
 )
 from charms.prometheus_k8s.v1.prometheus_remote_write import (
     PrometheusRemoteWriteConsumer,
-)
-from charms.certificate_transfer_interface.v1.certificate_transfer import (
-    CertificateTransferRequires,
-)
-from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
-    GrafanaCloudConfigRequirer,
 )
 from charms.tempo_coordinator_k8s.v0.tracing import (
     ReceiverProtocol,
@@ -45,14 +39,18 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     TLSCertificatesRequiresV4,
 )
 from cosl import LZMABase64
-from ops import CharmBase
+from ops import CharmBase, tracing
 from ops.model import Relation
-from ops import tracing
 
 from config_builder import Port, sha256
-
-from charmlibs.pathops import PathProtocol
-
+from constants import (
+    DASHBOARDS_DEST_PATH,
+    DASHBOARDS_SRC_PATH,
+    LOKI_RULES_DEST_PATH,
+    LOKI_RULES_SRC_PATH,
+    METRICS_RULES_DEST_PATH,
+    METRICS_RULES_SRC_PATH,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -269,10 +267,9 @@ def send_charm_traces(charm: CharmBase) -> Optional[str]:
     Returns:
         The tracing OTLP HTTP endpoint if the Provider is ready, None otherwise
     """
-    # Enable pushing traces to a backend (i.e. Tempo) with TracingEndpointRequirer, i.e. configure the exporters
     charm_tracing_requirer = tracing.Tracing(
         charm,
-        tracing_relation_name="send-traces",
+        tracing_relation_name="send-charm-traces",
         ca_relation_name="receive-ca-cert",
     )
     charm.__setattr__("charm_tracing_requirer", charm_tracing_requirer)
