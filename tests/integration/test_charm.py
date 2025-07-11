@@ -15,7 +15,6 @@ from pytest_operator.plugin import OpsTest
 # pyright: reportAttributeAccessIssue = false
 
 
-
 def _get_pebble_checks(ops_test: OpsTest, app_name: str):
     """Get the pebble checks results."""
     assert ops_test.model
