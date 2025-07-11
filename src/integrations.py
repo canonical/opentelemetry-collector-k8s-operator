@@ -502,7 +502,5 @@ def get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
         }
     )
     active_relations = {name for name, relation in charm.model.relations.items() if relation}
-    logger.info(f"+++ Active relations: {active_relations}")
     missing_str = relation_pairs.get_missing_as_str(*active_relations)
-    logger.info(f"+++ Missing relations: {missing_str}")
     return missing_str or None
