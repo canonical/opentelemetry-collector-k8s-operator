@@ -132,6 +132,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         tracing_otlp_http_endpoint = integrations.send_traces(self)
         if tracing_otlp_http_endpoint:
             config_manager.add_traces_forwarding(tracing_otlp_http_endpoint)
+        integrations.send_charm_traces(self)
 
         # Dashboards setup
         integrations.forward_dashboards(self)
