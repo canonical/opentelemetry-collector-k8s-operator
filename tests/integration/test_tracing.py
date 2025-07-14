@@ -68,6 +68,7 @@ async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources:
     juju.integrate("otelcol:send-charm-traces", "tempo:tracing")
     # THEN charm traces arrive in tempo
     tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
+    juju.wait(jubilant.all_active, delay=10, timeout=600)
     await check_traces_from_app(tempo_ip=tempo_ip, app="otelcol")
 
     # AND WHEN we add relations to send traces to tempo
