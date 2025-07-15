@@ -64,18 +64,23 @@ async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources:
     )
     juju.integrate("tempo:s3", "s3-tempo")
     juju.integrate("tempo:tempo-cluster", "tempo-worker")
-    # WHEN we add relations to send traces to tempo
+    # WHEN we add relations to send charm traces to tempo
+    juju.integrate("otelcol:send-charm-traces", "tempo:tracing")
+    # THEN charm traces arrive in tempo
+    tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
+    juju.wait(jubilant.all_active, delay=10, timeout=600)
+    await check_traces_from_app(tempo_ip=tempo_ip, app="otelcol")
+
+    # AND WHEN we add relations to send traces to tempo
     juju.integrate("otelcol:receive-traces", "grafana:charm-tracing")
     juju.integrate("otelcol:receive-traces", "grafana:workload-tracing")
     juju.integrate("otelcol:send-traces", "tempo:tracing")
     juju.wait(jubilant.all_active, delay=10, timeout=600)
-
     # AND some traces are produced
     juju.run("grafana/0", "get-admin-password")
     juju.integrate("otelcol:grafana-dashboards-provider", "grafana")
 
     # THEN traces arrive in tempo
-    tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
     await check_traces_from_app(tempo_ip=tempo_ip, app="grafana")
 
 
