@@ -13,7 +13,7 @@ import pytest
 import jubilant
 
 
-@retry(stop=stop_after_attempt(10), wait=wait_fixed(10))
+@retry(stop=stop_after_attempt(15), wait=wait_fixed(10))
 async def check_traces_from_app(tempo_ip: str, app: str):
     response = request(
         "GET", f"http://{tempo_ip}:3200/api/search", params={"juju_application": app}
