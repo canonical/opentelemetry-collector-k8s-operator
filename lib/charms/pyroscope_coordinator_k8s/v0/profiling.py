@@ -1,5 +1,6 @@
 """Profiling integration endpoint wrapper.
 """
+import logging
 from typing import List
 
 import ops
@@ -17,12 +18,14 @@ LIBPATCH = 1
 
 DEFAULT_ENDPOINT_NAME = "profiling"
 
+logger = logging.getLogger()
 
 class ProfilingAppDatabagModel(pydantic.BaseModel):
+    """Application databag model for the profiling interface."""
     otlp_grpc_endpoint_url: str
 
 
-class ProfilingProvider:
+class ProfilingEndpointProvider:
     """Wraps a profiling provider endpoint."""
     def __init__(self, relations:List[ops.Relation], app:ops.Application):
         self._relations = relations
@@ -37,16 +40,23 @@ class ProfilingProvider:
             )
 
 
-class ProfilingRequirer:
+class ProfilingEndpointRequirer:
     """Wraps a profiling requirer endpoint."""
     def __init__(self, relations:List[ops.Relation]):
         self._relations = relations
 
-    def get_endpoints(self):
+    def get_endpoints(self)->List[str]:
         """Obtain the profiling grpc endpoints from all relations."""
+        out = []
         for relation in self._relations:
-            relation.load(
+            try:
+                otlp_grpc_endpoint_url = relation.load(
                 ProfilingAppDatabagModel,
                 relation.app
-            )
+            ).otlp_grpc_endpoint_url
+            except pydantic.ValidationError:
+                logger.debug("failed to validate app data; is the relation still settling?")
+                continue
+            out.append(otlp_grpc_endpoint_url)
+        return out
 

@@ -6,7 +6,7 @@
 from functools import partial
 import logging
 import os
-from typing import Dict, cast
+from typing import Dict, cast, Optional
 
 from charmlibs.pathops import ContainerPath
 from constants import (
@@ -23,7 +23,7 @@ from ops import BlockedStatus, CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import CheckDict, ExecDict, HttpDict, Layer
 
-from config_builder import Port
+from config_builder import Port, sha256
 from config_manager import ConfigManager
 import integrations
 
@@ -89,6 +89,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             insecure_skip_verify=cast(bool, self.config.get("tls_insecure_skip_verify")),
         )
 
+        # TODO: if/when we support multiple feature gates, make this a list and find out how to
+        #  pass multiple feature gates into the pebble layer command
+        feature_gates: Optional[str] = None
+
         # Logs setup
         integrations.receive_loki_logs(self, tls=is_tls_ready(container))
         loki_endpoints = integrations.send_loki_logs(self)
@@ -114,6 +118,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
         remote_write_endpoints = integrations.send_remote_write(self)
         config_manager.add_remote_write(remote_write_endpoints)
+
+        # Profiling setup
+        profiling_endpoints = integrations.receive_profiles(self)
+        if profiling_endpoints:
+            feature_gates = "service.profilesSupport"
 
         # Tracing setup
         requested_tracing_protocols = integrations.receive_traces(
@@ -166,7 +175,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             )
         }
         container.add_layer(
-            self._container_name, self._pebble_layer(environment=pebble_extra_env), combine=True
+            self._container_name,
+            self._pebble_layer(environment=pebble_extra_env, feature_gates=feature_gates),
+            combine=True
         )
         # TODO: Conditionally open ports based on the otelcol config file rather than opening all ports
         self.unit.set_ports(*[port.value for port in Port])
@@ -184,15 +195,17 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if missing_relations:
             self.unit.status = BlockedStatus(missing_relations)
 
-    def _pebble_layer(self, environment: Dict) -> Layer:
+    def _pebble_layer(self, environment: Dict, feature_gates:Optional[str]) -> Layer:
         """Construct the Pebble layer configuration.
 
         Args:
             environment: Dictionary containing environment variables to be passed to the Pebble layer.
+            feature_gates: Feature gates that should be enabled by otelcol, if any..
 
         Returns:
             Layer: A Pebble Layer object containing the service configuration.
         """
+        feature_gates_flag = f"--feature-gates={feature_gates}" if feature_gates else None
         layer = Layer(
             {
                 "summary": "opentelemetry-collector-k8s layer",
@@ -201,7 +214,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     SERVICE_NAME: {
                         "override": "replace",
                         "summary": "opentelemetry-collector-k8s service",
-                        "command": f"/usr/bin/otelcol --config={CONFIG_PATH} --feature-gates=service.profilesSupport",
+                        "command": " ".join(filter(None, ("/usr/bin/otelcol", f"--config={CONFIG_PATH}", feature_gates_flag))),
                         "startup": "enabled",
                         "environment": {
                             "https_proxy": os.environ.get("JUJU_CHARM_HTTPS_PROXY", ""),
@@ -211,14 +224,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                         },
                     }
                 },
-                "checks": self._pebble_checks,
+                "checks": self._pebble_checks(feature_gates_flag=feature_gates_flag),
             }
         )
 
         return layer
 
-    @property
-    def _pebble_checks(self) -> Dict[str, CheckDict]:
+    def _pebble_checks(self, feature_gates_flag:Optional[str]) -> Dict[str, CheckDict]:
         """Define Pebble checks for the workload container.
 
         Returns:
@@ -236,7 +248,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             "valid-config": CheckDict(
                 override="replace",
                 level="alive",
-                exec=ExecDict(command=f"otelcol validate --config={CONFIG_PATH} --feature-gates=service.profilesSupport"),
+                exec=ExecDict(command=" ".join(filter(None,("otelcol", "validate", f"--config={CONFIG_PATH}", feature_gates_flag)))),
             ),
         }
         return checks

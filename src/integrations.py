@@ -51,6 +51,7 @@ from constants import (
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
 )
+from lib.charms.pyroscope_coordinator_k8s.v0.profiling import ProfilingEndpointRequirer
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,16 @@ def _get_tracing_receiver_url(protocol: ReceiverProtocol, tls_enabled: bool) -> 
     if receiver_protocol_to_transport_protocol[protocol] == TransportProtocolType.grpc:
         return f"{socket.getfqdn()}:{Port.otlp_grpc.value}"
     return f"{scheme}://{socket.getfqdn()}:{Port.otlp_http.value}"
+
+
+def receive_profiles(charm: CharmBase) -> List[str]:
+    """Integrate with other charms via the receive-profiles relation endpoint.
+
+    Returns:
+        All profiling endpoints that we are receiving over `profiling` integrations.
+    """
+    profiling_requirer = ProfilingEndpointRequirer(charm.model.relations['receive-profiles'])
+    return profiling_requirer.get_endpoints()
 
 
 def receive_traces(charm: CharmBase, tls: bool) -> Set:
