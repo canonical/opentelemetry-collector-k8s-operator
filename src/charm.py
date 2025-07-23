@@ -122,6 +122,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Profile forwarding setup
         profiling_endpoints = integrations.send_profiles(self)
         if profiling_endpoints:
+            config_manager.add_profiling(profiling_endpoints)
             feature_gates = "service.profilesSupport"
 
         # Tracing setup
