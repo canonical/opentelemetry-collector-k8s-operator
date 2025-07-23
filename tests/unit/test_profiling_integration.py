@@ -15,7 +15,7 @@ def test_waiting_for_profiling_endpoint(ctx, execs, relation_joined):
     # WHEN a profiling relation joins but pyroscope didn't reply with an endpoint yet,
     # or the relation didn't join yet at all
     relations = {Relation(
-        endpoint="receive-profiles",
+        endpoint="send-profiles",
     )} if relation_joined else {}
 
     state_in = State(relations=relations, containers=[container])
@@ -34,7 +34,7 @@ def test_profiling_integration(ctx, execs):
 
     # WHEN a profiling relation joins but pyroscope didn't reply with an endpoint yet
     profiling = Relation(
-        endpoint="receive-profiles",
+        endpoint="send-profiles",
         remote_app_data={"otlp_grpc_endpoint_url": json.dumps("my.fqdn.cluster.local:12345")}
     )
     state_in = State(relations=[profiling], containers=[container])

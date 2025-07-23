@@ -208,13 +208,13 @@ def _get_tracing_receiver_url(protocol: ReceiverProtocol, tls_enabled: bool) -> 
     return f"{scheme}://{socket.getfqdn()}:{Port.otlp_http.value}"
 
 
-def receive_profiles(charm: CharmBase) -> List[str]:
-    """Integrate with other charms via the receive-profiles relation endpoint.
+def send_profiles(charm: CharmBase) -> List[str]:
+    """Integrate with other charms via the send-profiles relation endpoint.
 
     Returns:
         All profiling endpoints that we are receiving over `profiling` integrations.
     """
-    profiling_requirer = ProfilingEndpointRequirer(charm.model.relations['receive-profiles'])
+    profiling_requirer = ProfilingEndpointRequirer(charm.model.relations['send-profiles'])
     return profiling_requirer.get_endpoints()
 
 

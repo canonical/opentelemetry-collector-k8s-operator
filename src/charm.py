@@ -119,8 +119,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         remote_write_endpoints = integrations.send_remote_write(self)
         config_manager.add_remote_write(remote_write_endpoints)
 
-        # Profiling setup
-        profiling_endpoints = integrations.receive_profiles(self)
+        # Profile forwarding setup
+        profiling_endpoints = integrations.send_profiles(self)
         if profiling_endpoints:
             feature_gates = "service.profilesSupport"
 
