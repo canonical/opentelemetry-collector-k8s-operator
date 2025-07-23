@@ -102,7 +102,7 @@ class ConfigManager:
     methods for common configuration scenarios.
     """
 
-    def __init__(self, receiver_tls: bool = False, insecure_skip_verify: bool = False):
+    def __init__(self, receiver_tls: bool = False, insecure_skip_verify: bool = False, queue_size: int = 1000, max_elapsed_time_min: int = 5):
         """Generate a default OpenTelemetry collector ConfigManager.
 
         The base configuration is our opinionated default.
@@ -110,13 +110,40 @@ class ConfigManager:
         Args:
             receiver_tls: whether to inject TLS config in all receivers on build
             insecure_skip_verify: value for `insecure_skip_verify` in all exporters
+            queue_size: size of the sending queue for exporters
+            max_elapsed_time_min: maximum elapsed time for retrying failed requests in minutes
         """
         self._insecure_skip_verify = insecure_skip_verify
+        self._queue_size = queue_size
+        self._max_elapsed_time_min = max_elapsed_time_min
         self.config = ConfigBuilder(
             receiver_tls=receiver_tls,
             exporter_skip_verify=insecure_skip_verify,
         )
         self.config.add_default_config()
+
+    @property
+    def sending_queue_config(self) -> Dict[str, Any]:
+        """Return the default sending queue configuration."""
+        return {
+            "sending_queue": {
+                "enabled": True,
+                "queue_size": self._queue_size,
+                "storage": "file_storage",
+            },
+            "retry_on_failure": {
+                "max_elapsed_time": f"{self._max_elapsed_time_min}m",
+            },
+        }
+
+    @property
+    def prometheus_remotewrite_wal_config(self) -> Dict[str, Any]:
+        """Return the default WAL configuration for Prometheus remote write."""
+        return {
+            "wal": {
+                "directory": "/otelcol",
+            },
+        }
 
     def add_log_ingestion(self) -> None:
         """Configure the collector to receive logs via Loki protocol.
@@ -166,6 +193,7 @@ class ConfigManager:
                     "endpoint": endpoint["url"],
                     "default_labels_enabled": {"exporter": False, "job": True},
                     "tls": {"insecure_skip_verify": insecure_skip_verify},
+                    **self.sending_queue_config,
                 },
                 pipelines=["logs"],
             )
@@ -275,6 +303,7 @@ class ConfigManager:
                 {
                     "endpoint": endpoint["url"],
                     "tls": {"insecure_skip_verify": self._insecure_skip_verify},
+                    **self.prometheus_remotewrite_wal_config,
                 },
                 pipelines=["metrics"],
             )
@@ -381,7 +410,10 @@ class ConfigManager:
         self.config.add_component(
             component=Component.exporter,
             name="otlphttp/tempo",
-            config={"endpoint": endpoint},
+            config={
+                "endpoint": endpoint,
+                **self.sending_queue_config,
+            },
             pipelines=["traces"],
         )
 
@@ -427,6 +459,7 @@ class ConfigManager:
                     "endpoint": prometheus_url,
                     "tls": {"insecure_skip_verify": self._insecure_skip_verify},
                     **exporter_auth_config,
+                    **self.prometheus_remotewrite_wal_config,
                 },
                 pipelines=["metrics"],
             )
@@ -440,6 +473,7 @@ class ConfigManager:
                     "default_labels_enabled": {"exporter": False, "job": True},
                     "headers": {"Content-Encoding": "snappy"},  # TODO: check if this is needed
                     **exporter_auth_config,
+                    **self.sending_queue_config,
                 },
                 pipelines=["logs"],
             )
@@ -451,6 +485,7 @@ class ConfigManager:
                     "endpoint": tempo_url,
                     "tls": {"insecure_skip_verify": self._insecure_skip_verify},
                     **exporter_auth_config,
+                    **self.sending_queue_config,
                 },
                 pipelines=["traces"],
             )

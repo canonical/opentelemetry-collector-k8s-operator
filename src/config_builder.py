@@ -149,6 +149,7 @@ class ConfigBuilder:
         # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/healthcheckextension
         # Add TLS config to extensions
         self.add_extension("health_check", {"endpoint": f"0.0.0.0:{Port.health.value}"})
+        self.add_extension("file_storage", {"directory": "/otelcol"}) # TODO: directory should be a constant.
         self.add_telemetry("logs", {"level": "DEBUG"})
         self.add_telemetry("metrics", {"level": "normal"})
 
