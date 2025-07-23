@@ -23,7 +23,7 @@ from ops import BlockedStatus, CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import CheckDict, ExecDict, HttpDict, Layer
 
-from config_builder import Port, sha256
+from config_builder import Port
 from config_manager import ConfigManager
 import integrations
 
