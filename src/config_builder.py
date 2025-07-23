@@ -144,7 +144,7 @@ class ConfigBuilder:
                     "grpc": {"endpoint": f"0.0.0.0:{Port.otlp_grpc.value}"},
                 },
             },
-            pipelines=["logs", "metrics", "traces"],
+            pipelines=["logs", "metrics", "traces", "profiles"],
         )
         # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/healthcheckextension
         # Add TLS config to extensions

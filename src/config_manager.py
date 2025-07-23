@@ -282,6 +282,19 @@ class ConfigManager:
         # TODO Receive alert rules via remote write
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
 
+    def add_profiling(self, endpoints: List[str]):
+        """Configure forwarding profiles to a profiling backend (Pyroscope)."""
+        for idx, endpoint in enumerate(endpoints):
+            self.config.add_component(
+                Component.exporter,
+                f"profiling/{idx}",
+                {
+                    "endpoint": endpoint,
+                    "tls": {"insecure_skip_verify": self._insecure_skip_verify}
+                },
+                pipelines=["profiles"],
+            )
+
     def add_traces_ingestion(
         self,
         requested_tracing_protocols: Set[Literal["zipkin", "jaeger_grpc", "jaeger_thrift_http"]],

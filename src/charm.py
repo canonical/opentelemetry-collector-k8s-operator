@@ -200,7 +200,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     SERVICE_NAME: {
                         "override": "replace",
                         "summary": "opentelemetry-collector-k8s service",
-                        "command": f"/usr/bin/otelcol --config={CONFIG_PATH}",
+                        "command": f"/usr/bin/otelcol --config={CONFIG_PATH} --feature-gates=service.profilesSupport",
                         "startup": "enabled",
                         "environment": {
                             "https_proxy": os.environ.get("JUJU_CHARM_HTTPS_PROXY", ""),
@@ -235,7 +235,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             "valid-config": CheckDict(
                 override="replace",
                 level="alive",
-                exec=ExecDict(command=f"otelcol validate --config={CONFIG_PATH}"),
+                exec=ExecDict(command=f"otelcol validate --config={CONFIG_PATH} --feature-gates=service.profilesSupport"),
             ),
         }
         return checks
