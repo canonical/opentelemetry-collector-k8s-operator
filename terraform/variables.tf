@@ -1,16 +1,16 @@
 variable "app_name" {
-  description = "Application name"
+  description = "Name to give the deployed application"
   type        = string
+  default     = "opentelemetry-collector"
 }
 
 variable "channel" {
-  description = "Charm channel"
+  description = "Channel that the charm is deployed from"
   type        = string
-  default     = "latest/stable"
 }
 
 variable "config" {
-  description = "Config options as in the ones we pass in juju config"
+  description = "Map of the charm configuration options"
   type        = map(string)
   default     = {}
 }
@@ -18,7 +18,7 @@ variable "config" {
 # We use constraints to set AntiAffinity in K8s
 # https://discourse.charmhub.io/t/pod-priority-and-affinity-in-juju-charms/4091/13
 variable "constraints" {
-  description = "Constraints to be applied"
+  description = "String listing constraints for this application"
   type        = string
   # FIXME: Passing an empty constraints value to the Juju Terraform provider currently
   # causes the operation to fail due to https://github.com/juju/terraform-provider-juju/issues/344
@@ -26,14 +26,13 @@ variable "constraints" {
 }
 
 variable "model" {
-  description = "Model name"
+  description = "Reference to an existing model resource or data source for the model to deploy to"
   type        = string
 }
 
 variable "revision" {
-  description = "Charm revision"
+  description = "Revision number of the charm"
   type        = number
-  nullable    = true
   default     = null
 }
 
@@ -44,7 +43,7 @@ variable "storage_directives" {
 }
 
 variable "units" {
-  description = "Number of units"
+  description = "Unit count/scale"
   type        = number
   default     = 1
 }

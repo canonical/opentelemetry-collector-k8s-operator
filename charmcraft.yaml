@@ -44,12 +44,20 @@ parts:
 containers:
   otelcol:
     resource: opentelemetry-collector-image
+    mounts:
+      - storage: persisted
+        location: /otelcol
+
+storage:
+ persisted:
+    type: filesystem
+    description: Mount point in which Otelcol will persist data
 
 resources:
   opentelemetry-collector-image:
     type: oci-image
     description: OCI image for opentelemetry-collector
-    upstream-source: ubuntu/opentelemetry-collector:0.127-24.04
+    upstream-source: ubuntu/opentelemetry-collector:0.130-24.04
 
 provides:
   grafana-dashboards-provider:
@@ -112,6 +120,11 @@ requires:
     limit: 1
     optional: true
     description: Send traces to a charmed Tempo instance.
+  send-charm-traces:
+    interface: tracing
+    limit: 1
+    optional: true
+    description: Send charm traces to a charmed Tempo instance.
 
 config:
   options:
