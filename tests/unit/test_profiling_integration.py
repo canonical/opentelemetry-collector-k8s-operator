@@ -1,4 +1,3 @@
-import contextlib
 import json
 from unittest.mock import patch
 
@@ -54,7 +53,10 @@ def test_profiling_integration(ctx, execs, insecure_skip_verify):
     # WHEN a profiling relation joins and pyroscope sent an endpoint
     profiling = Relation(
         endpoint="send-profiles",
-        remote_app_data={"otlp_grpc_endpoint_url": json.dumps(pyro_url)}
+        remote_app_data={
+            "otlp_grpc_endpoint_url": json.dumps(pyro_url),
+            "otlp_http_endpoint_url": json.dumps("foobar"),
+        }
     )
     state_in = State(relations=[profiling], containers=[container],
                      config={"tls_insecure_skip_verify": insecure_skip_verify})
@@ -90,7 +92,10 @@ def test_profiling_integration_tls(ctx, execs, insecure_skip_verify, tls_mock):
     # WHEN a profiling relation joins and pyroscope sent an endpoint
     profiling = Relation(
         endpoint="send-profiles",
-        remote_app_data={"otlp_grpc_endpoint_url": json.dumps(pyro_url)}
+        remote_app_data={
+            "otlp_grpc_endpoint_url": json.dumps(pyro_url),
+            "otlp_http_endpoint_url": json.dumps("foobar"),
+        }
     )
     state_in = State(relations=[profiling, ssc], containers=[container],
                      config={"tls_insecure_skip_verify": insecure_skip_verify})

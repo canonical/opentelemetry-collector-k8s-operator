@@ -215,7 +215,7 @@ def send_profiles(charm: CharmBase) -> List[str]:
         All profiling endpoints that we are receiving over `profiling` integrations.
     """
     profiling_requirer = ProfilingEndpointRequirer(charm.model.relations['send-profiles'])
-    return profiling_requirer.get_endpoints()
+    return [ep.otlp_grpc for ep in profiling_requirer.get_endpoints()]
 
 
 def receive_traces(charm: CharmBase, tls: bool) -> Set:
