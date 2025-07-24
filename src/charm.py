@@ -3,29 +3,27 @@
 # See LICENSE file for licensing details.
 """A Juju charm for OpenTelemetry Collector on Kubernetes."""
 
-from functools import partial
 import logging
 import os
-from typing import Dict, cast
+from functools import partial
+from typing import Dict, Optional, cast
 
 from charmlibs.pathops import ContainerPath
+from cosl import JujuTopology, MandatoryRelationPairs
+from ops import BlockedStatus, CharmBase, Container, main
+from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
+from ops.pebble import CheckDict, ExecDict, HttpDict, Layer
+
+import integrations
+from config_builder import Port
+from config_manager import ConfigManager
 from constants import (
-    RECV_CA_CERT_FOLDER_PATH,
     CONFIG_PATH,
+    RECV_CA_CERT_FOLDER_PATH,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
     SERVICE_NAME,
 )
-
-
-from cosl import JujuTopology
-from ops import BlockedStatus, CharmBase, main, Container
-from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
-from ops.pebble import CheckDict, ExecDict, HttpDict, Layer
-
-from config_builder import Port
-from config_manager import ConfigManager
-import integrations
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +38,43 @@ def is_tls_ready(container: Container) -> bool:
 def refresh_certs(container: Container):
     """Run `update-ca-certificates` to refresh the trusted system certs."""
     container.exec(["update-ca-certificates", "--fresh"]).wait()
+
+
+def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
+    """Check whether mandatory relations are in place.
+
+    The charm can use this information to set BlockedStatus.
+    Without any matching outgoing relation, the collector could incur data loss.
+
+    Incoming relations are evaluated with AND, while outgoing relations with OR.
+
+    Returns:
+        A string containing the missing relations in string format, or None if
+        all the mandatory relation pairs are present.
+    """
+    relation_pairs = MandatoryRelationPairs(
+        pairs={
+            "metrics-endpoint": [  # must be paired with:
+                {"send-remote-write"},  # or
+                {"cloud-config"},
+            ],
+            "receive-loki-logs": [  # must be paired with:
+                {"send-loki-logs"},  # or
+                {"cloud-config"},
+            ],
+            "receive-traces": [  # must be paired with:
+                {"send-traces"},  # or
+                {"cloud-config"},
+            ],
+            "grafana-dashboards-consumer": [  # must be paired with:
+                {"grafana-dashboards-provider"},  # or
+                {"cloud-config"},
+            ],
+        }
+    )
+    active_relations = {name for name, relation in charm.model.relations.items() if relation}
+    missing_str = relation_pairs.get_missing_as_str(*active_relations)
+    return missing_str or None
 
 
 class OpenTelemetryCollectorK8sCharm(CharmBase):
@@ -180,7 +215,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.unit.status = ActiveStatus()
 
         # Mandatory relation pairs
-        missing_relations = integrations.get_missing_mandatory_relations(self)
+        missing_relations = _get_missing_mandatory_relations(self)
         if missing_relations:
             self.unit.status = BlockedStatus(missing_relations)
 
