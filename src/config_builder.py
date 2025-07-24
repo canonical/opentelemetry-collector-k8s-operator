@@ -85,7 +85,10 @@ class ConfigBuilder:
     configuration that can be consumed by the Collector.
     """
 
-    def __init__(self, receiver_tls: bool = False, exporter_skip_verify: bool = False):
+    def __init__(self,
+                 receiver_tls: bool = False,
+                 exporter_skip_verify: bool = False
+                 ):
         """Generate an empty OpenTelemetry collector config.
 
         Args:
@@ -238,7 +241,7 @@ class ConfigBuilder:
         exporters.
         """
         debug_exporter_required = False
-        for signal in ["logs", "metrics", "traces"]:
+        for signal in ["logs", "metrics", "traces", "profiles"]:
             pipeline = self._config["service"]["pipelines"].get(signal, {})
             if pipeline:
                 if pipeline.get("receivers", []) and not pipeline.get("exporters", []):
