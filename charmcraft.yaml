@@ -44,6 +44,14 @@ parts:
 containers:
   otelcol:
     resource: opentelemetry-collector-image
+    mounts:
+      - storage: persisted
+        location: /otelcol
+
+storage:
+ persisted:
+    type: filesystem
+    description: Mount point in which Otelcol will persist data
 
 resources:
   opentelemetry-collector-image:
