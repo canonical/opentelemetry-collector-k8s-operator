@@ -4,7 +4,6 @@
 """Feature: Opentelemetry-collector config builder."""
 
 from config_manager import ConfigManager
-from deepdiff import DeepDiff
 
 
 def test_add_prometheus_scrape():
@@ -89,7 +88,9 @@ def test_add_log_forwarding():
         insecure_skip_verify=False
     )
     # THEN it exists in the loki exporter config
-    assert {} == DeepDiff(config_manager.config._config["exporters"]["loki/0"], expected_loki_forwarding_cfg)
+    config = dict(sorted(config_manager.config._config["exporters"]["loki/0"].items()))
+    expected_config = dict(sorted(expected_loki_forwarding_cfg.items()))
+    assert config == expected_config
 
 
 def test_add_traces_forwarding():
@@ -112,7 +113,9 @@ def test_add_traces_forwarding():
         endpoint="http://192.168.1.244:4318",
     )
     # THEN it exists in the traces exporter config
-    assert {} == DeepDiff(config_manager.config._config["exporters"]["otlphttp/tempo"], expected_traces_forwarding_cfg)
+    config = dict(sorted(config_manager.config._config["exporters"]["otlphttp/tempo"].items()))
+    expected_config = dict(sorted(expected_traces_forwarding_cfg.items()))
+    assert config == expected_config
 
 
 def test_add_remote_write():
@@ -133,4 +136,6 @@ def test_add_remote_write():
         endpoints=[{"url": "http://192.168.1.244/cos-prometheus-0/api/v1/write"}],
     )
     # THEN it exists in the remote write exporter config
-    assert {} == DeepDiff(config_manager.config._config["exporters"]["prometheusremotewrite/0"], expected_remote_write_cfg)
+    config = dict(sorted(config_manager.config._config["exporters"]["prometheusremotewrite/0"].items()))
+    expected_config = dict(sorted(expected_remote_write_cfg.items()))
+    assert config == expected_config
