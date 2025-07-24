@@ -134,7 +134,7 @@ config:
         A global opentelemetry-collector "processors" config in YAML format, without the
         "processors:" top-level key. For example, to represent a "processors" section
         such as:
-        
+
             processors:
               batch:
               memory_limiter:
@@ -191,7 +191,7 @@ config:
       type: int
       default: 1000
       description: |
-        Maximum size the queue can accept. Measured in units defined by sizer.
+        Maximum number of incoming batches of metrics, logs, traces the queue can accept.
         Ref: https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/exporterhelper/README.md#configuration
     tracing_sampling_rate_charm:
       description: >
