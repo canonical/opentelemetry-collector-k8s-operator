@@ -122,6 +122,7 @@ class ConfigManager:
             exporter_skip_verify=insecure_skip_verify,
         )
         self.config.add_default_config()
+        self.config.add_extension("file_storage", {"directory": FILE_STORAGE_DIRECTORY})
 
     @property
     def sending_queue_config(self) -> Dict[str, Any]:

@@ -7,7 +7,7 @@ from enum import Enum, unique
 
 import yaml
 
-from constants import FILE_STORAGE_DIRECTORY, SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH
+from constants import SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,6 @@ class ConfigBuilder:
         # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/healthcheckextension
         # Add TLS config to extensions
         self.add_extension("health_check", {"endpoint": f"0.0.0.0:{Port.health.value}"})
-        self.add_extension("file_storage", {"directory": FILE_STORAGE_DIRECTORY})
         self.add_telemetry("logs", {"level": "DEBUG"})
         self.add_telemetry("metrics", {"level": "normal"})
 
