@@ -34,10 +34,15 @@ class ProfilingEndpointProvider:
     def publish_endpoint(self, grpc_endpoint:str):
         """Publish the profiling grpc endpoint to all relations."""
         for relation in self._relations:
-            relation.save(
-                ProfilingAppDatabagModel(otlp_grpc_endpoint_url=grpc_endpoint),
-                self._app
-            )
+            try:
+                relation.save(
+                    ProfilingAppDatabagModel(otlp_grpc_endpoint_url=grpc_endpoint),
+                    self._app
+                )
+            except ops.ModelError:
+                logger.debug("failed to validate app data; is the relation still being created?")
+                continue
+
 
 
 class ProfilingEndpointRequirer:
@@ -54,6 +59,9 @@ class ProfilingEndpointRequirer:
                 ProfilingAppDatabagModel,
                 relation.app
             ).otlp_grpc_endpoint_url
+            except ops.ModelError:
+                logger.debug("failed to validate app data; is the relation still being created?")
+                continue
             except pydantic.ValidationError:
                 logger.debug("failed to validate app data; is the relation still settling?")
                 continue

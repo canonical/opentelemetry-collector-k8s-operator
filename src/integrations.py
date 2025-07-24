@@ -51,7 +51,7 @@ from constants import (
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
 )
-from lib.charms.pyroscope_coordinator_k8s.v0.profiling import ProfilingEndpointRequirer
+from charms.pyroscope_coordinator_k8s.v0.profiling import ProfilingEndpointRequirer
 
 logger = logging.getLogger(__name__)
 

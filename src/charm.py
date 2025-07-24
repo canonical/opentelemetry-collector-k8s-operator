@@ -18,6 +18,7 @@ from constants import (
 )
 
 
+
 from cosl import JujuTopology
 from ops import BlockedStatus, CharmBase, main, Container
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
@@ -122,7 +123,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Profile forwarding setup
         profiling_endpoints = integrations.send_profiles(self)
         if profiling_endpoints:
-            config_manager.add_profiling(profiling_endpoints)
+            config_manager.add_profiling(profiling_endpoints, tls=is_tls_ready(container))
             feature_gates = "service.profilesSupport"
 
         # Tracing setup

@@ -85,7 +85,10 @@ class ConfigBuilder:
     configuration that can be consumed by the Collector.
     """
 
-    def __init__(self, receiver_tls: bool = False, exporter_skip_verify: bool = False):
+    def __init__(self,
+                 receiver_tls: bool = False,
+                 exporter_skip_verify: bool = False
+                 ):
         """Generate an empty OpenTelemetry collector config.
 
         Args:
@@ -144,7 +147,7 @@ class ConfigBuilder:
                     "grpc": {"endpoint": f"0.0.0.0:{Port.otlp_grpc.value}"},
                 },
             },
-            pipelines=["logs", "metrics", "traces", "profiles"],
+            pipelines=["logs", "metrics", "traces"],
         )
         # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/healthcheckextension
         # Add TLS config to extensions
