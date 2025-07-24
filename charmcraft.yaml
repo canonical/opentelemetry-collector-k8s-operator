@@ -186,7 +186,7 @@ config:
       type: int
       default: 5
       description: |
-        Maximum time in minutes to wait for the backend. After this time, data loss will occur.
+        Maximum time in minutes to wait for the storage backend. After this time, data loss will occur.
     queue_size:
       type: int
       default: 1000
