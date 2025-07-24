@@ -6,6 +6,7 @@ from typing import Any, Optional, Dict, List, Literal, Set
 import yaml
 
 from config_builder import Component, ConfigBuilder, Port
+from constants import FILE_STORAGE_DIRECTORY
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +142,7 @@ class ConfigManager:
         """Return the default WAL configuration for Prometheus remote write."""
         return {
             "wal": {
-                "directory": "/otelcol",
+                "directory": FILE_STORAGE_DIRECTORY,
             },
         }
 
