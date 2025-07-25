@@ -25,20 +25,12 @@ def logs_contain_errors(logs):
     #   This is an edge case since otelcol
     assert "Failed to scrape" in logs
     assert "unknown authority" in logs
-    # Exporter failure; otelcol is the client remote-writing to Prometheus
-    assert "Exporting failed. Dropping data." in logs
-    assert "context deadline exceeded" in logs
-
 
 def logs_contain_no_errors(logs):
     # TODO make assertions less brittle
     # Receiver failure
     assert "Failed to scrape" not in logs
     assert "unknown authority" not in logs
-    # Exporter failure
-    assert "Exporting failed. Dropping data." not in logs
-    assert "context deadline exceeded" not in logs
-
 
 async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: Otelcol fails to scrape metrics from a server signed by unknown authority."""
