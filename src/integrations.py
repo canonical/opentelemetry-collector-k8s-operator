@@ -201,7 +201,7 @@ def scrape_metrics(charm: CharmBase) -> List:
     charm.__setattr__("metrics_consumer", metrics_consumer)
     forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
     charm_root = charm.charm_dir.absolute()
-    
+
     shutil.copytree(
         charm_root.joinpath(*METRICS_RULES_SRC_PATH.split("/")),
         charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
