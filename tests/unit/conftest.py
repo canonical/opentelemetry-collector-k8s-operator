@@ -17,12 +17,11 @@ def ctx(tmp_path):
     yield Context(OpenTelemetryCollectorK8sCharm, charm_root=tmp_path)
 
 @pytest.fixture(scope="function")
-def otelcol_container():
-
+def otelcol_container(execs):
     return [Container(
     name="otelcol",
     can_connect=True,
-    execs={Exec(['update-ca-certificates', '--fresh'], return_code=0, stdout='Mocked output')},
+    execs=execs,
 )]
 
 @pytest.fixture
