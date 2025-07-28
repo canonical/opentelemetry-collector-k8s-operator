@@ -269,11 +269,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 period="30s",
                 # TODO If we render TLS config for the extensions::health_check, switch to https
                 http=HttpDict(url=f"http://localhost:{Port.health.value}/health"),
+                threshold=3,
             ),
             "valid-config": CheckDict(
                 override="replace",
                 level="alive",
                 exec=ExecDict(command=f"otelcol validate --config={CONFIG_PATH}"),
+                threshold=3,
             ),
         }
         return checks
