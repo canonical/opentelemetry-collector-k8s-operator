@@ -173,12 +173,12 @@ def inject_extra_labels_to_alert_rules(rules: dict, extra_alert_labels: dict) ->
                 rule.setdefault("labels", {}).update(extra_alert_labels)
     return result
 
-def metrics_rules(charm: CharmBase) -> Dict[str, Any]:
+def metrics_rules(metrics_consumer: MetricsEndpointConsumer, charm: CharmBase) -> Dict[str, Any]:
         """Return a list of metrics rules."""
         if not charm.config.get("forward_alert_rules"):
             return {}
 
-        alert_rules = charm.metrics_consumer.alerts
+        alert_rules = metrics_consumer.alerts
         extra_alert_labels = key_value_pair_string_to_dict(cast(str, charm.model.config.get("extra_alert_labels", "")))
 
         if extra_alert_labels:
@@ -201,14 +201,14 @@ def scrape_metrics(charm: CharmBase) -> List:
     charm.__setattr__("metrics_consumer", metrics_consumer)
     forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
     charm_root = charm.charm_dir.absolute()
-
+    
     shutil.copytree(
         charm_root.joinpath(*METRICS_RULES_SRC_PATH.split("/")),
         charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
         dirs_exist_ok=True,
     )
     _add_alerts(
-        alerts=metrics_rules(charm) if forward_alert_rules else {},
+        alerts=metrics_rules(metrics_consumer=metrics_consumer, charm=charm) if forward_alert_rules else {},
         dest_path=charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
     )
     return metrics_consumer.jobs()
