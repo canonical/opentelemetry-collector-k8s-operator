@@ -346,7 +346,7 @@ class ConfigManager:
                         # "insecure": not tls,
                         "insecure_skip_verify": self._insecure_skip_verify
                         },
-
+                    **self.sending_queue_config,
                 },
                 pipelines=["profiles"],
             )
