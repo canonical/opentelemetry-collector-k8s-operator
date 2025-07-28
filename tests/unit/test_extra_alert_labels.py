@@ -34,7 +34,7 @@ zinc_alerts = {
 
 def test_extra_alerts_config(ctx, otelcol_container):
     # GIVEN a new key-value pair of extra alerts labels, for instance:
-    # juju config agent extra_alerts_labels="environment: PRODUCTION, zone=Mars"
+    # juju config otelcol extra_alerts_labels="environment: PRODUCTION, zone=Mars"
     config1: ConfigDict = {"extra_alert_labels": "environment: PRODUCTION, zone=Mars",}
 
     # THEN The extra_alert_labels MUST be added to the alert rules.
@@ -59,7 +59,7 @@ def test_extra_alerts_config(ctx, otelcol_container):
 
     for group in alert_rules["groups"]:
         for rule in group["rules"]:
-            if "grafana_agent_k8s_alertgroup_alerts" in group["name"]:
+            if "opentelemetry_collector_k8s_alertgroup_alerts" in group["name"]:
                 assert rule["labels"]["environment"] == "PRODUCTION"
                 assert rule["labels"]["zone"] == "Mars"
                 assert rule["labels"]["juju_application"] == "zinc"
