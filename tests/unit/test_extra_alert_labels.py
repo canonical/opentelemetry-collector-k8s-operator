@@ -4,7 +4,6 @@
 import json
 from typing import Dict, Union
 
-#from helpers import k8s_resource_multipatch, patch_lightkube_client
 from ops.testing import Relation, State
 
 ConfigDict = Dict[str, Union[str, int, float, bool]]
