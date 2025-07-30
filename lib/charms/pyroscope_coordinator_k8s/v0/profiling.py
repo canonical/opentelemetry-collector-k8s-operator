@@ -35,7 +35,7 @@ class ProfilingEndpointProvider:
 
     def publish_endpoint(self, grpc_endpoint:str,
                          http_endpoint:str):
-        """Publish the profiling grpc endpoint to all relations."""
+        """Publish the HTTP and GRPC profiling ingestion endpoints to all relations."""
         for relation in self._relations:
             try:
                 relation.save(
