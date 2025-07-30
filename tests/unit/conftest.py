@@ -1,9 +1,10 @@
 from pathlib import Path
 from shutil import copytree
 import pytest
-from ops.testing import Context, Exec, Container
+from ops.testing import Container, Context, Exec
 
 from charm import OpenTelemetryCollectorK8sCharm
+
 
 @pytest.fixture
 def ctx(tmp_path):
@@ -16,13 +17,17 @@ def ctx(tmp_path):
         copytree(source_path, target_path, dirs_exist_ok=True)
     yield Context(OpenTelemetryCollectorK8sCharm, charm_root=tmp_path)
 
+
 @pytest.fixture(scope="function")
 def otelcol_container(execs):
-    return [Container(
-    name="otelcol",
-    can_connect=True,
-    execs=execs,
-)]
+    return [
+        Container(
+            name="otelcol",
+            can_connect=True,
+            execs=execs,
+        )
+    ]
+
 
 @pytest.fixture
 def execs():

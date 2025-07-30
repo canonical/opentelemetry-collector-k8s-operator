@@ -103,12 +103,22 @@ class ConfigManager:
     methods for common configuration scenarios.
     """
 
-    def __init__(self, receiver_tls: bool = False, insecure_skip_verify: bool = False, queue_size: int = 1000, max_elapsed_time_min: int = 5):
+    def __init__(
+        self,
+        global_scrape_interval: str,
+        global_scrape_timeout: str,
+        receiver_tls: bool = False,
+        insecure_skip_verify: bool = False,
+        queue_size: int = 1000,
+        max_elapsed_time_min: int = 5,
+    ):
         """Generate a default OpenTelemetry collector ConfigManager.
 
         The base configuration is our opinionated default.
 
         Args:
+            global_scrape_interval: set a global scrape interval for all prometheus receivers on build
+            global_scrape_timeout: set a global scrape timeout for all prometheus receivers on build
             receiver_tls: whether to inject TLS config in all receivers on build
             insecure_skip_verify: value for `insecure_skip_verify` in all exporters
             queue_size: size of the sending queue for exporters
@@ -118,6 +128,8 @@ class ConfigManager:
         self._queue_size = queue_size
         self._max_elapsed_time_min = max_elapsed_time_min
         self.config = ConfigBuilder(
+            global_scrape_interval=global_scrape_interval,
+            global_scrape_timeout=global_scrape_timeout,
             receiver_tls=receiver_tls,
             exporter_skip_verify=insecure_skip_verify,
         )
