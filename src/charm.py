@@ -5,6 +5,7 @@
 
 import logging
 import os
+import re
 from functools import partial
 from typing import Dict, Optional, cast
 
@@ -119,7 +120,24 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             private_key_path=ContainerPath(SERVER_CERT_PRIVATE_KEY_PATH, container=container),
         )
 
+        # Global scrape configs
+        global_configs = {
+            "global_scrape_interval": cast(str, self.config.get("global_scrape_interval")),
+            "global_scrape_timeout": cast(str, self.config.get("global_scrape_timeout")),
+        }
+        for name, global_config in global_configs.items():
+            pattern = r"^\d+[ywdhms]$"
+            match = re.fullmatch(pattern, global_config)
+            if not match:
+                self.unit.status = BlockedStatus(
+                    f"The {name} config requires format: '\\d+[ywdhms]'."
+                )
+                return
+
+        # Create the config manager
         config_manager = ConfigManager(
+            global_scrape_interval=global_configs["global_scrape_interval"],
+            global_scrape_timeout=global_configs["global_scrape_timeout"],
             receiver_tls=is_tls_ready(container),
             insecure_skip_verify=cast(bool, self.config.get("tls_insecure_skip_verify")),
             queue_size=cast(int, self.config.get("queue_size")),
