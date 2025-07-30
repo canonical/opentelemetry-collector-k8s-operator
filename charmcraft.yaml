@@ -77,6 +77,10 @@ provides:
   #   interface: prometheus_remote_write
 
 requires:
+  send-profiles:
+    interface: profiling
+    optional: true
+    description: Forward profiles to other charms.
   grafana-dashboards-consumer:
     interface: grafana_dashboard
     description: |

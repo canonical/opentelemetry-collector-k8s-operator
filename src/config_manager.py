@@ -325,6 +325,44 @@ class ConfigManager:
         # TODO Receive alert rules via remote write
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
 
+    def add_profiling(self, endpoints: List[str], tls:bool=False):
+        """Configure ingesting profiles and forwarding to a profiling backend (Pyroscope)."""
+        self.config.add_component(
+            Component.receiver,
+            "otlp",
+            {
+                "protocols": {
+                    "http": {"endpoint": f"0.0.0.0:{Port.otlp_http.value}"},
+                    "grpc": {"endpoint": f"0.0.0.0:{Port.otlp_grpc.value}"},
+                },
+            },
+            pipelines=["profiles"],
+        )
+
+        for idx, endpoint in enumerate(endpoints):
+            self.config.add_component(
+                Component.exporter,
+                # first component of this ID is the exporter type
+                f"otlp/profiling/{idx}",
+                {
+                    "endpoint": endpoint,
+                    # we likely need `insecure` as well as `insecure_skip_verify` because the endpoint
+                    # we're receiving from pyroscope is a grpc one and has no scheme prefix, and probably
+                    # the client defaults to https and fails to handshake unless we set `insecure=False`.
+                    # FIXME: anyway for now pyroscope does not support TLS ingestion,
+                    #  so we hardcode `insecure=True`.
+                    #  once TLS support is implemented, we can uncomment the line below.
+                    #  cfr: https://github.com/canonical/pyroscope-operators/pull/117
+                    "tls": {
+                        "insecure": True,
+                        # "insecure": not tls,
+                        "insecure_skip_verify": self._insecure_skip_verify
+                        },
+                    **self.sending_queue_config,
+                },
+                pipelines=["profiles"],
+            )
+
     def add_traces_ingestion(
         self,
         requested_tracing_protocols: Set[Literal["zipkin", "jaeger_grpc", "jaeger_thrift_http"]],
