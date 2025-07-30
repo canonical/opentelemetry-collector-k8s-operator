@@ -6,6 +6,7 @@
 import logging
 import os
 from typing import Dict, cast, Optional, List
+import re
 from functools import partial
 
 from charmlibs.pathops import ContainerPath
@@ -120,7 +121,24 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             private_key_path=ContainerPath(SERVER_CERT_PRIVATE_KEY_PATH, container=container),
         )
 
+        # Global scrape configs
+        global_configs = {
+            "global_scrape_interval": cast(str, self.config.get("global_scrape_interval")),
+            "global_scrape_timeout": cast(str, self.config.get("global_scrape_timeout")),
+        }
+        for name, global_config in global_configs.items():
+            pattern = r"^\d+[ywdhms]$"
+            match = re.fullmatch(pattern, global_config)
+            if not match:
+                self.unit.status = BlockedStatus(
+                    f"The {name} config requires format: '\\d+[ywdhms]'."
+                )
+                return
+
+        # Create the config manager
         config_manager = ConfigManager(
+            global_scrape_interval=global_configs["global_scrape_interval"],
+            global_scrape_timeout=global_configs["global_scrape_timeout"],
             receiver_tls=is_tls_ready(container),
             insecure_skip_verify=cast(bool, self.config.get("tls_insecure_skip_verify")),
             queue_size=cast(int, self.config.get("queue_size")),
@@ -289,11 +307,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 period="30s",
                 # TODO If we render TLS config for the extensions::health_check, switch to https
                 http=HttpDict(url=f"http://localhost:{Port.health.value}/health"),
+                threshold=3,
             ),
             "valid-config": CheckDict(
                 override="replace",
                 level="alive",
                 exec=ExecDict(command=" ".join(filter(None,("otelcol", "validate", *otelcol_args)))),
+                threshold=3,
             ),
         }
         return checks
