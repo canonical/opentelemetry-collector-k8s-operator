@@ -176,10 +176,16 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         remote_write_endpoints = integrations.send_remote_write(self)
         config_manager.add_remote_write(remote_write_endpoints)
 
-        # Profile forwarding setup
-        profiling_endpoints = integrations.send_profiles(self)
-        if profiling_endpoints:
-            config_manager.add_profiling(profiling_endpoints, tls=is_tls_ready(container))
+        # Profiling setup
+        if self._incoming_profiles:
+            config_manager.add_profile_ingestion()
+            integrations.receive_profiles(self, tls=is_tls_ready(container))
+        if profiling_endpoints := integrations.send_profiles(self):
+            config_manager.add_profile_forwarding(
+                profiling_endpoints,
+                tls=is_tls_ready(container)
+            )
+        if self._incoming_profiles or integrations.send_profiles(self):
             feature_gates = "service.profilesSupport"
 
         # Tracing setup
@@ -325,6 +331,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     @property
     def _incoming_traces(self) -> bool:
         return any(self.model.relations.get("receive-traces", []))
+
+    @property
+    def _incoming_profiles(self) -> bool:
+        return any(self.model.relations.get("receive-profiles", []))
 
     @property
     def _has_server_cert_relation(self) -> bool:

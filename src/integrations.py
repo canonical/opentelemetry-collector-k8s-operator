@@ -52,7 +52,10 @@ from constants import (
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
 )
-from charms.pyroscope_coordinator_k8s.v0.profiling import ProfilingEndpointRequirer
+from charms.pyroscope_coordinator_k8s.v0.profiling import (
+    ProfilingEndpointRequirer,
+    ProfilingEndpointProvider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +263,22 @@ def _get_tracing_receiver_url(protocol: ReceiverProtocol, tls_enabled: bool) -> 
         return f"{socket.getfqdn()}:{Port.otlp_grpc.value}"
     return f"{scheme}://{socket.getfqdn()}:{Port.otlp_http.value}"
 
+def receive_profiles(charm: CharmBase, tls:bool) -> None:
+    """Integrate with other charms over the receive-profiles relation endpoint."""
+    if not charm.unit.is_leader():
+        # profile ingestion goes per app
+        return
+    fqdn = socket.getfqdn()
+    http_endpoint = f"http{'s' if tls else ''}://{fqdn}:{Port.otlp_http.value}"
+    grpc_endpoint = f"{fqdn}:{Port.otlp_grpc.value}"
+    # this charm lib exposes a holistic API, so we don't need to bind the instance
+    ProfilingEndpointProvider(
+        charm.model.relations['receive-profiles'],
+        app=charm.app
+        ).publish_endpoint(
+        grpc_endpoint=grpc_endpoint,
+        http_endpoint=http_endpoint
+    )
 
 def send_profiles(charm: CharmBase) -> List[str]:
     """Integrate with other charms via the send-profiles relation endpoint.

@@ -325,8 +325,8 @@ class ConfigManager:
         # TODO Receive alert rules via remote write
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
 
-    def add_profiling(self, endpoints: List[str], tls:bool=False):
-        """Configure ingesting profiles and forwarding to a profiling backend (Pyroscope)."""
+    def add_profile_ingestion(self):
+        """Configure ingesting profiles."""
         self.config.add_component(
             Component.receiver,
             "otlp",
@@ -339,6 +339,8 @@ class ConfigManager:
             pipelines=["profiles"],
         )
 
+    def add_profile_forwarding(self, endpoints: List[str], tls:bool=False):
+        """Configure forwarding profiles to a profiling backend (Pyroscope)."""
         for idx, endpoint in enumerate(endpoints):
             self.config.add_component(
                 Component.exporter,
