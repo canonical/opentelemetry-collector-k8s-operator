@@ -57,6 +57,8 @@ resources:
   opentelemetry-collector-image:
     type: oci-image
     description: OCI image for opentelemetry-collector
+    # WARNING: Do not bump to >= 0.131.0 since it removes the loki exporter
+    # https://github.com/canonical/opentelemetry-collector-k8s-operator/issues/12
     upstream-source: ubuntu/opentelemetry-collector:0.130-24.04
 
 provides:
