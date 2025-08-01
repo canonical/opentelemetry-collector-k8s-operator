@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from shutil import copytree
 import pytest
 from ops.testing import Container, Context, Exec
@@ -8,6 +8,7 @@ from ops import ActiveStatus
 from charm import OpenTelemetryCollectorK8sCharm
 
 CHARM_ROOT = Path(__file__).parent.parent.parent
+
 
 @pytest.fixture
 def ctx(tmp_path):
@@ -31,13 +32,18 @@ def otelcol_container(execs):
         )
     ]
 
+
 @pytest.fixture(autouse=True)
 def k8s_resource_multipatch():
     with patch.multiple(
         "charms.observability_libs.v0.kubernetes_compute_resources_patch.KubernetesComputeResourcesPatch",
-        get_status=lambda x: ActiveStatus()
+        _namespace="test-namespace",
+        _patch=lambda *_a, **_kw: True,
+        is_ready=lambda *_a, **_kw: True,
+        get_status=lambda _: ActiveStatus(),
     ):
-
+        with patch("lightkube.core.client.GenericSyncClient", new=MagicMock()):
+            yield
 
 
 @pytest.fixture
