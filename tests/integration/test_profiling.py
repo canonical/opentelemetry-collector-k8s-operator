@@ -10,6 +10,7 @@ import pytest
 import jubilant
 
 
+@pytest.mark.skip("currently skipping waiting for a PR to merge... https://github.com/canonical/pyroscope-operators/pull/224")
 async def test_smoke(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: profile ingestion and forwarding."""
     minio_user = "accesskey"
