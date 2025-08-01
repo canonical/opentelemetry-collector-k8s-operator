@@ -1,7 +1,9 @@
 from pathlib import Path
+from unittest.mock import patch
 from shutil import copytree
 import pytest
 from ops.testing import Container, Context, Exec
+from ops import ActiveStatus
 
 from charm import OpenTelemetryCollectorK8sCharm
 
@@ -28,6 +30,14 @@ def otelcol_container(execs):
             execs=execs,
         )
     ]
+
+@pytest.fixture(autouse=True)
+def k8s_resource_multipatch():
+    with patch.multiple(
+        "charms.observability_libs.v0.kubernetes_compute_resources_patch.KubernetesComputeResourcesPatch",
+        get_status=lambda x: ActiveStatus()
+    ):
+
 
 
 @pytest.fixture
