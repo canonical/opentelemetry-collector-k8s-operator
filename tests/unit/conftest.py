@@ -5,6 +5,7 @@ from ops.testing import Container, Context, Exec
 
 from charm import OpenTelemetryCollectorK8sCharm
 
+CHARM_ROOT = Path(__file__).parent.parent.parent
 
 @pytest.fixture
 def ctx(tmp_path):
@@ -12,7 +13,7 @@ def ctx(tmp_path):
     # Create a virtual charm_root so Scenario respects the `src_dirs`
     # Related to https://github.com/canonical/operator/issues/1673
     for src_dir in src_dirs:
-        source_path = Path("src") / src_dir
+        source_path = CHARM_ROOT / "src" / src_dir
         target_path = tmp_path / "src" / src_dir
         copytree(source_path, target_path, dirs_exist_ok=True)
     yield Context(OpenTelemetryCollectorK8sCharm, charm_root=tmp_path)
