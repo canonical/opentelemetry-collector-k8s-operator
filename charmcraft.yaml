@@ -75,6 +75,11 @@ provides:
   # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
   # receive-remote-write:
   #   interface: prometheus_remote_write
+  receive-profiles:
+    interface: profiling
+    optional: true
+    description: Receive profiles from other charms.
+
 
 requires:
   send-profiles:
