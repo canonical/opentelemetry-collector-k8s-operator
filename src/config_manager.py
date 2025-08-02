@@ -341,6 +341,10 @@ class ConfigManager:
 
     def add_profile_forwarding(self, endpoints: List[str], tls:bool=False):
         """Configure forwarding profiles to a profiling backend (Pyroscope)."""
+        # if we don't do this, and there is no relation on receive-profiles, otelcol will complain
+        # that there are no receivers configured for this exporter.
+        self.add_profile_ingestion()
+
         for idx, endpoint in enumerate(endpoints):
             self.config.add_component(
                 Component.exporter,
