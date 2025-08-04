@@ -34,6 +34,7 @@ async def _retry_prom_jobs_api(endpoint: str):
     assert any("avalanche" in item for item in job_names)
     assert any("otelcol" in item for item in job_names)
 
+
 @retry(stop=stop_after_attempt(7), wait=wait_fixed(5))
 async def _retry_avalanche_metrics_arrive_proom(prom_ip: str):
     params = {"query": 'count({__name__=~"avalanche_metric_.+"})'}
@@ -62,6 +63,7 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
             scale: 1
             resources:
               opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}
+            trust: true
           prometheus:
             charm: prometheus-k8s
             channel: 2/edge
