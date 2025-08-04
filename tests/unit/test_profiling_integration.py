@@ -88,6 +88,7 @@ def test_send_profiles_integration(ctx, execs, insecure_skip_verify):
     # AND the profiling pipeline contains an exporter to the expected url
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     assert cfg['service']['pipelines']['profiles']['exporters'][0] == 'otlp/profiling/0'
+    assert cfg['service']['pipelines']['profiles']['receivers'][0] == "otlp"
     assert cfg['exporters']['otlp/profiling/0']['endpoint'] == pyro_url
     assert cfg["exporters"]["otlp/profiling/0"]["tls"] == {"insecure": True, "insecure_skip_verify": insecure_skip_verify}
 
