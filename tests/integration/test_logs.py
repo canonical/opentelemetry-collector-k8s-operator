@@ -35,6 +35,7 @@ async def test_logs_pipeline(juju: jubilant.Juju, charm: str, charm_resources: D
             scale: 1
             resources:
               opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}
+            trust: true
           loki:
             charm: loki-k8s
             channel: 2/edge

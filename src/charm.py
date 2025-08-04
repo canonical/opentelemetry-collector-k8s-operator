@@ -11,9 +11,14 @@ from functools import partial
 
 from charmlibs.pathops import ContainerPath
 from cosl import JujuTopology, MandatoryRelationPairs
-from ops import BlockedStatus, CharmBase, Container, main
+from lightkube.models.core_v1 import ResourceRequirements
+from ops import BlockedStatus, CharmBase, Container, StatusBase, main
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import CheckDict, ExecDict, HttpDict, Layer
+from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
+    KubernetesComputeResourcesPatch,
+    adjust_resource_requirements,
+)
 
 import integrations
 from config_builder import Port
@@ -106,6 +111,16 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             initialization and the event emission.
         """
         container = self.unit.get_container(self._container_name)
+        self.resources_patch = KubernetesComputeResourcesPatch(
+            self,
+            container_name=self._container_name,
+            resource_reqs_func=self._resource_reqs_from_config,
+        )
+        resources_patch_status: StatusBase = self.resources_patch.get_status()
+        if not isinstance(resources_patch_status, ActiveStatus):
+            self.unit.status = resources_patch_status
+            return
+
         insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
         integrations.cleanup()
 
@@ -339,6 +354,14 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     @property
     def _has_server_cert_relation(self) -> bool:
         return any(self.model.relations.get("receive-server-cert", []))
+
+    def _resource_reqs_from_config(self) -> ResourceRequirements:
+        limits = {
+            "cpu": self.model.config.get("cpu"),
+            "memory": self.model.config.get("memory"),
+        }
+        requests = {"cpu": "0.25", "memory": "200Mi"}
+        return adjust_resource_requirements(limits, requests, adhere_to_requests=True)
 
 
 if __name__ == "__main__":

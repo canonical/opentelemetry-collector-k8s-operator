@@ -26,11 +26,13 @@ def logs_contain_errors(logs):
     assert "Failed to scrape" in logs
     assert "unknown authority" in logs
 
+
 def logs_contain_no_errors(logs):
     # TODO make assertions less brittle
     # Receiver failure
     assert "Failed to scrape" not in logs
     assert "unknown authority" not in logs
+
 
 async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: Otelcol fails to scrape metrics from a server signed by unknown authority."""
@@ -53,6 +55,7 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
             constraints: arch=amd64
             resources:
                 opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}
+            trust: true
           prom:
             charm: prometheus-k8s
             channel: 2/edge
