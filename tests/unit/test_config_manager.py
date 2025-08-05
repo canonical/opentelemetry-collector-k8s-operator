@@ -125,9 +125,10 @@ def test_add_remote_write():
     # WHEN a remote write exporter is added to the config
     expected_remote_write_cfg = {
         "endpoint": "http://192.168.1.244/cos-prometheus-0/api/v1/write",
-        "wal": {
-            "directory": "/otelcol",
-        },
+        # FIXME https://github.com/canonical/opentelemetry-collector-k8s-operator/issues/105
+        # "wal": {
+        #     "directory": "/otelcol",
+        # },
         "tls": {
             "insecure_skip_verify": True,
         }
