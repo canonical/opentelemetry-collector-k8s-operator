@@ -152,12 +152,17 @@ class ConfigManager:
 
     @property
     def prometheus_remotewrite_wal_config(self) -> Dict[str, Any]:
-        """Return the default WAL configuration for Prometheus remote write."""
-        return {
-            "wal": {
-                "directory": FILE_STORAGE_DIRECTORY,
-            },
-        }
+        """Return the default WAL configuration for Prometheus remote write.
+
+        FIXME The WAL is broken upstream, so we remove it until this is fixed:
+        https://github.com/canonical/opentelemetry-collector-k8s-operator/issues/105
+        """
+        return {}
+        # return {
+        #     "wal": {
+        #         "directory": FILE_STORAGE_DIRECTORY,
+        #     },
+        # }
 
     def add_log_ingestion(self) -> None:
         """Configure the collector to receive logs via Loki protocol.
@@ -339,7 +344,7 @@ class ConfigManager:
             pipelines=["profiles"],
         )
 
-    def add_profile_forwarding(self, endpoints: List[str], tls:bool=False):
+    def add_profile_forwarding(self, endpoints: List[str], tls: bool = False):
         """Configure forwarding profiles to a profiling backend (Pyroscope)."""
         # if we don't do this, and there is no relation on receive-profiles, otelcol will complain
         # that there are no receivers configured for this exporter.
@@ -362,8 +367,8 @@ class ConfigManager:
                     "tls": {
                         "insecure": True,
                         # "insecure": not tls,
-                        "insecure_skip_verify": self._insecure_skip_verify
-                        },
+                        "insecure_skip_verify": self._insecure_skip_verify,
+                    },
                     **self.sending_queue_config,
                 },
                 pipelines=["profiles"],
