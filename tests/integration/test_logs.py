@@ -4,12 +4,9 @@
 """Feature: Ingested logs are forwarded."""
 
 import pathlib
-import tempfile
-import textwrap
 from typing import Dict
 
 import jubilant
-import sh
 
 # pyright: reportAttributeAccessIssue = false
 
