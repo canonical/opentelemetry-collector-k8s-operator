@@ -6,7 +6,7 @@ version = "0.0"
 requires-python = "~=3.12.0"
 
 dependencies = [
-  "ops[tracing]>=3.1.0",
+  "ops[tracing]>=3.1",
   "pyyaml",
   "urllib3",
   "jsonschema",
