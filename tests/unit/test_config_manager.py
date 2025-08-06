@@ -74,18 +74,14 @@ def test_add_log_forwarding():
         "retry_on_failure": {
             "max_elapsed_time": "5m",
         },
-        "sending_queue": {
-            "enabled": True,
-            "queue_size": 1000,
-            "storage": "file_storage"
-        },
+        "sending_queue": {"enabled": True, "queue_size": 1000, "storage": "file_storage"},
         "tls": {
             "insecure_skip_verify": False,
-        }
+        },
     }
     config_manager.add_log_forwarding(
         endpoints=[{"url": "http://192.168.1.244/cos-loki-0/loki/api/v1/push"}],
-        insecure_skip_verify=False
+        insecure_skip_verify=False,
     )
     # THEN it exists in the loki exporter config
     config = dict(sorted(config_manager.config._config["exporters"]["loki/0"].items()))
@@ -103,11 +99,7 @@ def test_add_traces_forwarding():
         "retry_on_failure": {
             "max_elapsed_time": "5m",
         },
-        "sending_queue": {
-            "enabled": True,
-            "queue_size": 1000,
-            "storage": "file_storage"
-        },
+        "sending_queue": {"enabled": True, "queue_size": 1000, "storage": "file_storage"},
     }
     config_manager.add_traces_forwarding(
         endpoint="http://192.168.1.244:4318",
@@ -125,17 +117,16 @@ def test_add_remote_write():
     # WHEN a remote write exporter is added to the config
     expected_remote_write_cfg = {
         "endpoint": "http://192.168.1.244/cos-prometheus-0/api/v1/write",
-        "wal": {
-            "directory": "/otelcol",
-        },
         "tls": {
             "insecure_skip_verify": True,
-        }
+        },
     }
     config_manager.add_remote_write(
         endpoints=[{"url": "http://192.168.1.244/cos-prometheus-0/api/v1/write"}],
     )
     # THEN it exists in the remote write exporter config
-    config = dict(sorted(config_manager.config._config["exporters"]["prometheusremotewrite/0"].items()))
+    config = dict(
+        sorted(config_manager.config._config["exporters"]["prometheusremotewrite/0"].items())
+    )
     expected_config = dict(sorted(expected_remote_write_cfg.items()))
     assert config == expected_config
