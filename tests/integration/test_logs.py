@@ -57,4 +57,6 @@ async def test_logs_pipeline_pebble(
         command="/usr/bin/logcli labels",
         container="loki",
     )
-    assert "juju_application" in labels
+    # FIXME: The Pebble log forwarding library sets different label names
+    # Once they match, change this to `juju_application`
+    assert "application" in labels
