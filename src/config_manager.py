@@ -154,15 +154,10 @@ class ConfigManager:
     def prometheus_remotewrite_wal_config(self) -> Dict[str, Any]:
         """Return the default WAL configuration for Prometheus remote write.
 
-        FIXME The WAL is broken upstream, so we remove it until this is fixed:
+        FIXME The WAL config is broken upstream, so we remove it until this is fixed:
         https://github.com/canonical/opentelemetry-collector-k8s-operator/issues/105
         """
         return {}
-        # return {
-        #     "wal": {
-        #         "directory": FILE_STORAGE_DIRECTORY,
-        #     },
-        # }
 
     def add_log_ingestion(self) -> None:
         """Configure the collector to receive logs via Loki protocol.
