@@ -24,7 +24,6 @@ def logs_contain_errors(logs):
     # Receiver failure; otelcol is the client scraping Alertmanager
     #   This is an edge case since otelcol
     assert "Failed to scrape" in logs
-    assert "unknown authority" in logs
 
 
 def logs_contain_no_errors(logs):

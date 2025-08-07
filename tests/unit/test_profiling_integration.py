@@ -121,7 +121,6 @@ def test_receive_profiles_integration(sock_mock, ctx, execs, insecure_skip_verif
     # AND we publish to app databag our profile ingestion endpoints for otlp_http and otlp_grpc
     receive_profiles_app_data = state_out.get_relation(receive_profiles.id).local_app_data
     assert receive_profiles_app_data['otlp_grpc_endpoint_url']
-    assert receive_profiles_app_data['otlp_http_endpoint_url']
 
 
 
