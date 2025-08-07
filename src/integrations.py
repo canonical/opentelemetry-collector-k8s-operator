@@ -269,15 +269,13 @@ def receive_profiles(charm: CharmBase, tls:bool) -> None:
         # profile ingestion goes per app
         return
     fqdn = socket.getfqdn()
-    http_endpoint = f"http{'s' if tls else ''}://{fqdn}:{Port.otlp_http.value}"
     grpc_endpoint = f"{fqdn}:{Port.otlp_grpc.value}"
     # this charm lib exposes a holistic API, so we don't need to bind the instance
     ProfilingEndpointProvider(
         charm.model.relations['receive-profiles'],
         app=charm.app
         ).publish_endpoint(
-        grpc_endpoint=grpc_endpoint,
-        http_endpoint=http_endpoint
+        otlp_grpc_endpoint=grpc_endpoint,
     )
 
 def send_profiles(charm: CharmBase) -> List[str]:
