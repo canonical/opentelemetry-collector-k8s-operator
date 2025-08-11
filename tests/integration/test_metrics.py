@@ -21,7 +21,7 @@ TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
 @retry(stop=stop_after_attempt(7), wait=wait_fixed(5))
-def _retry_prom_alerts_api(endpoint: str):
+async def _retry_prom_alerts_api(endpoint: str):
     response = request("GET", endpoint).text
     data = json.loads(response)["data"]
     charm_names = [alert["labels"]["juju_charm"] for alert in data["alerts"]]
