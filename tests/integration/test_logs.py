@@ -14,9 +14,7 @@ import jubilant
 TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
-async def test_logs_pipeline_promtail(
-    juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]
-):
+def test_logs_pipeline_promtail(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: log forwarding via the LogProxyConsumer."""
     # GIVEN a model with flog, otel-collector, and loki
     juju.deploy(charm, "otelcol", resources=charm_resources, trust=True)
@@ -37,9 +35,7 @@ async def test_logs_pipeline_promtail(
     assert "juju_application" in labels
 
 
-async def test_logs_pipeline_pebble(
-    juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]
-):
+def test_logs_pipeline_pebble(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: log forwarding via Pebble log forwarding."""
     # GIVEN a model with flog, blackbox-exporter, otel-collector, and loki charms
     juju.deploy(charm, "otelcol-pebble", resources=charm_resources, trust=True)

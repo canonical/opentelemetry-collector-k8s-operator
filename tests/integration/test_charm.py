@@ -26,7 +26,7 @@ def _get_pebble_checks(juju: jubilant.Juju, app_name: str):
     )
 
 
-async def test_pebble_checks(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+def test_pebble_checks(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Deploy the charm."""
     app_name = "otel-collector-k8s"
     juju.deploy(charm, "otelcol", resources=charm_resources, trust=True)
