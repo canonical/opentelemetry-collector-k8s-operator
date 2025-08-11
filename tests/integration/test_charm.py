@@ -8,28 +8,19 @@ Scenario: Standalone deployment
     Then all pebble checks pass
 """
 
-import sh
 from typing import Dict
 
 import jubilant
 
-# pyright: reportAttributeAccessIssue = false
 
-
-def _get_pebble_checks(juju: jubilant.Juju, app_name: str):
+def _get_pebble_checks(juju: jubilant.Juju, unit_name: str):
     """Get the pebble checks results."""
-    return sh.juju.ssh(
-        f"--model={juju.model}",
-        "--container=otelcol",
-        f"{app_name}/leader",
-        "pebble checks",
-    )
+    return juju.ssh(unit_name, command="pebble checks", container="otelcol")
 
 
 def test_pebble_checks(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Deploy the charm."""
-    app_name = "otel-collector-k8s"
     juju.deploy(charm, "otelcol", resources=charm_resources, trust=True)
     juju.wait(jubilant.all_active)
-    pebble_checks = _get_pebble_checks(juju=juju, app_name=app_name)
+    pebble_checks = _get_pebble_checks(juju=juju, unit_name="otelcol/leader")
     assert "down" not in pebble_checks
