@@ -30,12 +30,12 @@ dev = [
   # Integration
   "juju<=3.3.0,>=3.0",
   "websockets<14.0",
-  "asyncio",
   "minio",
   "ops[testing]",
   "sh",
   "jubilant",
   "tenacity",
+  "pytest-asyncio",
 ]
 
 # Testing tools configuration
