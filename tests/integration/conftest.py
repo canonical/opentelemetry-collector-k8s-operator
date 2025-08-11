@@ -6,13 +6,13 @@
 import functools
 import logging
 import os
+import sh
 from collections import defaultdict
 from datetime import datetime
 from typing import Dict
 
 import pytest
 import yaml
-from pytest_operator.plugin import OpsTest
 import jubilant
 
 logger = logging.getLogger(__name__)
@@ -42,12 +42,12 @@ def timed_memoizer(func):
 
 @pytest.fixture(scope="module")
 @timed_memoizer
-async def charm(ops_test: OpsTest) -> str:
+async def charm() -> str:
     """Charm used for integration testing."""
     if charm_file := os.environ.get("CHARM_PATH"):
         return str(charm_file)
 
-    charm = await ops_test.build_charm(".")
+    charm = sh.charmcraft.pack()  # type: ignore
     assert charm
     return str(charm)
 
