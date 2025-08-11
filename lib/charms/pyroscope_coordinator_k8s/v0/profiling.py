@@ -15,7 +15,7 @@ LIBAPI = 0
 
 # Increment this PATCH version before using `charmcraft publish-lib` or reset
 # to 0 if you are raising the major API version
-LIBPATCH = 1
+LIBPATCH = 3
 
 DEFAULT_ENDPOINT_NAME = "profiling"
 
@@ -24,7 +24,6 @@ logger = logging.getLogger()
 class ProfilingAppDatabagModel(pydantic.BaseModel):
     """Application databag model for the profiling interface."""
     otlp_grpc_endpoint_url: str
-    otlp_http_endpoint_url: str
 
 
 class ProfilingEndpointProvider:
@@ -33,15 +32,15 @@ class ProfilingEndpointProvider:
         self._relations = relations
         self._app = app
 
-    def publish_endpoint(self, grpc_endpoint:str,
-                         http_endpoint:str):
-        """Publish the HTTP and GRPC profiling ingestion endpoints to all relations."""
+    def publish_endpoint(self,
+                         otlp_grpc_endpoint:str,
+                         ):
+        """Publish profiling ingestion endpoints to all relations."""
         for relation in self._relations:
             try:
                 relation.save(
                     ProfilingAppDatabagModel(
-                        otlp_grpc_endpoint_url=grpc_endpoint,
-                        otlp_http_endpoint_url=http_endpoint,
+                        otlp_grpc_endpoint_url=otlp_grpc_endpoint,
                     ),
                     self._app
                 )
@@ -53,7 +52,6 @@ class ProfilingEndpointProvider:
 @dataclasses.dataclass
 class _Endpoint:
     otlp_grpc: str
-    otlp_http: str
 
 
 class ProfilingEndpointRequirer:
@@ -68,7 +66,6 @@ class ProfilingEndpointRequirer:
             try:
                 data = relation.load(ProfilingAppDatabagModel, relation.app)
                 otlp_grpc_endpoint_url = data.otlp_grpc_endpoint_url
-                otlp_http_endpoint_url = data.otlp_http_endpoint_url
             except ops.ModelError:
                 logger.debug("failed to validate app data; is the relation still being created?")
                 continue
@@ -76,7 +73,6 @@ class ProfilingEndpointRequirer:
                 logger.debug("failed to validate app data; is the relation still settling?")
                 continue
             out.append(_Endpoint(
-                otlp_http=otlp_http_endpoint_url,
                 otlp_grpc=otlp_grpc_endpoint_url,
             ))
         return out
