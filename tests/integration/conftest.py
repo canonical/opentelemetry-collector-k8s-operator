@@ -3,12 +3,10 @@
 # See LICENSE file for licensing details.
 """Conftest file for integration tests."""
 
-import functools
 import logging
 import os
 import sh
 from collections import defaultdict
-from datetime import datetime
 from typing import Dict
 
 import pytest
@@ -20,29 +18,8 @@ logger = logging.getLogger(__name__)
 store = defaultdict(str)
 
 
-def timed_memoizer(func):
-    """Cache the result of a function."""
-
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
-        fname = func.__qualname__
-        logger.info("Started: %s" % fname)
-        start_time = datetime.now()
-        if fname in store.keys():
-            ret = store[fname]
-        else:
-            logger.info("Return for {} not cached".format(fname))
-            ret = await func(*args, **kwargs)
-            store[fname] = ret
-        logger.info("Finished: {} in: {} seconds".format(fname, datetime.now() - start_time))
-        return ret
-
-    return wrapper
-
-
 @pytest.fixture(scope="module")
-@timed_memoizer
-async def charm() -> str:
+def charm() -> str:
     """Charm used for integration testing."""
     if charm_file := os.environ.get("CHARM_PATH"):
         return str(charm_file)
