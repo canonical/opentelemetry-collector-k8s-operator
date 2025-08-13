@@ -10,7 +10,6 @@ import pytest
 import jubilant
 
 
-@pytest.mark.skip("currently skipping waiting for a PR to merge... https://github.com/canonical/pyroscope-operators/pull/224")
 async def test_smoke(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: profile ingestion and forwarding."""
     minio_user = "accesskey"
@@ -64,8 +63,8 @@ async def test_smoke(juju: jubilant.Juju, charm: str, charm_resources: Dict[str,
 async def test_profile_pipeline(juju: jubilant.Juju):
     """Scenario: otelcol can ingest profiles and forward them to pyroscope."""
 
+
 # https://github.com/canonical/pyroscope-operators/issues/231
 @pytest.mark.skip("currently skipping because not implemented in pyroscope")
 async def test_profile_pipeline_with_tls(juju: jubilant.Juju):
     """Scenario: TLS is added to the tracing pipeline."""
-
