@@ -95,46 +95,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.unit.status = MaintenanceStatus("Waiting for otelcol to start")
             return
 
-        self._mesh = ServiceMeshConsumer(
-            self,
-            policies=[
-                Policy(
-                    relation="receive-loki-logs",
-                    endpoints=[
-                        Endpoint(
-                            ports=[Port.loki_http.value],
-                            methods=[Method.post],
-                            paths=["/loki/api/v1/push"],
-                        )
-                    ],
-                ),
-                Policy(
-                    relation="receive-traces",
-                    endpoints=[
-                        Endpoint(
-                            ports=[Port.otlp_http.value],
-                            methods=[Method.post],
-                            paths=["/v1/traces"],
-                        ),
-                        Endpoint(
-                            ports=[Port.zipkin.value],
-                            methods=[Method.post],
-                            paths=["/api/v2/spans"],
-                        ),
-                        Endpoint(
-                            ports=[Port.jaeger_thrift_http.value],
-                            methods=[Method.post],
-                            paths=["/api/traces"],
-                        ),
-                        Endpoint(
-                            ports=[Port.otlp_grpc.value, Port.jaeger_grpc.value],
-                            methods=[Method.post],
-                        ),
-                    ],
-                ),
-            ],
-        )
-
         self._reconcile()
 
     def _reconcile(self):
@@ -163,6 +123,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
         integrations.cleanup()
+
+        # Service mesh integration
+        integrations.setup_service_mesh(self)
 
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
