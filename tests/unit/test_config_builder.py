@@ -9,152 +9,100 @@ import pytest
 import yaml
 import copy
 
-from src.config import Config, PORTS
-
-
-def test_ports_are_unique():
-    """Make sure that all the defined ports are unique."""
-    ports_values = list(vars(PORTS).values())
-    assert len(ports_values) == len(set(ports_values))
+from config_builder import ConfigBuilder, Component
 
 
 @pytest.mark.parametrize("pipelines", ([], ["logs", "metrics", "traces"]))
-@pytest.mark.parametrize("pipeline_component", ("receiver", "exporter", "connector", "processor"))
-def test_add_pipeline_component(pipelines, pipeline_component):
+@pytest.mark.parametrize(
+    "component",
+    (Component.receiver, Component.exporter, Component.connector, Component.processor),
+)
+def test_add_pipeline_component(pipelines, component):
     """All pipeline components (receiver, exporter, connector, processor) behave the same.
 
     Pipeline names can follow the type[/name] format, valid for e.g. logs, metrics, traces, logs/2, ...
 
     https://opentelemetry.io/docs/collector/configuration/#basics
     """
-    method_name = f"add_{pipeline_component}"
-    category = f"{pipeline_component}s"
     # GIVEN an empty config
-    cfg = Config()
+    config = ConfigBuilder("", "")
     # WHEN adding a pipeline component with a nested config
     sample_config = {"a": {"b": "c"}}
-    callable_method = getattr(cfg, method_name)  # Dynamically get the add_* method from Config
-    callable_method("foo", sample_config, pipelines)  # Execute the add_* method
+    config.add_component(
+        component=component,
+        name="foo",
+        config=sample_config,
+        pipelines=pipelines,
+    )
     # THEN the nested config is added to the config
-    assert "foo" in cfg._config[category]
-    assert sample_config == cfg._config[category]["foo"]
+    assert "foo" in config._config[component.value]
+    assert sample_config == config._config[component.value]["foo"]
     # AND the pipeline is not added if none were specified
     if not pipelines:
-        assert not cfg._config["service"]["pipelines"]
+        assert not config._config["service"]["pipelines"]
     # AND the pipelines are added to the service::pipelines config if specified
     for pipeline in pipelines:
-        assert "foo" in cfg._config["service"]["pipelines"][pipeline][category]
+        assert "foo" in config._config["service"]["pipelines"][pipeline][component.value]
 
 
 @pytest.mark.parametrize("pipelines", ([], ["logs", "metrics", "traces"]))
-@pytest.mark.parametrize("pipeline_component", ("receiver", "exporter", "connector", "processor"))
-def test_add_to_pipeline(pipelines, pipeline_component):
+@pytest.mark.parametrize(
+    "component",
+    (Component.receiver, Component.exporter, Component.connector, Component.processor),
+)
+def test_add_to_pipeline(pipelines, component):
     """All pipeline components (receiver, exporter, connector, processor) behave the same.
 
     https://opentelemetry.io/docs/collector/configuration/#basics
     """
-    category = f"{pipeline_component}s"
     # GIVEN an empty config
-    cfg = Config()
+    config = ConfigBuilder("", "")
     # WHEN adding a pipeline component
-    cfg._add_to_pipeline("foo", category, pipelines)
+    config._add_to_pipeline("foo", component, pipelines)
     # THEN the pipeline component is added to the pipeline config
     if not pipelines:
-        assert not cfg._config["service"]["pipelines"]
+        assert not config._config["service"]["pipelines"]
     for pipeline in pipelines:
-        assert "foo" in cfg._config["service"]["pipelines"][pipeline][category]
+        assert "foo" in config._config["service"]["pipelines"][pipeline][component.value]
 
 
 def test_add_extension():
     # GIVEN an empty config
-    cfg = Config()
+    config = ConfigBuilder("", "")
     # WHEN adding a pipeline with a config
     sample_config = {"a": {"b": "c"}}
-    cfg.add_extension("foo", sample_config)
+    config.add_extension("foo", sample_config)
     # THEN the extension is added to the top-level extensions config
-    assert sample_config == cfg._config["extensions"]["foo"]
+    assert sample_config == config._config["extensions"]["foo"]
     # AND the extension is added to the service::extensions config
-    assert "foo" in cfg._config["service"]["extensions"]
+    assert "foo" in config._config["service"]["extensions"]
 
 
 def test_add_telemetry():
     # GIVEN an empty config
-    cfg = Config()
+    config = ConfigBuilder("", "")
     # WHEN adding a pipeline with a config
     sample_config = [{"a": {"b": "c"}}]
-    cfg.add_telemetry("logs", {"level": "INFO"})
-    cfg.add_telemetry("metrics", {"level": "normal"})
-    cfg.add_telemetry("metrics", {"some_config": sample_config})
+    config.add_telemetry("logs", {"level": "INFO"})
+    config.add_telemetry("metrics", {"level": "normal"})
+    config.add_telemetry("metrics", {"some_config": sample_config})
     # THEN the respective telemetry sections are added to the service::telemetry config
-    assert ["logs", "metrics"] == list(cfg._config["service"]["telemetry"].keys())
+    assert ["logs", "metrics"] == list(config._config["service"]["telemetry"].keys())
     # AND the telemetry is added to the service::telemetry config
-    assert cfg._config["service"]["telemetry"]["metrics"] == {"some_config": sample_config}
-    assert cfg._config["service"]["telemetry"]["logs"] == {"level": "INFO"}
-
-
-def test_add_prometheus_scrape():
-    # GIVEN an empty config
-    cfg = Config()
-    # WHEN attempting to add scrape jobs without incoming metrics
-    cfg.add_prometheus_scrape([{"foo": "bar"}], incoming_metrics=False)
-    # THEN the prometheus receiver config is not added (or updated if existing config)
-    with pytest.raises(KeyError):
-        cfg._config["receivers"]["prometheus"]
-
-    # AND WHEN a scrape job is added to the config
-    first_job = [
-        {
-            "metrics_path": "/metrics",
-            "static_configs": [{"targets": ["*:9001"]}],
-            "job_name": "first_job",
-            "scrape_interval": "15s",
-        }
-    ]
-    expected_prom_recv_cfg = {
-        "config": {
-            "scrape_configs": [
-                {
-                    "metrics_path": "/metrics",
-                    "static_configs": [{"targets": ["*:9001"]}],
-                    "job_name": "first_job",
-                    "scrape_interval": "15s",
-                    # Added dynamically by add_prometheus_scrape
-                    "tls_config": {"insecure_skip_verify": True},
-                },
-            ],
-        }
-    }
-    cfg.add_prometheus_scrape(first_job, True, insecure_skip_verify=True)
-    # THEN it exists in the prometheus receiver config
-    # AND insecure_skip_verify is injected into the config
-    assert cfg._config["receivers"]["prometheus"] == expected_prom_recv_cfg
-
-    # AND WHEN more scrape jobs are added to the config
-    more_jobs = [
-        {
-            "metrics_path": "/metrics",
-            "job_name": "second_job",
-        },
-        {
-            "metrics_path": "/metrics",
-            "job_name": "third_job",
-        },
-    ]
-    cfg.add_prometheus_scrape(more_jobs, True)
-    # THEN the original scrape job wasn't overwritten and the newly added scrape jobs were added
-    job_names = [
-        job["job_name"]
-        for job in cfg._config["receivers"]["prometheus"]["config"]["scrape_configs"]
-    ]
-    assert job_names == ["first_job", "second_job", "third_job"]
+    assert config._config["service"]["telemetry"]["metrics"] == {"some_config": sample_config}
+    assert config._config["service"]["telemetry"]["logs"] == {"level": "INFO"}
 
 
 def test_rendered_default_is_valid():
     # GIVEN a default config
     # WHEN the config is rendered
-    cfg = yaml.safe_load(Config.default_config().yaml)
+    config = ConfigBuilder("", "")
+    config.add_default_config()
+    config_yaml = yaml.safe_load(config.build())
     # THEN a debug exporter is added for each pipeline missing one
-    pipelines = [cfg["service"]["pipelines"][p] for p in cfg["service"]["pipelines"]]
+    pipelines = [
+        config_yaml["service"]["pipelines"][p] for p in config_yaml["service"]["pipelines"]
+    ]
     pairs = [(len(p["receivers"]) > 0, len(p["exporters"]) > 0) for p in pipelines]
     # AND each pipeline has at least one receiver-exporter pair
     assert all(all(condition for condition in pair) for pair in pairs)
@@ -162,17 +110,19 @@ def test_rendered_default_is_valid():
 
 def test_receivers_tls_empty_config():
     # GIVEN an "empty" config
-    config = Config()
+    config = ConfigBuilder("", "")
     # WHEN tls is enabled
-    config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
+    config._add_tls_to_all_receivers("/some/cert.crt", "/some/private.key")
     # THEN it has no effect on the rendered config
-    assert config.yaml == Config().yaml
+    assert config.build() == ConfigBuilder("", "").build()
 
 
 def test_receivers_tls_no_protocols():
     # GIVEN a config without any protocols
-    config = Config()
-    config.add_receiver("prometheus", {"config": {"foo": "bar"}}, pipelines=["metrics"])
+    config = ConfigBuilder("", "")
+    config.add_component(
+        Component.receiver, "prometheus", {"config": {"foo": "bar"}}, pipelines=["metrics"]
+    )
 
     # TODO When we impl fluent config (with immutable builder), then we won't need to copy anymore, because we would:
     #  yaml1 = config.enable_receiver_tls("foo", "bar").yaml
@@ -180,16 +130,17 @@ def test_receivers_tls_no_protocols():
     config_copy = copy.deepcopy(config)
 
     # WHEN tls is enabled
-    config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
+    config._add_tls_to_all_receivers("/some/cert.crt", "/some/private.key")
 
     # THEN it has no effect on the rendered config
-    assert config.yaml == config_copy.yaml
+    assert config.build() == config_copy.build()
 
 
 def test_receivers_tls_unknown_protocols():
     # GIVEN a config with an unknown protocols
-    config = Config()
-    config.add_receiver(
+    config = ConfigBuilder("", "")
+    config.add_component(
+        Component.receiver,
         "some_receiver",
         {"protocols": {"unknown_protocol_name": {"endpoint": "0.0.0.0:1234"}}},
         pipelines=["metrics"],
@@ -197,36 +148,41 @@ def test_receivers_tls_unknown_protocols():
     config_copy = copy.deepcopy(config)
 
     # WHEN tls is enabled
-    config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
+    config._add_tls_to_all_receivers("/some/cert.crt", "/some/private.key")
 
     # THEN it has no effect on the rendered config
-    assert config.yaml == config_copy.yaml
+    assert config.build() == config_copy.build()
 
 
 def test_receivers_tls_known_protocols():
     # GIVEN a config with known protocols (http, grpc)
-    config = Config()
-    config.add_receiver(
+    config = ConfigBuilder("", "")
+    config.add_component(
+        Component.receiver,
         "some-http-receiver",
         {"protocols": {"http": {"endpoint": "0.0.0.0:1234"}}},
         pipelines=["metrics"],
     )
-    config.add_receiver(
+    config.add_component(
+        Component.receiver,
         "another-http-receiver",
         {"protocols": {"http": {"endpoint": "0.0.0.0:1235"}}},
         pipelines=["metrics"],
     )
-    config.add_receiver(
+    config.add_component(
+        Component.receiver,
         "some-grpc-receiver",
         {"protocols": {"grpc": {"endpoint": "0.0.0.0:5678"}}},
         pipelines=["metrics"],
     )
-    config.add_receiver(
+    config.add_component(
+        Component.receiver,
         "another-grpc-receiver",
         {"protocols": {"grpc": {"endpoint": "0.0.0.0:5679"}}},
         pipelines=["metrics"],
     )
-    config.add_receiver(
+    config.add_component(
+        Component.receiver,
         "with-existing-tls",
         {
             "protocols": {
@@ -240,8 +196,8 @@ def test_receivers_tls_known_protocols():
     )
 
     # WHEN tls is enabled
-    config.enable_receiver_tls("/some/cert.crt", "/some/private.key")
-    config_dict = yaml.safe_load(config.yaml)
+    config._add_tls_to_all_receivers("/some/cert.crt", "/some/private.key")
+    config_dict = yaml.safe_load(config.build())
 
     # THEN all receivers' http, grpc protocols gain a tls section
     for tls_section in (
@@ -268,15 +224,16 @@ def test_receivers_tls_known_protocols():
 
 def test_insecure_skip_verify():
     # GIVEN an empty config without exporters
-    cfg = Config()
-    cfg_copy = deepcopy(cfg)
+    config = ConfigBuilder("", "")
+    config_copy = deepcopy(config)
     # WHEN updating the tls::insecure_skip_verify exporter configuration
-    config_dict = cfg._add_exporter_insecure_skip_verify(cfg._config, False)
+    config._add_exporter_insecure_skip_verify(False)
     # THEN it has no effect on the rendered config
-    assert config_dict == cfg_copy._config
+    assert config._config == config_copy._config
     # WHEN multiple exporters are added
-    cfg.add_exporter("foo", {"endpoint": "foo"})
-    cfg.add_exporter(
+    config.add_component(Component.exporter, "foo", {"endpoint": "foo"})
+    config.add_component(
+        Component.exporter,
         "bar",
         {
             "endpoint": "bar",
@@ -284,20 +241,59 @@ def test_insecure_skip_verify():
         },
     )
     # AND the tls::insecure_skip_verify configuration is added
-    config_dict = cfg._add_exporter_insecure_skip_verify(cfg._config, False)
+    config._add_exporter_insecure_skip_verify(False)
     # THEN tls::insecure_skip_verify is set for each exporter which was missing this configuration
-    assert config_dict["exporters"]["foo"]["tls"]["insecure_skip_verify"] is False
+    assert config._config["exporters"]["foo"]["tls"]["insecure_skip_verify"] is False
     # AND any existing tls::insecure_skip_verify configuration is untouched
-    assert config_dict["exporters"]["bar"]["tls"]["insecure_skip_verify"] is True
+    assert config._config["exporters"]["bar"]["tls"]["insecure_skip_verify"] is True
 
 
 def test_debug_exporter_no_tls_config():
     # GIVEN an empty config without exporters
-    cfg = Config()
+    config = ConfigBuilder("", "")
     # WHEN multiple debug exporters are added
-    cfg.add_exporter("debug", {"config": {"foo": "bar"}})
-    cfg.add_exporter("debug/descriptor", {"config": {"foo": "bar"}})
+    config.add_component(Component.exporter, "debug", {"config": {"foo": "bar"}})
+    config.add_component(Component.exporter, "debug/descriptor", {"config": {"foo": "bar"}})
     # AND the tls::insecure_skip_verify configuration is added
-    config_dict = cfg._add_exporter_insecure_skip_verify(cfg._config, True)
+    config._add_exporter_insecure_skip_verify(True)
     # THEN tls::insecure_skip_verify is not set for debug exporters
-    assert all("tls" not in exp.keys() for exp in config_dict["exporters"].values())
+    assert all("tls" not in exp.keys() for exp in config._config["exporters"].values())
+
+
+def test_global_scrape_timeout_and_interval():
+    # GIVEN a config with multiple prometheus receivers
+    config = ConfigBuilder("", "")
+    config.add_component(Component.receiver, name="prometheus", config={"config": {}})
+    config.add_component(
+        Component.receiver, name="prometheus/empty-cfgs", config={"config": {"scrape_configs": []}}
+    )
+    config.add_component(
+        Component.receiver,
+        name="prometheus/missing-timeout",
+        config={"config": {"scrape_configs": [{"scrape_interval": "1s"}]}},
+    )
+    config.add_component(
+        Component.receiver,
+        name="prometheus/missing-interval",
+        config={"config": {"scrape_configs": [{"scrape_timeout": "1s"}]}},
+    )
+    config.add_component(
+        Component.receiver,
+        name="prometheus/multiple-cfgs",
+        config={
+            "config": {
+                "scrape_configs": [
+                    {"scrape_interval": "1s", "scrape_timeout": "1s"},
+                    {"scrape_interval": "1s", "scrape_timeout": "1s"},
+                ]
+            }
+        },
+    )
+    # WHEN the global scrape interval and timeout is set
+    config._set_prometheus_receiver_global_timeout_and_interval("1m", "10s")
+    # THEN all prometheus receivers are updated
+    for receiver in config._config["receivers"].values():
+        if receiver["config"]:
+            for scrape_cfg in receiver["config"]["scrape_configs"]:
+                assert scrape_cfg["scrape_interval"] == "1m"
+                assert scrape_cfg["scrape_timeout"] == "10s"

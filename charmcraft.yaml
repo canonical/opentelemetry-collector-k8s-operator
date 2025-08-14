@@ -44,12 +44,20 @@ parts:
 containers:
   otelcol:
     resource: opentelemetry-collector-image
+    mounts:
+      - storage: persisted
+        location: /otelcol
+
+storage:
+  persisted:
+    type: filesystem
+    description: Mount point in which Otelcol will persist data
 
 resources:
   opentelemetry-collector-image:
     type: oci-image
     description: OCI image for opentelemetry-collector
-    upstream-source: ubuntu/opentelemetry-collector:0.127-24.04
+    upstream-source: ubuntu/opentelemetry-collector:0.130-24.04
 
 provides:
   grafana-dashboards-provider:
@@ -72,8 +80,16 @@ provides:
     description: |
       Access a cross-model application from otel via the service mesh.
       This relation provides additional data required by the service mesh to enforce cross-model authorization policies
+  receive-profiles:
+    interface: profiling
+    optional: true
+    description: Receive profiles from other charms.
 
 requires:
+  send-profiles:
+    interface: profiling
+    optional: true
+    description: Forward profiles to other charms.
   grafana-dashboards-consumer:
     interface: grafana_dashboard
     description: |
@@ -127,6 +143,11 @@ requires:
     description: |
       Allow a cross-model application access to otel via the service mesh.
       This relation provides additional data required by the service mesh to enforce cross-model authorization policies.
+  send-charm-traces:
+    interface: tracing
+    limit: 1
+    optional: true
+    description: Send charm traces to a charmed Tempo instance.
 
 config:
   options:
@@ -136,7 +157,7 @@ config:
         A global opentelemetry-collector "processors" config in YAML format, without the
         "processors:" top-level key. For example, to represent a "processors" section
         such as:
-        
+
             processors:
               batch:
               memory_limiter:
@@ -168,27 +189,38 @@ config:
     # Tracing config options
     always_enable_zipkin:
       description: >
-        Force-enable the receiver for the 'zipkin' protocol in OpenTelemetry Collector, 
+        Force-enable the receiver for the 'zipkin' protocol in OpenTelemetry Collector,
         even if there is no integration currently requesting it.
       type: boolean
       default: false
     always_enable_jaeger_grpc:
       description: >
-        Force-enable the receiver for the 'jaeger_grpc' protocol in OpenTelemetry Collector, 
+        Force-enable the receiver for the 'jaeger_grpc' protocol in OpenTelemetry Collector,
         even if there is no integration currently requesting it.
       type: boolean
       default: false
     always_enable_jaeger_thrift_http:
       description: >
-        Force-enable the receiver for the 'jaeger_thrift_http' protocol in OpenTelemetry Collector, 
+        Force-enable the receiver for the 'jaeger_thrift_http' protocol in OpenTelemetry Collector,
         even if there is no integration currently requesting it.
       type: boolean
       default: false
+    max_elapsed_time_min:
+      type: int
+      default: 5
+      description: |
+        Maximum time in minutes to wait for the storage backend. After this time, data loss will occur.
+    queue_size:
+      type: int
+      default: 1000
+      description: |
+        Maximum number of incoming batches of metrics, logs, traces the queue can accept.
+        Ref: https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/exporterhelper/README.md#configuration
     tracing_sampling_rate_charm:
       description: >
         This property defines the percentage of charm traces that are sent to the tracing backend.
         Setting it to 100 would mean all charm traces are kept, setting to 0 means charm traces
-        aren't sent to the tracing backend at all. Anything outside of 0-100 range will be clamped 
+        aren't sent to the tracing backend at all. Anything outside of 0-100 range will be clamped
         to this range by OpenTelemetry Collector.
       type: float
       default: 100.0
@@ -196,7 +228,7 @@ config:
       description: >
         This property defines the percentage of workload traces that are sent to the tracing backend.
         Setting it to 100 would mean all workload traces are kept, setting to 0 means workload traces
-        aren't sent to the tracing backend at all. Anything outside of 0-100 range will be clamped 
+        aren't sent to the tracing backend at all. Anything outside of 0-100 range will be clamped
         to this range by OpenTelemetry Collector.
       type: float
       default: 1.0
@@ -204,10 +236,43 @@ config:
       description: >
         This property defines the percentage of error traces (from all sources) that are sent to the tracing backend.
         Setting it to 100 would mean all error traces are kept, setting to 0 means error traces
-        aren't sent to the tracing backend at all. Anything outside of 0-100 range will be clamped 
+        aren't sent to the tracing backend at all. Anything outside of 0-100 range will be clamped
         to this range by OpenTelemetry Collector.
       type: float
       default: 100.0
+    extra_alert_labels:
+      description: >
+        Comma separated key-value pairs of labels to be added to all alerts.
+        This could be useful for differentiating between staging and production environments.
+      type: string
+    global_scrape_timeout:
+      description: >
+        How long to wait before timing out a scrape from a target.
+        Supported units: y, w, d, h, m, s.
+      type: string
+      default: "10s"
+    global_scrape_interval:
+      description: >
+        How frequently should instances be scraped.
+        Supported units: y, w, d, h, m, s.
+      type: string
+      default: "1m"
+    cpu:
+      description: |
+        K8s cpu resource limit, e.g. "1" or "500m". Default is unset (no limit). This value is used
+        for the "limits" portion of the resource requirements (the "requests" portion is
+        automatically deduced from it).
+        Note that changing this config option will churn the pod.
+        See https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+      type: string
+    memory:
+      description: |
+        K8s memory resource limit, e.g. "1Gi". Default is unset (no limit). This value is used
+        for the "limits" portion of the resource requirements (the "requests" portion is
+        automatically deduced from it).
+        Note that changing this config option will churn the pod.
+        See https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+      type: string
 
 actions:
   reconcile:

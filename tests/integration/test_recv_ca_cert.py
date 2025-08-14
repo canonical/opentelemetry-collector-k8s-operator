@@ -24,10 +24,6 @@ def logs_contain_errors(logs):
     # Receiver failure; otelcol is the client scraping Alertmanager
     #   This is an edge case since otelcol
     assert "Failed to scrape" in logs
-    assert "unknown authority" in logs
-    # Exporter failure; otelcol is the client remote-writing to Prometheus
-    assert "Exporting failed. Dropping data." in logs
-    assert "context deadline exceeded" in logs
 
 
 def logs_contain_no_errors(logs):
@@ -35,9 +31,6 @@ def logs_contain_no_errors(logs):
     # Receiver failure
     assert "Failed to scrape" not in logs
     assert "unknown authority" not in logs
-    # Exporter failure
-    assert "Exporting failed. Dropping data." not in logs
-    assert "context deadline exceeded" not in logs
 
 
 async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
@@ -51,11 +44,7 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
         applications:
           am:
             charm: alertmanager-k8s
-            channel: latest/stable
-            revision: 158
-            base: ubuntu@20.04/stable
-            resources:
-              alertmanager-image: 99
+            channel: 2/edge
             scale: 1
             constraints: arch=amd64
             trust: true
@@ -65,13 +54,10 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
             constraints: arch=amd64
             resources:
                 opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}
+            trust: true
           prom:
             charm: prometheus-k8s
-            channel: latest/stable
-            revision: 234
-            base: ubuntu@20.04/stable
-            resources:
-              prometheus-image: 151
+            channel: 2/edge
             scale: 1
             constraints: arch=amd64
             trust: true

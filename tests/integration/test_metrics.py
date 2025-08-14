@@ -35,6 +35,16 @@ async def _retry_prom_jobs_api(endpoint: str):
     assert any("otelcol" in item for item in job_names)
 
 
+@retry(stop=stop_after_attempt(7), wait=wait_fixed(5))
+async def _retry_avalanche_metrics_arrive_proom(prom_ip: str):
+    params = {"query": 'count({__name__=~"avalanche_metric_.+"})'}
+    data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/query", params=params).text)[
+        "data"
+    ]
+    avalanche_metric_count = int(data["result"][0]["value"][1])
+    assert avalanche_metric_count > 0
+
+
 async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: scrape-to-remote-write forwarding."""
     sh.juju.switch(juju.model)
@@ -45,7 +55,7 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
         applications:
           avalanche:
             charm: avalanche-k8s
-            channel: 1/edge
+            channel: 2/edge
             scale: 1
             trust: true
           otelcol:
@@ -53,9 +63,10 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
             scale: 1
             resources:
               opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}
+            trust: true
           prometheus:
             charm: prometheus-k8s
-            channel: latest/edge
+            channel: 2/edge
             scale: 1
             trust: true
         relations:
@@ -80,9 +91,4 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
     # AND juju_application labels in prometheus contain otel-collector and avalanche
     await _retry_prom_jobs_api(f"http://{prom_ip}:9090/api/v1/label/juju_application/values")
     # AND avalanche metrics arrive in prometheus
-    params = {"query": 'count({__name__=~"avalanche_metric_.+"})'}
-    data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/query", params=params).text)[
-        "data"
-    ]
-    avalanche_metric_count = int(data["result"][0]["value"][1])
-    assert avalanche_metric_count > 0
+    await _retry_avalanche_metrics_arrive_proom(prom_ip)

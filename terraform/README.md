@@ -14,12 +14,13 @@ The module offers the following configurable inputs:
 
 | Name | Type | Description | Required |
 | - | - | - | - |
-| `app_name`| string | Application name | mimir-worker |
-| `channel`| string | Channel that the charm is deployed from | latest/edge |
-| `config`| map(any) | Map of the charm configuration options | {} |
-| `constraints`| string | Constraints for the Juju deployment| "" |
-| `model_name`| string | Name of the model that the charm is deployed on |  |
+| `app_name`| string | Application name | opentelemetry-collector |
+| `channel`| string | Channel that the charm is deployed from |  |
+| `config`| map(string) | Map of the charm configuration options | {} |
+| `constraints`| string | Constraints for the Juju deployment| arch=amd64 |
+| `model`| string | Name of the model that the charm is deployed on |  |
 | `revision`| number | Revision number of the charm name | null |
+| `storage_directives`| map(string) | Map of storage used by the application, which defaults to 1 GB, allocated by Juju | {} |
 | `units`| number | Number of units to deploy | 1 |
 
 ### Outputs
