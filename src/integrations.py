@@ -56,6 +56,10 @@ from charms.pyroscope_coordinator_k8s.v0.profiling import (
     ProfilingEndpointRequirer,
     ProfilingEndpointProvider,
 )
+from charms.istio_beacon_k8s.v0.service_mesh import (
+    ServiceMeshConsumer,
+    UnitPolicy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -561,3 +565,38 @@ def receive_ca_cert(
 
     # A hot-reload doesn't pick up new system certs - need to restart the service
     return sha256(yaml.safe_dump(ca_certs))
+
+
+def setup_service_mesh(charm: CharmBase) -> None:
+    """Set up service mesh integration for OpenTelemetry Collector.
+
+    Args:
+        charm: The charm instance
+    """
+    mesh_consumer = ServiceMeshConsumer(
+        charm,
+        policies=[
+            UnitPolicy(
+                relation="receive-loki-logs",
+                ports=[Port.loki_http.value],  # 3500
+            ),
+            UnitPolicy(
+                relation="receive-traces",
+                ports=[
+                    Port.otlp_http.value,      # 4318
+                    Port.otlp_grpc.value,      # 4317
+                    Port.zipkin.value,         # 9411
+                    Port.jaeger_grpc.value,    # 14250
+                    Port.jaeger_thrift_http.value,  # 14268
+                ],
+            ),
+            UnitPolicy(
+                relation="receive-profiles",
+                ports=[
+                    Port.otlp_grpc.value,      # 4317
+                    Port.otlp_http.value,      # 4318
+                ],
+            ),
+        ]
+    )
+    charm.__setattr__("mesh_consumer", mesh_consumer)
