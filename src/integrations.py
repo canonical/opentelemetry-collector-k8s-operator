@@ -137,6 +137,7 @@ def send_loki_logs(charm: CharmBase) -> List[Dict]:
     loki_consumer.reload_alerts()
     return loki_consumer.loki_endpoints
 
+
 def key_value_pair_string_to_dict(key_value_pair: str) -> dict:
     """Transform a comma-separated key-value pairs into a dict."""
     result = {}
@@ -167,6 +168,7 @@ def key_value_pair_string_to_dict(key_value_pair: str) -> dict:
 
     return result
 
+
 def inject_extra_labels_to_alert_rules(rules: dict, extra_alert_labels: dict) -> dict:
     """Inject extra alert labels into alert labels."""
     """Return a copy of the rules dict with extra labels injected."""
@@ -177,18 +179,22 @@ def inject_extra_labels_to_alert_rules(rules: dict, extra_alert_labels: dict) ->
                 rule.setdefault("labels", {}).update(extra_alert_labels)
     return result
 
+
 def metrics_rules(metrics_consumer: MetricsEndpointConsumer, charm: CharmBase) -> Dict[str, Any]:
-        """Return a list of metrics rules."""
-        if not charm.config.get("forward_alert_rules"):
-            return {}
+    """Return a list of metrics rules."""
+    if not charm.config.get("forward_alert_rules"):
+        return {}
 
-        alert_rules = metrics_consumer.alerts
-        extra_alert_labels = key_value_pair_string_to_dict(cast(str, charm.model.config.get("extra_alert_labels", "")))
+    alert_rules = metrics_consumer.alerts
+    extra_alert_labels = key_value_pair_string_to_dict(
+        cast(str, charm.model.config.get("extra_alert_labels", ""))
+    )
 
-        if extra_alert_labels:
-            alert_rules = inject_extra_labels_to_alert_rules(alert_rules, extra_alert_labels)
+    if extra_alert_labels:
+        alert_rules = inject_extra_labels_to_alert_rules(alert_rules, extra_alert_labels)
 
-        return alert_rules
+    return alert_rules
+
 
 def scrape_metrics(charm: CharmBase) -> List:
     """Integrate with other charms via the metrics-endpoint relation endpoint.
@@ -212,7 +218,9 @@ def scrape_metrics(charm: CharmBase) -> List:
         dirs_exist_ok=True,
     )
     _add_alerts(
-        alerts=metrics_rules(metrics_consumer=metrics_consumer, charm=charm) if forward_alert_rules else {},
+        alerts=metrics_rules(metrics_consumer=metrics_consumer, charm=charm)
+        if forward_alert_rules
+        else {},
         dest_path=charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
     )
     return metrics_consumer.jobs()
@@ -229,6 +237,9 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
     remote_write = PrometheusRemoteWriteConsumer(
         charm,
         alert_rules_path=charm_root.joinpath(METRICS_RULES_DEST_PATH).as_posix(),
+        extra_alert_labels=key_value_pair_string_to_dict(
+            cast(str, charm.model.config.get("extra_alert_labels", ""))
+        ),
     )
     charm.__setattr__("remote_write", remote_write)
     # TODO: add alerts from remote write
@@ -263,7 +274,8 @@ def _get_tracing_receiver_url(protocol: ReceiverProtocol, tls_enabled: bool) -> 
         return f"{socket.getfqdn()}:{Port.otlp_grpc.value}"
     return f"{scheme}://{socket.getfqdn()}:{Port.otlp_http.value}"
 
-def receive_profiles(charm: CharmBase, tls:bool) -> None:
+
+def receive_profiles(charm: CharmBase, tls: bool) -> None:
     """Integrate with other charms over the receive-profiles relation endpoint."""
     if not charm.unit.is_leader():
         # profile ingestion goes per app
@@ -272,11 +284,11 @@ def receive_profiles(charm: CharmBase, tls:bool) -> None:
     grpc_endpoint = f"{fqdn}:{Port.otlp_grpc.value}"
     # this charm lib exposes a holistic API, so we don't need to bind the instance
     ProfilingEndpointProvider(
-        charm.model.relations['receive-profiles'],
-        app=charm.app
-        ).publish_endpoint(
+        charm.model.relations["receive-profiles"], app=charm.app
+    ).publish_endpoint(
         otlp_grpc_endpoint=grpc_endpoint,
     )
+
 
 def send_profiles(charm: CharmBase) -> List[str]:
     """Integrate with other charms via the send-profiles relation endpoint.
@@ -284,7 +296,7 @@ def send_profiles(charm: CharmBase) -> List[str]:
     Returns:
         All profiling endpoints that we are receiving over `profiling` integrations.
     """
-    profiling_requirer = ProfilingEndpointRequirer(charm.model.relations['send-profiles'])
+    profiling_requirer = ProfilingEndpointRequirer(charm.model.relations["send-profiles"])
     return [ep.otlp_grpc for ep in profiling_requirer.get_endpoints()]
 
 
