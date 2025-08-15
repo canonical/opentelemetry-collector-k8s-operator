@@ -9,6 +9,8 @@ from typing import Dict, cast, Optional, List
 import re
 from functools import partial
 
+from cosl.reconciler import ALL_EVENTS, observe_all
+
 from charmlibs.pathops import ContainerPath
 from cosl import JujuTopology, MandatoryRelationPairs
 from ops import BlockedStatus, CharmBase, Container, main
@@ -90,7 +92,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.unit.status = MaintenanceStatus("Waiting for otelcol to start")
             return
 
-        self._reconcile()
+        observe_all(self, ALL_EVENTS, self._reconcile)
 
     def _reconcile(self):
         """Recreate the world state for the charm.
