@@ -7,6 +7,7 @@ import yaml
 
 from config_builder import Component, ConfigBuilder, Port
 from constants import FILE_STORAGE_DIRECTORY
+from charms.pyroscope_coordinator_k8s.v0.profiling import Endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -339,7 +340,7 @@ class ConfigManager:
             pipelines=["profiles"],
         )
 
-    def add_profile_forwarding(self, endpoints: List):
+    def add_profile_forwarding(self, endpoints: List[Endpoint]):
         """Configure forwarding profiles to a profiling backend (Pyroscope)."""
         # if we don't do this, and there is no relation on receive-profiles, otelcol will complain
         # that there are no receivers configured for this exporter.

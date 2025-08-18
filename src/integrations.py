@@ -55,6 +55,7 @@ from charms.pyroscope_coordinator_k8s.v0.profiling import (
     ProfilingEndpointRequirer,
     ProfilingEndpointProvider,
 )
+from charms.pyroscope_coordinator_k8s.v0.profiling import Endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +273,7 @@ def receive_profiles(charm: CharmBase, tls: bool) -> None:
         insecure=not tls,
     )
 
-def send_profiles(charm: CharmBase) -> List:
+def send_profiles(charm: CharmBase) -> List[Endpoint]:
     """Integrate with other charms via the send-profiles relation endpoint.
 
     Returns:

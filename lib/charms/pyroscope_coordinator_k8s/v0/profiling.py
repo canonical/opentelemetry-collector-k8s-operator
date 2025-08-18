@@ -22,6 +22,14 @@ DEFAULT_ENDPOINT_NAME = "profiling"
 logger = logging.getLogger()
 
 
+@dataclasses.dataclass
+class Endpoint:
+    """Profiling endpoint."""
+
+    otlp_grpc: str
+    insecure: bool = False
+
+
 class ProfilingAppDatabagModel(pydantic.BaseModel):
     """Application databag model for the profiling interface."""
 
@@ -52,14 +60,10 @@ class ProfilingEndpointProvider:
                     self._app,
                 )
             except ops.ModelError:
-                logger.debug("failed to validate app data; is the relation still being created?")
+                logger.debug(
+                    "failed to validate app data; is the relation still being created?"
+                )
                 continue
-
-
-@dataclasses.dataclass
-class _Endpoint:
-    otlp_grpc: str
-    insecure: bool = False
 
 
 class ProfilingEndpointRequirer:
@@ -68,20 +72,24 @@ class ProfilingEndpointRequirer:
     def __init__(self, relations: List[ops.Relation]):
         self._relations = relations
 
-    def get_endpoints(self) -> List[_Endpoint]:
+    def get_endpoints(self) -> List[Endpoint]:
         """Obtain the profiling endpoints from all relations."""
         out = []
         for relation in self._relations:
             try:
                 data = relation.load(ProfilingAppDatabagModel, relation.app)
             except ops.ModelError:
-                logger.debug("failed to validate app data; is the relation still being created?")
+                logger.debug(
+                    "failed to validate app data; is the relation still being created?"
+                )
                 continue
             except pydantic.ValidationError:
-                logger.debug("failed to validate app data; is the relation still settling?")
+                logger.debug(
+                    "failed to validate app data; is the relation still settling?"
+                )
                 continue
             out.append(
-                _Endpoint(
+                Endpoint(
                     otlp_grpc=data.otlp_grpc_endpoint_url,
                     insecure=data.insecure,
                 )
