@@ -269,17 +269,17 @@ def receive_profiles(charm: CharmBase, tls: bool) -> None:
         charm.model.relations["receive-profiles"], app=charm.app
     ).publish_endpoint(
         otlp_grpc_endpoint=grpc_endpoint,
+        insecure=not tls,
     )
 
-
-def send_profiles(charm: CharmBase) -> List[str]:
+def send_profiles(charm: CharmBase) -> List:
     """Integrate with other charms via the send-profiles relation endpoint.
 
     Returns:
         All profiling endpoints that we are receiving over `profiling` integrations.
     """
-    profiling_requirer = ProfilingEndpointRequirer(charm.model.relations["send-profiles"])
-    return [ep.otlp_grpc for ep in profiling_requirer.get_endpoints()]
+    profiling_requirer = ProfilingEndpointRequirer(charm.model.relations['send-profiles'])
+    return profiling_requirer.get_endpoints()
 
 
 def receive_traces(charm: CharmBase, tls: bool) -> Set:

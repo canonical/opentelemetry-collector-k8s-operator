@@ -339,7 +339,7 @@ class ConfigManager:
             pipelines=["profiles"],
         )
 
-    def add_profile_forwarding(self, endpoints: List[str], tls: bool = False):
+    def add_profile_forwarding(self, endpoints: List):
         """Configure forwarding profiles to a profiling backend (Pyroscope)."""
         # if we don't do this, and there is no relation on receive-profiles, otelcol will complain
         # that there are no receivers configured for this exporter.
@@ -351,17 +351,9 @@ class ConfigManager:
                 # first component of this ID is the exporter type
                 f"otlp/profiling/{idx}",
                 {
-                    "endpoint": endpoint,
-                    # we likely need `insecure` as well as `insecure_skip_verify` because the endpoint
-                    # we're receiving from pyroscope is a grpc one and has no scheme prefix, and probably
-                    # the client defaults to https and fails to handshake unless we set `insecure=False`.
-                    # FIXME: anyway for now pyroscope does not support TLS ingestion,
-                    #  so we hardcode `insecure=True`.
-                    #  once TLS support is implemented, we can uncomment the line below.
-                    #  cfr: https://github.com/canonical/pyroscope-operators/pull/117
+                    "endpoint": endpoint.otlp_grpc,
                     "tls": {
-                        "insecure": True,
-                        # "insecure": not tls,
+                        "insecure": endpoint.insecure,
                         "insecure_skip_verify": self._insecure_skip_verify,
                     },
                     **self.sending_queue_config,
