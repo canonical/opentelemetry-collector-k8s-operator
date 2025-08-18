@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, cast, get_args
 
 import yaml
-import copy
 from charmlibs.pathops import PathProtocol
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
@@ -169,29 +168,12 @@ def key_value_pair_string_to_dict(key_value_pair: str) -> dict:
     return result
 
 
-def inject_extra_labels_to_alert_rules(rules: dict, extra_alert_labels: dict) -> dict:
-    """Inject extra alert labels into alert labels."""
-    """Return a copy of the rules dict with extra labels injected."""
-    result = copy.deepcopy(rules)
-    for item in result.values():
-        for group in item.get("groups", []):
-            for rule in group.get("rules", []):
-                rule.setdefault("labels", {}).update(extra_alert_labels)
-    return result
-
-
 def metrics_rules(metrics_consumer: MetricsEndpointConsumer, charm: CharmBase) -> Dict[str, Any]:
     """Return a list of metrics rules."""
     if not charm.config.get("forward_alert_rules"):
         return {}
 
     alert_rules = metrics_consumer.alerts
-    extra_alert_labels = key_value_pair_string_to_dict(
-        cast(str, charm.model.config.get("extra_alert_labels", ""))
-    )
-
-    if extra_alert_labels:
-        alert_rules = inject_extra_labels_to_alert_rules(alert_rules, extra_alert_labels)
 
     return alert_rules
 
