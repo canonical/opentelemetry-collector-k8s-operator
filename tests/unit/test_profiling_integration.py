@@ -62,7 +62,8 @@ def test_waiting_for_receive_profiles_endpoint(ctx, execs, relation_joined):
 
 
 @pytest.mark.parametrize("insecure_skip_verify", (True, False))
-def test_send_profiles_integration(ctx, execs, insecure_skip_verify):
+@pytest.mark.parametrize("remote_insecure", (True, False))
+def test_send_profiles_integration(ctx, execs, insecure_skip_verify, remote_insecure):
     """Scenario: a profiling relation joined and sent us a grpc endpoint."""
     # GIVEN otelcol deployed in isolation
     container = Container(name="otelcol", can_connect=True, execs=execs)
@@ -73,7 +74,7 @@ def test_send_profiles_integration(ctx, execs, insecure_skip_verify):
         endpoint="send-profiles",
         remote_app_data={
             "otlp_grpc_endpoint_url": json.dumps(pyro_url),
-            "otlp_http_endpoint_url": json.dumps("foobar"),
+            "insecure": json.dumps(remote_insecure),
         }
     )
     state_in = State(relations=[send_profiles], containers=[container],
@@ -90,7 +91,7 @@ def test_send_profiles_integration(ctx, execs, insecure_skip_verify):
     assert cfg['service']['pipelines']['profiles']['exporters'][0] == 'otlp/profiling/0'
     assert cfg['service']['pipelines']['profiles']['receivers'][0] == "otlp"
     assert cfg['exporters']['otlp/profiling/0']['endpoint'] == pyro_url
-    assert cfg["exporters"]["otlp/profiling/0"]["tls"] == {"insecure": True, "insecure_skip_verify": insecure_skip_verify}
+    assert cfg["exporters"]["otlp/profiling/0"]["tls"] == {"insecure": remote_insecure, "insecure_skip_verify": insecure_skip_verify}
 
 
 @patch("socket.getfqdn", return_value="localhost")
@@ -118,14 +119,11 @@ def test_receive_profiles_integration(sock_mock, ctx, execs, insecure_skip_verif
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     assert cfg['service']['pipelines']['profiles']['exporters'] == ['debug']
 
-    # AND we publish to app databag our profile ingestion endpoints for otlp_http and otlp_grpc
+    # AND we publish to app databag our profile ingestion endpoints for otlp_grpc
     receive_profiles_app_data = state_out.get_relation(receive_profiles.id).local_app_data
-    assert receive_profiles_app_data['otlp_grpc_endpoint_url']
+    assert  receive_profiles_app_data['otlp_grpc_endpoint_url']
 
 
-
-@pytest.mark.xfail(reason="pyroscope does not support TLS ingestion yet")
-# cfr. FIXME in config_manager.ConfigManager.add_profiling
 @pytest.mark.parametrize("insecure_skip_verify", (True, False))
 def test_profiling_integration_tls(ctx, execs, insecure_skip_verify, tls_mock):
     """Scenario: a profiling relation joined and sent us a grpc endpoint."""
@@ -143,7 +141,6 @@ def test_profiling_integration_tls(ctx, execs, insecure_skip_verify, tls_mock):
         endpoint="send-profiles",
         remote_app_data={
             "otlp_grpc_endpoint_url": json.dumps(pyro_url),
-            "otlp_http_endpoint_url": json.dumps("foobar"),
         }
     )
     state_in = State(relations=[profiling, ssc], containers=[container],
