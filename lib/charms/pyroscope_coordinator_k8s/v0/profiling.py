@@ -27,7 +27,9 @@ class Endpoint:
     """Profiling endpoint."""
 
     otlp_grpc: str
+    """Ingestion endpoint for otlp_grpc profiling data."""
     insecure: bool = False
+    """Whether the ingestion endpoint accepts/demands TLS-encrypted communications."""
 
 
 class ProfilingAppDatabagModel(pydantic.BaseModel):
@@ -75,7 +77,7 @@ class ProfilingEndpointRequirer:
     def get_endpoints(self) -> List[Endpoint]:
         """Obtain the profiling endpoints from all relations."""
         out = []
-        for relation in self._relations:
+        for relation in sorted(self._relations, key=lambda x: x.id):
             try:
                 data = relation.load(ProfilingAppDatabagModel, relation.app)
             except ops.ModelError:
