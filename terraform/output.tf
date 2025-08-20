@@ -13,10 +13,13 @@ output "endpoints" {
     cloud_config                = "cloud-config",
     receive_server_cert         = "receive-server-cert",
     send_traces                 = "send-traces",
+    service_mesh                = "service-mesh",
+    require_cmr_mesh            = "require-cmr-mesh",
 
     # Provides
     receive_loki_logs           = "receive-loki-logs",
     grafana_dashboards_provider = "grafana-dashboards-provider",
     receive_traces              = "receive-traces",
+    provide_cmr_mesh            = "provide-cmr-mesh",
   }
 }
