@@ -200,8 +200,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             integrations.receive_profiles(self, tls=is_tls_ready(container))
         if profiling_endpoints := integrations.send_profiles(self):
             config_manager.add_profile_forwarding(
-                profiling_endpoints,
-                tls=is_tls_ready(container)
+                profiling_endpoints
             )
         if self._incoming_profiles or integrations.send_profiles(self):
             feature_gates = "service.profilesSupport"

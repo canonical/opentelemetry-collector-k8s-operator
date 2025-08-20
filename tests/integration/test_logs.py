@@ -4,12 +4,9 @@
 """Feature: Ingested logs are forwarded."""
 
 import pathlib
-import tempfile
-import textwrap
 from typing import Dict
 
 import jubilant
-import sh
 
 # pyright: reportAttributeAccessIssue = false
 
@@ -17,49 +14,45 @@ import sh
 TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
-async def test_logs_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
-    """Scenario: loki-to-loki formatted log forwarding."""
-    sh.juju.switch(juju.model)
-    # GIVEN a model with flog, otel-collector, and loki charms
-    bundle = textwrap.dedent(f"""
-        bundle: kubernetes
-        applications:
-          flog:
-            charm: flog-k8s
-            channel: latest/stable
-            resources:
-              workload-image: 2
-            scale: 1
-          otelcol:
-            charm: {charm}
-            scale: 1
-            resources:
-              opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}
-            trust: true
-          loki:
-            charm: loki-k8s
-            channel: 2/edge
-            resources:
-              loki-image: 100
-              node-exporter-image: 3
-            scale: 1
-            trust: true
-        relations:
-        - - flog:log-proxy
-          - otelcol:receive-loki-logs
-        - - otelcol:send-loki-logs
-          - loki:logging
-    """)
+def test_logs_pipeline_promtail(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+    """Scenario: log forwarding via the LogProxyConsumer."""
+    # GIVEN a model with flog, otel-collector, and loki
+    juju.deploy(charm, "otelcol", resources=charm_resources, trust=True)
+    juju.deploy("flog-k8s", "flog", channel="latest/stable")
+    juju.deploy("loki-k8s", "loki", channel="2/edge", trust=True)
+
     # WHEN they are related to over the loki_push_api interface
-    with tempfile.NamedTemporaryFile(dir=TEMP_DIR, suffix=".yaml") as f:
-        f.write(bundle.encode())
-        f.flush()
-        juju.deploy(f.name, trust=True)
+    juju.integrate("otelcol:receive-loki-logs", "flog:log-proxy")
+    juju.integrate("otelcol:send-loki-logs", "loki")
     juju.wait(jubilant.all_active, delay=10, timeout=600)
+
     # THEN logs arrive in loki
-    labels = sh.juju.ssh(
-        "--container=loki",
-        "loki/leader",
-        "/usr/bin/logcli labels",
+    labels = juju.ssh(
+        target="loki/leader",
+        command="/usr/bin/logcli labels",
+        container="loki",
     )
     assert "juju_application" in labels
+
+
+def test_logs_pipeline_pebble(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+    """Scenario: log forwarding via Pebble log forwarding."""
+    # GIVEN a model with flog, blackbox-exporter, otel-collector, and loki charms
+    juju.deploy(charm, "otelcol-pebble", resources=charm_resources, trust=True)
+    juju.deploy("blackbox-exporter-k8s", "blackbox", channel="2/edge", trust=True)
+    juju.deploy("loki-k8s", "loki-pebble", channel="2/edge", trust=True)
+
+    # WHEN they are related to over the loki_push_api interface
+    juju.integrate("otelcol-pebble:receive-loki-logs", "blackbox")
+    juju.integrate("otelcol-pebble:send-loki-logs", "loki-pebble")
+    juju.wait(jubilant.all_active, delay=10, timeout=600)
+
+    # THEN logs arrive in loki
+    labels = juju.ssh(
+        target="loki-pebble/leader",
+        command="/usr/bin/logcli labels",
+        container="loki",
+    )
+    # FIXME: The Pebble log forwarding library sets different label names
+    # Once they match, change this to `juju_application`
+    assert "application" in labels
