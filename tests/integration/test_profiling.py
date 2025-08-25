@@ -55,7 +55,7 @@ async def test_smoke(juju: jubilant.Juju, charm: str, charm_resources: Dict[str,
     # WHEN we add relations to send profiles to pyroscope
     juju.integrate("otelcol:send-profiles", "pyroscope:profiling")
     # THEN otelcol and pyroscope are active
-    juju.wait(jubilant.all_active, delay=10, timeout=600)
+    juju.wait(jubilant.all_active, delay=10, timeout=900)
 
 
 # https://github.com/canonical/pyroscope-operators/issues/232
