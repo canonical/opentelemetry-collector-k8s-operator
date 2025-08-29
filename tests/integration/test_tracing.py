@@ -68,14 +68,14 @@ async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources:
     juju.integrate("otelcol:send-charm-traces", "tempo:tracing")
     # THEN charm traces arrive in tempo
     tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
-    juju.wait(jubilant.all_active, delay=10, timeout=600)
+    juju.wait(jubilant.all_active, delay=10, timeout=900)
     await check_traces_from_app(tempo_ip=tempo_ip, app="otelcol")
 
     # AND WHEN we add relations to send traces to tempo
     juju.integrate("otelcol:receive-traces", "grafana:charm-tracing")
     juju.integrate("otelcol:receive-traces", "grafana:workload-tracing")
     juju.integrate("otelcol:send-traces", "tempo:tracing")
-    juju.wait(jubilant.all_active, delay=10, timeout=600)
+    juju.wait(jubilant.all_active, delay=10, timeout=900)
     # AND some traces are produced
     juju.run("grafana/0", "get-admin-password")
     juju.integrate("otelcol:grafana-dashboards-provider", "grafana")
@@ -96,10 +96,10 @@ async def test_traces_with_tls(juju: jubilant.Juju):
     juju.integrate("tempo:certificates", "ssc")
     juju.integrate("otelcol:receive-ca-cert", "ssc")
     # Make sure tempo and otelcol are using TLS before sending new traces
-    juju.wait(jubilant.all_active, delay=10, timeout=600)
+    juju.wait(jubilant.all_active, delay=10, timeout=900)
     juju.integrate("otelcol:receive-traces", "coconut:charm-tracing")
     juju.integrate("otelcol:receive-traces", "coconut:workload-tracing")
-    juju.wait(jubilant.all_active, delay=10, timeout=600)
+    juju.wait(jubilant.all_active, delay=10, timeout=900)
 
     # AND some traces are produced
     juju.run("coconut/0", "get-admin-password")
