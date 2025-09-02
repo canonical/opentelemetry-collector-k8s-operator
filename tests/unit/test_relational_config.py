@@ -49,8 +49,8 @@ def test_loki_exporter(ctx, execs):
     # THEN the config file exists and the pebble service is running
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     # AND one exporter per loki unit in relation exists in the config
-    prom_exporters = [f"loki/{idx}" for idx in range(len(remote_units_data))]
-    assert set(prom_exporters).issubset(set(cfg["exporters"].keys()))
+    loki_exporters = [f"loki/send-loki-logs/{idx}" for idx in range(len(remote_units_data))]
+    assert set(loki_exporters).issubset(set(cfg["exporters"].keys()))
     # AND the pipelines are valid
     check_valid_pipelines(cfg)
 
@@ -77,7 +77,9 @@ def test_prometheus_exporter(ctx, execs):
     # THEN the config file exists and the pebble service is running
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     # AND one exporter per prometheus unit in relation exists in the config
-    prom_exporters = [f"prometheusremotewrite/{idx}" for idx in range(len(remote_units_data))]
+    prom_exporters = [
+        f"prometheusremotewrite/send-remote-write/{idx}" for idx in range(len(remote_units_data))
+    ]
     assert set(prom_exporters).issubset(set(cfg["exporters"].keys()))
     # AND the pipelines are valid
     check_valid_pipelines(cfg)
@@ -107,17 +109,17 @@ def test_cloud_integrator(ctx, execs):
     # THEN the config file exists and the pebble service is running
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     # AND the exporters for the cloud-integrator exists in the config
-    expected_exporters = {"loki/cloud-integrator", "prometheusremotewrite/cloud-integrator"}
+    expected_exporters = {"loki/cloud-config", "prometheusremotewrite/cloud-config"}
     assert expected_exporters.issubset(set(cfg["exporters"].keys()))
     # AND the basicauth extension is configured
     assert "basicauth/cloud-integrator" in cfg["extensions"]
     # AND the exporters are using the basicauth configuration
     assert (
-        cfg["exporters"]["loki/cloud-integrator"]["auth"]["authenticator"]
+        cfg["exporters"]["loki/cloud-config"]["auth"]["authenticator"]
         == "basicauth/cloud-integrator"
     )
     assert (
-        cfg["exporters"]["prometheusremotewrite/cloud-integrator"]["auth"]["authenticator"]
+        cfg["exporters"]["prometheusremotewrite/cloud-config"]["auth"]["authenticator"]
         == "basicauth/cloud-integrator"
     )
     # AND the pipelines are valid
@@ -162,7 +164,7 @@ def test_traces_receivers(ctx, execs):
     # THEN the config file exists and the pebble service is running
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     # AND the receivers for tracing exists in the config
-    expected_receivers = {"otlp", "jaeger"}
+    expected_receivers = {"otlp", "jaeger/receive-traces/opentelemetry-collector-k8s/0"}
     assert expected_receivers.issubset(set(cfg["receivers"].keys()))
     # AND the pipelines are valid
     check_valid_pipelines(cfg)
@@ -206,7 +208,7 @@ def test_traces_exporters(ctx, execs):
     # THEN the config file exists and the pebble service is running
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     # AND the exporters for tracing exists in the config
-    expected_exporters = {"otlphttp/tempo"}
+    expected_exporters = {"otlphttp/send-traces"}
     assert expected_exporters.issubset(set(cfg["exporters"].keys()))
     # AND the pipelines are valid
     check_valid_pipelines(cfg)
