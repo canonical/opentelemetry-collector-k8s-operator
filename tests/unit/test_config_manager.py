@@ -10,7 +10,7 @@ def test_add_prometheus_scrape():
     # GIVEN an empty config
     config_manager = ConfigManager(
         unit_name="fake/0",
-        global_scrape_interval="",
+        global_scrape_interval="15s",
         global_scrape_timeout="",
         insecure_skip_verify=True,
     )
@@ -41,7 +41,10 @@ def test_add_prometheus_scrape():
     config_manager.add_prometheus_scrape_jobs(first_job)
     # THEN it exists in the prometheus receiver config
     # AND insecure_skip_verify is injected into the config
-    assert config_manager.config._config["receivers"]["prometheus"] == expected_prom_recv_cfg
+    assert (
+        config_manager.config._config["receivers"]["prometheus/metrics-endpoint/fake/0"]
+        == expected_prom_recv_cfg
+    )
 
     # AND WHEN more scrape jobs are added to the config
     more_jobs = [
@@ -55,14 +58,14 @@ def test_add_prometheus_scrape():
         },
     ]
     config_manager.add_prometheus_scrape_jobs(more_jobs)
-    # THEN the original scrape job wasn't overwritten and the newly added scrape jobs were added
+    # THEN the original scrape job was overwritten and the newly added scrape jobs were added
     job_names = [
         job["job_name"]
-        for job in config_manager.config._config["receivers"]["prometheus"]["config"][
-            "scrape_configs"
-        ]
+        for job in config_manager.config._config["receivers"][
+            "prometheus/metrics-endpoint/fake/0"
+        ]["config"]["scrape_configs"]
     ]
-    assert job_names == ["first_job", "second_job", "third_job"]
+    assert job_names == ["second_job", "third_job"]
 
 
 def test_add_log_forwarding():
