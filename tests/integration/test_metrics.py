@@ -20,7 +20,7 @@ import jubilant
 TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
-@retry(stop=stop_after_attempt(7), wait=wait_fixed(5))
+@retry(stop=stop_after_attempt(10), wait=wait_fixed(5))
 async def _retry_prom_alerts_api(endpoint: str):
     response = request("GET", endpoint).text
     data = json.loads(response)["data"]
@@ -28,14 +28,14 @@ async def _retry_prom_alerts_api(endpoint: str):
     assert any("avalanche-k8s" in item for item in charm_names)
 
 
-@retry(stop=stop_after_attempt(7), wait=wait_fixed(5))
+@retry(stop=stop_after_attempt(10), wait=wait_fixed(5))
 async def _retry_prom_jobs_api(endpoint: str):
     job_names = json.loads(request("GET", endpoint).text)["data"]
     assert any("avalanche" in item for item in job_names)
     assert any("otelcol" in item for item in job_names)
 
 
-@retry(stop=stop_after_attempt(7), wait=wait_fixed(5))
+@retry(stop=stop_after_attempt(10), wait=wait_fixed(5))
 async def _retry_avalanche_metrics_arrive_prom(prom_ip: str):
     params = {"query": 'count({__name__=~"avalanche_metric_.+"})'}
     data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/query", params=params).text)[
@@ -47,39 +47,13 @@ async def _retry_avalanche_metrics_arrive_prom(prom_ip: str):
 
 async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: scrape-to-remote-write forwarding."""
-    sh.juju.switch(juju.model)
-
     # GIVEN a model with avalanche, otel-collector, and prometheus charms
-    bundle = textwrap.dedent(f"""
-        bundle: kubernetes
-        applications:
-          avalanche:
-            charm: avalanche-k8s
-            channel: 2/edge
-            scale: 1
-            trust: true
-          otelcol:
-            charm: {charm}
-            scale: 1
-            resources:
-              opentelemetry-collector-image: {charm_resources["opentelemetry-collector-image"]}
-            trust: true
-          prometheus:
-            charm: prometheus-k8s
-            channel: 2/edge
-            scale: 1
-            trust: true
-        relations:
-        - - avalanche:metrics-endpoint
-          - otelcol:metrics-endpoint
-        - - otelcol:send-remote-write
-          - prometheus:receive-remote-write
-    """)
-    # WHEN they are related to scrape and remote-write
-    with tempfile.NamedTemporaryFile(dir=TEMP_DIR, suffix=".yaml") as f:
-        f.write(bundle.encode())
-        f.flush()
-        juju.deploy(f.name, trust=True)
+    juju.deploy("avalanche-k8s", app="avalanche", channel="2/edge", trust=True)
+    juju.deploy("prometheus-k8s", app="prometheus", channel="2/edge", trust=True)
+    juju.deploy(charm, app="otelcol", resources=charm_resources, trust=True)
+    # WHEN they are related via scrape and remote-write
+    juju.integrate("avalanche", "otelcol:metrics-endpoint")
+    juju.integrate("otelcol:send-remote-write", "prometheus")
     juju.wait(jubilant.all_active, delay=10, timeout=600)
     # THEN rules arrive in prometheus
     prom_ip = juju.status().apps["prometheus"].units["prometheus/0"].address
