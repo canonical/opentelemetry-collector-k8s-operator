@@ -4,9 +4,6 @@
 """Feature: Scraped metrics are remote-written."""
 
 import pathlib
-import tempfile
-import textwrap
-import sh
 import json
 from typing import Dict
 from tenacity import retry, stop_after_attempt, wait_fixed
