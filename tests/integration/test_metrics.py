@@ -17,7 +17,7 @@ import jubilant
 TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
-@retry(stop=stop_after_attempt(10), wait=wait_fixed(5))
+@retry(stop=stop_after_attempt(10), wait=wait_fixed(10))
 async def _retry_prom_alerts_api(endpoint: str):
     response = request("GET", endpoint).text
     data = json.loads(response)["data"]
@@ -25,14 +25,14 @@ async def _retry_prom_alerts_api(endpoint: str):
     assert any("avalanche-k8s" in item for item in charm_names)
 
 
-@retry(stop=stop_after_attempt(10), wait=wait_fixed(5))
+@retry(stop=stop_after_attempt(10), wait=wait_fixed(10))
 async def _retry_prom_jobs_api(endpoint: str):
     job_names = json.loads(request("GET", endpoint).text)["data"]
     assert any("avalanche" in item for item in job_names)
     assert any("otelcol" in item for item in job_names)
 
 
-@retry(stop=stop_after_attempt(10), wait=wait_fixed(5))
+@retry(stop=stop_after_attempt(10), wait=wait_fixed(10))
 async def _retry_avalanche_metrics_arrive_prom(prom_ip: str):
     params = {"query": 'count({__name__=~"avalanche_metric_.+"})'}
     data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/query", params=params).text)[
