@@ -48,7 +48,10 @@ def k8s_resource_multipatch():
 
 @pytest.fixture
 def execs():
-    yield {Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout="")}
+    yield {
+        Exec(["update-ca-certificates", "--fresh"], return_code=0, stdout=""),
+        Exec(["/usr/bin/otelcol", "--version"], return_code=0, stdout="0.0.0"),
+    }
 
 
 @pytest.fixture

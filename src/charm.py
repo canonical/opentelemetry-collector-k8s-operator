@@ -271,10 +271,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         missing_relations = _get_missing_mandatory_relations(self)
         if missing_relations:
             self.unit.status = BlockedStatus(missing_relations)
-        
+
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")
-        
+
     def _pebble_layer(self, environment: Dict, feature_gates: Optional[str]) -> Layer:
         """Construct the Pebble layer configuration.
 
@@ -350,7 +350,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             ).wait_output()
         except APIError:
             return None
-        
+
         # Output looks like this:
         # otelcol version 0.130.1
         result = re.search(r"version (\d*\.\d*\.\d*)", version_output)
