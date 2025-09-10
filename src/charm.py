@@ -14,7 +14,7 @@ from cosl import JujuTopology, MandatoryRelationPairs
 from lightkube.models.core_v1 import ResourceRequirements
 from ops import BlockedStatus, CharmBase, Container, StatusBase, main
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
-from ops.pebble import CheckDict, ExecDict, HttpDict, Layer
+from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     KubernetesComputeResourcesPatch,
     adjust_resource_requirements,
@@ -271,7 +271,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         missing_relations = _get_missing_mandatory_relations(self)
         if missing_relations:
             self.unit.status = BlockedStatus(missing_relations)
-
+        
+        # Workload version
+        self.unit.set_workload_version(self._otelcol_version or "")
+        
     def _pebble_layer(self, environment: Dict, feature_gates: Optional[str]) -> Layer:
         """Construct the Pebble layer configuration.
 
@@ -336,6 +339,24 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             ),
         }
         return checks
+
+    @property
+    def _otelcol_version(self) -> Optional[str]:
+        """Returns the otelcol workload version."""
+        try:
+            container = self.unit.get_container(self._container_name)
+            version_output, _ = container.exec(
+                ["/usr/bin/otelcol", "--version"], timeout=30
+            ).wait_output()
+        except APIError:
+            return None
+        
+        # Output looks like this:
+        # otelcol version 0.130.1
+        result = re.search(r"version (\d*\.\d*\.\d*)", version_output)
+        if result is None:
+            return result
+        return result.group(1)
 
     @property
     def _incoming_logs(self) -> bool:
