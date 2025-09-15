@@ -124,6 +124,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
         integrations.cleanup()
 
+        # Service mesh integration
+        integrations.setup_service_mesh(self)
+
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
             self,

@@ -57,6 +57,11 @@ from constants import (
     METRICS_RULES_SRC_PATH,
 )
 
+from charms.istio_beacon_k8s.v0.service_mesh import (
+    ServiceMeshConsumer,
+    UnitPolicy,
+)
+
 logger = logging.getLogger(__name__)
 
 ProfilingEndpoint = namedtuple("ProfilingEndpoint", "endpoint, insecure")
@@ -567,3 +572,38 @@ def receive_ca_cert(
 
     # A hot-reload doesn't pick up new system certs - need to restart the service
     return sha256(yaml.safe_dump(ca_certs))
+
+
+def setup_service_mesh(charm: CharmBase) -> None:
+    """Set up service mesh integration for OpenTelemetry Collector.
+
+    Args:
+        charm: The charm instance
+    """
+    mesh_consumer = ServiceMeshConsumer(
+        charm,
+        policies=[
+            UnitPolicy(
+                relation="receive-loki-logs",
+                ports=[Port.loki_http.value],
+            ),
+            UnitPolicy(
+                relation="receive-traces",
+                ports=[
+                    Port.otlp_http.value,
+                    Port.otlp_grpc.value,
+                    Port.zipkin.value,
+                    Port.jaeger_grpc.value,
+                    Port.jaeger_thrift_http.value,
+                ],
+            ),
+            UnitPolicy(
+                relation="receive-profiles",
+                ports=[
+                    Port.otlp_grpc.value,
+                    Port.otlp_http.value,
+                ],
+            ),
+        ]
+    )
+    charm.__setattr__("mesh_consumer", mesh_consumer)
