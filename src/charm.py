@@ -14,7 +14,7 @@ from cosl import JujuTopology, MandatoryRelationPairs
 from lightkube.models.core_v1 import ResourceRequirements
 from ops import BlockedStatus, CharmBase, Container, StatusBase, main
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
-from ops.pebble import CheckDict, ExecDict, HttpDict, Layer
+from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     KubernetesComputeResourcesPatch,
     adjust_resource_requirements,
@@ -161,6 +161,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             insecure_skip_verify=cast(bool, self.config.get("tls_insecure_skip_verify")),
             queue_size=cast(int, self.config.get("queue_size")),
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
+            unit_name=self.unit.name,
         )
 
         # TODO: if/when we support multiple feature gates, make this a list and find out how to
@@ -199,9 +200,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             config_manager.add_profile_ingestion()
             integrations.receive_profiles(self, tls=is_tls_ready(container))
         if profiling_endpoints := integrations.send_profiles(self):
-            config_manager.add_profile_forwarding(
-                profiling_endpoints
-            )
+            config_manager.add_profile_forwarding(profiling_endpoints)
         if self._incoming_profiles or integrations.send_profiles(self):
             feature_gates = "service.profilesSupport"
 
@@ -258,7 +257,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         container.add_layer(
             self._container_name,
             self._pebble_layer(environment=pebble_extra_env, feature_gates=feature_gates),
-            combine=True
+            combine=True,
         )
         # TODO: Conditionally open ports based on the otelcol config file rather than opening all ports
         self.unit.set_ports(*[port.value for port in Port])
@@ -276,7 +275,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if missing_relations:
             self.unit.status = BlockedStatus(missing_relations)
 
-    def _pebble_layer(self, environment: Dict, feature_gates:Optional[str]) -> Layer:
+        # Workload version
+        self.unit.set_workload_version(self._otelcol_version or "")
+
+    def _pebble_layer(self, environment: Dict, feature_gates: Optional[str]) -> Layer:
         """Construct the Pebble layer configuration.
 
         Args:
@@ -286,9 +288,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         Returns:
             Layer: A Pebble Layer object containing the service configuration.
         """
-        otelcol_args = [
-            f"--config={CONFIG_PATH}"
-        ]
+        otelcol_args = [f"--config={CONFIG_PATH}"]
         if feature_gates:
             otelcol_args.append(f"--feature-gates={feature_gates}")
 
@@ -316,7 +316,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         return layer
 
-    def _pebble_checks(self, otelcol_args:List[str]) -> Dict[str, CheckDict]:
+    def _pebble_checks(self, otelcol_args: List[str]) -> Dict[str, CheckDict]:
         """Define Pebble checks for the workload container.
 
         Returns:
@@ -335,11 +335,31 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             "valid-config": CheckDict(
                 override="replace",
                 level="alive",
-                exec=ExecDict(command=" ".join(filter(None,("otelcol", "validate", *otelcol_args)))),
+                exec=ExecDict(
+                    command=" ".join(filter(None, ("otelcol", "validate", *otelcol_args)))
+                ),
                 threshold=3,
             ),
         }
         return checks
+
+    @property
+    def _otelcol_version(self) -> Optional[str]:
+        """Returns the otelcol workload version."""
+        try:
+            container = self.unit.get_container(self._container_name)
+            version_output, _ = container.exec(
+                ["/usr/bin/otelcol", "--version"], timeout=30
+            ).wait_output()
+        except APIError:
+            return None
+
+        # Output looks like this:
+        # otelcol version 0.130.1
+        result = re.search(r"version (\d*\.\d*\.\d*)", version_output)
+        if result is None:
+            return result
+        return result.group(1)
 
     @property
     def _incoming_logs(self) -> bool:
