@@ -369,6 +369,41 @@ class ConfigManager:
         # TODO Receive alert rules via remote write
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
 
+    def add_otlp_forwarding(
+        self, preferred_protocol: str, endpoint_map: Dict[int, Dict[str, str]]
+    ):
+        """Configure sending OTLP telemetry to an OTLP endpoint."""
+        # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlpexporter
+        logger.warning(f"+++OTELCOL EXPORTER: {endpoint_map}")
+        if not endpoint_map:
+            return
+
+        for rel_id, endpoints in endpoint_map.items():
+            if not (
+                endpoint := (
+                    endpoints.get(preferred_protocol)
+                    or endpoints.get("grpc")
+                    or endpoints.get("http")
+                )
+            ):
+                continue
+            self.config.add_component(
+                Component.exporter,
+                f"otlp/rel-{rel_id}",
+                {
+                    "endpoint": endpoint,
+                    "tls": {"insecure": True},
+                    # TODO: TLS implementation
+                },
+                # NOTE: We send to all pipelines since OTLP supports all and its useless until a receiver is connected
+                # NOTE: We can always add a filter_pipelines option logic
+                pipelines=[
+                    f"metrics/{self._unit_name}",
+                    f"logs/{self._unit_name}",
+                    f"traces/{self._unit_name}",
+                ],
+            )
+
     def add_traces_ingestion(
         self,
         requested_tracing_protocols: Set[Literal["zipkin", "jaeger_grpc", "jaeger_thrift_http"]],

@@ -169,6 +169,14 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         #  cf: https://github.com/canonical/opentelemetry-collector-k8s-operator/issues/17
         feature_gates: Optional[str] = None
 
+        # OTLP setup
+        # TODO: If these are doing nothing, remove them
+        integrations.receive_otlp(self)
+        protocol = integrations.send_otlp(self)
+        otlp_endpoints = integrations.get_remote_otlp_endpoints(self.model.relations["send-otlp"])
+        config_manager.add_otlp_forwarding(protocol, otlp_endpoints)
+        self.framework.breakpoint()
+
         # Logs setup
         integrations.receive_loki_logs(self, tls=is_tls_ready(container))
         loki_endpoints = integrations.send_loki_logs(self)
