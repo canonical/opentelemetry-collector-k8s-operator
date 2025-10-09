@@ -48,6 +48,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     TLSCertificatesRequiresV4,
 )
 from cosl import LZMABase64
+from otlp import OtlpConsumer, OtlpProvider, OtlpEndpoint
 from ops import CharmBase, tracing
 from ops.model import Relation
 
@@ -60,7 +61,6 @@ from constants import (
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
 )
-from otlp import OTLPConsumer, OTLPProvider
 
 logger = logging.getLogger(__name__)
 
@@ -449,25 +449,18 @@ def forward_dashboards(charm: CharmBase):
 
 
 def receive_otlp(charm: CharmBase):
-    otlp_provider = OTLPProvider(charm)
+    otlp_provider = OtlpProvider(
+        charm,
+        # TODO: We should read the config file for the configured receiver
+        {"grpc": Port.otlp_grpc.value, "http": Port.otlp_http.value},
+    )
     charm.__setattr__("otlp_provider", otlp_provider)
 
 
-def send_otlp(charm: CharmBase):
-    otlp_consumer = OTLPConsumer(charm)
+def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
+    otlp_consumer = OtlpConsumer(charm)
     charm.__setattr__("otlp_consumer", otlp_consumer)
-    return otlp_consumer._protocol
-
-
-def get_remote_otlp_endpoints(relations: List[Relation]) -> Dict[int, Dict[str, str]]:
-    """Return endpoints for each relation."""
-    aggregate = {}
-    for rel in relations:
-        if rel.data[rel.app]:
-            endpoints = dict(rel.data[rel.app])
-            aggregate[rel.id] = endpoints
-
-    return aggregate
+    return otlp_consumer.get_remote_otlp_endpoint()
 
 
 # TODO: Luca: move this into the GrafanCloudIntegrator library

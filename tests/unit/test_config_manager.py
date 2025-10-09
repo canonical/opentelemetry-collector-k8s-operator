@@ -3,7 +3,8 @@
 
 """Feature: Opentelemetry-collector config builder."""
 
-from config_manager import ConfigManager
+from src.config_manager import ConfigManager
+from src.otlp import OtlpEndpoint
 
 
 def test_add_prometheus_scrape():
@@ -161,3 +162,31 @@ def test_add_remote_write():
     )
     expected_config = dict(sorted(expected_remote_write_cfg.items()))
     assert config == expected_config
+
+
+def test_add_otlp_forwarding():
+    # GIVEN an empty config
+    config_manager = ConfigManager(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+        insecure_skip_verify=True,
+    )
+
+    # WHEN an OTLP exporters (of gRPC and HTTP protocols) are added to the config
+    config_manager.add_otlp_forwarding(
+        {
+            "0": OtlpEndpoint(**{"protocol": "grpc", "endpoint": "http://host-1:grpc-port", "telemetries": ["logs"]}),
+            "1": OtlpEndpoint(**{"protocol": "http", "endpoint": "http://host-2:http-port", "telemetries": ["metrics", "traces"]}),
+        }
+    )
+
+    # THEN they exists in the exporter config
+    # AND the grpc protocol created an "otlp" exporter, while the "http" protocol created an
+    # "otlphttp" exporter
+    # TODO: This test is duplicating test_otlp Scenario test
+    expected_otlp_cfg = {
+        "otlp/rel-0": {"endpoint": "http://host-1:grpc-port", "tls": {"insecure": True}},
+        "otlphttp/rel-1": {"endpoint": "http://host-2:http-port", "tls": {"insecure": True}},
+    }
+    assert config_manager.config._config["exporters"] == expected_otlp_cfg
