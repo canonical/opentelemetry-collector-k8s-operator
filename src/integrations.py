@@ -20,6 +20,10 @@ from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
     GrafanaCloudConfigRequirer,
 )
 from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
+from charms.istio_beacon_k8s.v0.service_mesh import (
+    ServiceMeshConsumer,
+    UnitPolicy,
+)
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
@@ -28,8 +32,8 @@ from charms.prometheus_k8s.v1.prometheus_remote_write import (
     PrometheusRemoteWriteConsumer,
 )
 from charms.pyroscope_coordinator_k8s.v0.profiling import (
-    ProfilingEndpointRequirer,
     ProfilingEndpointProvider,
+    ProfilingEndpointRequirer,
 )
 from charms.tempo_coordinator_k8s.v0.tracing import (
     ReceiverProtocol,
@@ -44,6 +48,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     TLSCertificatesRequiresV4,
 )
 from cosl import LZMABase64
+from otlp import OtlpConsumer, OtlpProvider, OtlpEndpoint
 from ops import CharmBase, tracing
 from ops.model import Relation
 
@@ -55,11 +60,6 @@ from constants import (
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
-)
-
-from charms.istio_beacon_k8s.v0.service_mesh import (
-    ServiceMeshConsumer,
-    UnitPolicy,
 )
 
 logger = logging.getLogger(__name__)
@@ -302,7 +302,8 @@ def receive_traces(charm: CharmBase, tls: bool) -> Set:
         )
     return requested_tracing_protocols
 
-def receive_profiles(charm: CharmBase, tls:bool) -> None:
+
+def receive_profiles(charm: CharmBase, tls: bool) -> None:
     """Integrate with other charms over the receive-profiles relation endpoint."""
     if not charm.unit.is_leader():
         # TODO: leader-only because of
@@ -312,12 +313,8 @@ def receive_profiles(charm: CharmBase, tls:bool) -> None:
     grpc_endpoint = f"{fqdn}:{Port.otlp_grpc.value}"
     # this charm lib exposes a holistic API, so we don't need to bind the instance
     ProfilingEndpointProvider(
-        charm.model.relations['receive-profiles'],
-        app=charm.app
-        ).publish_endpoint(
-        otlp_grpc_endpoint=grpc_endpoint,
-        insecure=not tls
-    )
+        charm.model.relations["receive-profiles"], app=charm.app
+    ).publish_endpoint(otlp_grpc_endpoint=grpc_endpoint, insecure=not tls)
 
 
 def send_profiles(charm: CharmBase) -> List[ProfilingEndpoint]:
@@ -326,8 +323,10 @@ def send_profiles(charm: CharmBase) -> List[ProfilingEndpoint]:
     Returns:
         All profiling endpoints that we are receiving over `profiling` integrations.
     """
-    profiling_requirer = ProfilingEndpointRequirer(charm.model.relations['send-profiles'])
-    return [ProfilingEndpoint(ep.otlp_grpc, ep.insecure) for ep in profiling_requirer.get_endpoints()]
+    profiling_requirer = ProfilingEndpointRequirer(charm.model.relations["send-profiles"])
+    return [
+        ProfilingEndpoint(ep.otlp_grpc, ep.insecure) for ep in profiling_requirer.get_endpoints()
+    ]
 
 
 def send_traces(charm: CharmBase) -> Optional[str]:
@@ -447,6 +446,21 @@ def forward_dashboards(charm: CharmBase):
     # TODO: Do we need to implement dashboard status changed logic?
     #   This propagates Grafana's errors to the charm which provided the dashboard
     # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
+
+
+def receive_otlp(charm: CharmBase):
+    otlp_provider = OtlpProvider(
+        charm,
+        # TODO: We should read the config file for the configured receiver
+        {"grpc": Port.otlp_grpc.value, "http": Port.otlp_http.value},
+    )
+    charm.__setattr__("otlp_provider", otlp_provider)
+
+
+def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
+    otlp_consumer = OtlpConsumer(charm)
+    charm.__setattr__("otlp_consumer", otlp_consumer)
+    return otlp_consumer.get_remote_otlp_endpoint()
 
 
 # TODO: Luca: move this into the GrafanCloudIntegrator library
@@ -604,6 +618,6 @@ def setup_service_mesh(charm: CharmBase) -> None:
                     Port.otlp_http.value,
                 ],
             ),
-        ]
+        ],
     )
     charm.__setattr__("mesh_consumer", mesh_consumer)
