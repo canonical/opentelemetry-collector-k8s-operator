@@ -15,6 +15,8 @@ dependencies = [
   "cosl",
   "pydantic",
   "charmlibs-pathops",
+  "charmed-service-mesh-helpers>=0.2.0", # istio-beacon lib requirement"lightkube-extensions@git+https://github.com/canonical/lightkube-extensions.git@main", # istio-beacon lib requirement,
+  "lightkube-extensions@git+https://github.com/canonical/lightkube-extensions.git@main", # istio-beacon lib requirement
 ]
 
 [project.optional-dependencies]
