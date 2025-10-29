@@ -106,6 +106,10 @@ def mock_container():
     container = MagicMock()
     container.can_connect.return_value = True
     container.exec.return_value.wait.return_value = None
+    container.make_dir = MagicMock()
+    # By default, directory exists to avoid mkdir calls in unrelated tests
+    # Certificate tests will override this as needed
+    container.exists.return_value = True
     return container
 
 

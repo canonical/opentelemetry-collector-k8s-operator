@@ -24,6 +24,7 @@ import integrations
 from config_builder import Port
 from config_manager import ConfigManager
 from constants import (
+    CERTS_DIR,
     CONFIG_PATH,
     RECV_CA_CERT_FOLDER_PATH,
     SERVER_CERT_PATH,
@@ -192,6 +193,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # For now, the only incoming and outgoing metrics relations are remote-write/scrape
         metrics_consumer_jobs = integrations.scrape_metrics(self)
         # Write CA certificates to disk and update job configurations
+        self._ensure_certs_dir(container)
         cert_paths = self._write_ca_certificates_to_disk(metrics_consumer_jobs, container)
         metrics_consumer_jobs = config_manager.update_jobs_with_ca_paths(metrics_consumer_jobs, cert_paths)
         config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
@@ -346,34 +348,34 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         }
         return checks
 
+
+    def _ensure_certs_dir(self, container: Container) -> None:
+        if not container.can_connect():
+            logger.warning("container not accessible, skipping certificates directory creation")
+            return
+
+        if container.exists(CERTS_DIR):
+            return
+
+        container.make_dir(CERTS_DIR, make_parents= True)
+
     def _write_ca_certificates_to_disk(self, scrape_jobs: List[Dict], container: Container) -> Dict[str, str]:
         cert_paths = {}
-        jobs_with_certs = []
-
-        for job in scrape_jobs:
-            tls_config = job.get("tls_config", {})
-            ca_file_content = tls_config.get("ca_file")
-
-            if ca_file_content and ca_file_content.strip().startswith("-----BEGIN CERTIFICATE-----"):
-                jobs_with_certs.append(job)
-
-        if not jobs_with_certs:
-            return cert_paths
 
         if not container.can_connect():
             logger.warning("Container not accessible, skipping CA certificate processing")
             return cert_paths
 
-        # Ensure certs dir.
-        container.exec(["mkdir", "-p", "/etc/ssl/certs/"]).wait()
-
-        for job in jobs_with_certs:
+        for job in scrape_jobs:
             tls_config = job.get("tls_config", {})
             ca_file_content = tls_config.get("ca_file")
 
+            if not ca_file_content or not ca_file_content.strip().startswith("-----BEGIN CERTIFICATE-----"):
+                continue
+
             job_name = job.get("job_name", "default")
             safe_job_name = job_name.replace("/", "_").replace(" ", "_").replace("-", "_")
-            ca_cert_path = f"/etc/ssl/certs/otel_{safe_job_name}_ca.pem"
+            ca_cert_path = f"{CERTS_DIR}otel_{safe_job_name}_ca.pem"
 
             container.push(ca_cert_path, ca_file_content, permissions=0o644)
             cert_paths[job_name] = ca_cert_path

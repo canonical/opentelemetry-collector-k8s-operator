@@ -14,6 +14,17 @@ def mock_charm():
         return OpenTelemetryCollectorK8sCharm(MagicMock())
 
 
+@pytest.fixture
+def mock_container():
+    """Create a mock container specifically for certificate tests (directory doesn't exist)."""
+    container = MagicMock()
+    container.can_connect.return_value = True
+    container.exec.return_value.wait.return_value = None
+    container.make_dir = MagicMock()
+    container.exists.return_value = False  # Directory doesn't exist - needed for mkdir tests
+    return container
+
+
 # Tests for _write_ca_certificates_to_disk method
 @pytest.mark.parametrize(
     "jobs,expected_results,expected_push_count",
@@ -81,7 +92,8 @@ def test_write_certificates_to_disk_scenarios(mock_charm, mock_container, sample
         ca_file_key = job["tls_config"]["ca_file"]
         job["tls_config"]["ca_file"] = cert_mapping[ca_file_key]
 
-    # Execute
+    # Execute - ensure certs dir exists first
+    mock_charm._ensure_certs_dir(mock_container)
     result = mock_charm._write_ca_certificates_to_disk(jobs, mock_container)
 
     # Verify results
@@ -91,8 +103,8 @@ def test_write_certificates_to_disk_scenarios(mock_charm, mock_container, sample
         assert result[job_name] == expected_path
 
     # Verify container operations
-    # mkdir is now called only once regardless of number of certificates
-    mock_container.exec.assert_called_once_with(["mkdir", "-p", "/etc/ssl/certs/"])
+    # make_dir is called from _ensure_certs_dir once using make_dir
+    mock_container.make_dir.assert_called_once_with("/etc/ssl/certs/", make_parents=True)
     assert mock_container.push.call_count == expected_push_count
 
     # Verify specific push calls for single job scenarios
@@ -147,12 +159,13 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
             }
         ]
 
-    # Execute
+    # Execute - only test _write_ca_certificates_to_disk
+    # (in real flow, _ensure_certs_dir is called separately)
     result = mock_charm._write_ca_certificates_to_disk(jobs, container)
 
     # Verify - no certificates should be processed
     assert result == expected_result
-    container.exec.assert_not_called()
+    container.make_dir.assert_not_called()
     container.push.assert_not_called()
 
 
