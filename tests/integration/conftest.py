@@ -46,7 +46,10 @@ def timed_memoizer(func):
 async def charm() -> str:
     """Charm used for integration testing."""
     if charm_file := os.environ.get("CHARM_PATH"):
-        return str(charm_file)
+        charm = str(charm_file)
+        if not charm.startswith("./"):
+            charm = f"./{charm}"
+        return charm
 
     # Build charm
     # although charmcraft packs the charm, sh returns an empty string.
