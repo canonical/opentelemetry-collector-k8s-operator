@@ -4,6 +4,7 @@
 """Conftest file for integration tests."""
 
 import functools
+import glob
 import logging
 import os
 import sh
@@ -47,9 +48,15 @@ async def charm() -> str:
     if charm_file := os.environ.get("CHARM_PATH"):
         return str(charm_file)
 
-    charm = sh.charmcraft.pack()  # type: ignore
+    # Build charm
+    # although charmcraft packs the charm, sh returns an empty string.
+    sh.charmcraft.pack()  # type: ignore
+
+    # Find the charm file
+    charms = glob.glob("*.charm")
+    charm = f"./{charms[0]}"
     assert charm
-    return str(charm)
+    return charm
 
 
 @pytest.fixture(scope="module")
