@@ -4,6 +4,7 @@
 """Conftest file for integration tests."""
 
 import functools
+import glob
 import logging
 import os
 import sh
@@ -45,11 +46,19 @@ def timed_memoizer(func):
 async def charm() -> str:
     """Charm used for integration testing."""
     if charm_file := os.environ.get("CHARM_PATH"):
-        return str(charm_file)
+        charm = str(charm_file)
+        return charm
 
-    charm = sh.charmcraft.pack()  # type: ignore
+    # Build charm
+    # although charmcraft packs the charm, sh returns an empty string.
+    sh.charmcraft.pack()  # type: ignore
+
+    # Find the charm file
+    current_dir = os.getcwd()
+    charms = glob.glob(os.path.join(current_dir, "*.charm"))
+    charm = charms[0]
     assert charm
-    return str(charm)
+    return charm
 
 
 @pytest.fixture(scope="module")
