@@ -47,8 +47,6 @@ async def charm() -> str:
     """Charm used for integration testing."""
     if charm_file := os.environ.get("CHARM_PATH"):
         charm = str(charm_file)
-        if not charm.startswith("./"):
-            charm = f"./{charm}"
         return charm
 
     # Build charm
@@ -56,8 +54,9 @@ async def charm() -> str:
     sh.charmcraft.pack()  # type: ignore
 
     # Find the charm file
-    charms = glob.glob("*.charm")
-    charm = f"./{charms[0]}"
+    current_dir = os.getcwd()
+    charms = glob.glob(os.path.join(current_dir, "*.charm"))
+    charm = charms[0]
     assert charm
     return charm
 
