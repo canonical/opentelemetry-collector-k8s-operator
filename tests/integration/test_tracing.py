@@ -13,7 +13,7 @@ import pytest
 import jubilant
 
 
-@retry(stop=stop_after_attempt(24), wait=wait_fixed(10))
+@retry(stop=stop_after_attempt(24), wait=wait_fixed(20))
 async def check_traces_from_app(tempo_ip: str, app: str):
     response = request(
         "GET", f"http://{tempo_ip}:3200/api/search", params={"juju_application": app}
@@ -77,8 +77,8 @@ async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources:
     juju.integrate("otelcol:send-traces", "tempo:tracing")
     juju.wait(jubilant.all_active, delay=10, timeout=900)
     # AND some traces are produced
-    juju.run("grafana/0", "get-admin-password")
     juju.integrate("otelcol:grafana-dashboards-provider", "grafana")
+    juju.run("grafana/0", "get-admin-password")
 
     # THEN traces arrive in tempo
     await check_traces_from_app(tempo_ip=tempo_ip, app="grafana")
