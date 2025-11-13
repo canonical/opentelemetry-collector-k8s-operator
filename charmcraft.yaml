@@ -57,7 +57,7 @@ resources:
   opentelemetry-collector-image:
     type: oci-image
     description: OCI image for opentelemetry-collector
-    upstream-source: ubuntu/opentelemetry-collector@sha256:f153750aae4c80bc63093adf433d2e2ba5acdcabc6763d2b0949384944c5b48f  # renovate: oci-image tag: 0.130-24.04
+    upstream-source: ubuntu/opentelemetry-collector@sha256:4b7a4f1d4f55aa04e341eee818d7e6acba823b643a2ea09e3ac94c44a7dfc43c  # renovate: oci-image tag: 0.139-24.04
 
 provides:
   grafana-dashboards-provider:
