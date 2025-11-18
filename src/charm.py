@@ -370,7 +370,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             tls_config = job.get("tls_config", {})
             ca_file_content = tls_config.get("ca_file")
 
-            if not ca_file_content or not ca_file_content.strip().startswith("-----BEGIN CERTIFICATE-----"):
+            if not ca_file_content or not self._validate_cert(ca_file_content):
                 continue
 
             job_name = job.get("job_name", "default")
@@ -425,6 +425,18 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         requests = {"cpu": "0.25", "memory": "200Mi"}
         return adjust_resource_requirements(limits, requests, adhere_to_requests=True)
 
+    def _validate_cert(self, cert: str) -> bool:
+        """Validate that the provided string is a PEM formatted certificate.
+
+        Args:
+            cert: The certificate string to validate.
+
+        Returns:
+            True if the certificate is valid PEM format, False otherwise.
+        """
+        # TODO: we should enhance this test to use x509 or a proper PEM parser as opposed to this relatively simple regex.
+        pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"
+        return bool(re.search(pem_pattern, cert, re.DOTALL))
 
 if __name__ == "__main__":
     main(OpenTelemetryCollectorK8sCharm)
