@@ -7,7 +7,6 @@ import logging
 import os
 from typing import Dict, cast, Optional, List
 import re
-from functools import partial
 
 from charmlibs.pathops import ContainerPath
 from cosl import JujuTopology, MandatoryRelationPairs

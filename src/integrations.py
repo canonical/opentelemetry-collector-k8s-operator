@@ -9,7 +9,7 @@ import socket
 from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, cast, get_args
+from typing import Any, Dict, List, Optional, Set, cast, get_args
 
 import yaml
 from charmlibs.pathops import PathProtocol
