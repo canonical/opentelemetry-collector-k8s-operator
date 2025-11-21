@@ -35,12 +35,12 @@ def mock_container():
                 {
                     "job_name": "juju-controller",
                     "tls_config": {
-                        "ca_file": "sample_ca_cert",  # Will be replaced in test
+                        "ca": "sample_ca_cert",  # Will be replaced in test
                         "insecure_skip_verify": False
                     }
                 }
             ],
-            {"juju-controller": "/etc/ssl/certs/otel_juju_controller_ca.pem"},
+            {"juju-controller": "/etc/otelcol/certs/otel_juju_controller_ca.pem"},
             1
         ),
         # Single job with filename sanitization
@@ -49,12 +49,12 @@ def mock_container():
                 {
                     "job_name": "test/job with spaces-and-dashes",
                     "tls_config": {
-                        "ca_file": "sample_ca_cert",  # Will be replaced in test
+                        "ca": "sample_ca_cert",  # Will be replaced in test
                         "insecure_skip_verify": False
                     }
                 }
             ],
-            {"test/job with spaces-and-dashes": "/etc/ssl/certs/otel_test_job_with_spaces_and_dashes_ca.pem"},
+            {"test/job with spaces-and-dashes": "/etc/otelcol/certs/otel_test_job_with_spaces_and_dashes_ca.pem"},
             1
         ),
         # Multiple jobs with different certificates
@@ -63,21 +63,21 @@ def mock_container():
                 {
                     "job_name": "job-1",
                     "tls_config": {
-                        "ca_file": "sample_ca_cert",  # Will be replaced in test
+                        "ca": "sample_ca_cert",  # Will be replaced in test
                         "insecure_skip_verify": False
                     }
                 },
                 {
                     "job_name": "job-2",
                     "tls_config": {
-                        "ca_file": "second_ca_cert",  # Will be replaced in test
+                        "ca": "second_ca_cert",  # Will be replaced in test
                         "insecure_skip_verify": False
                     }
                 }
             ],
             {
-                "job-1": "/etc/ssl/certs/otel_job_1_ca.pem",
-                "job-2": "/etc/ssl/certs/otel_job_2_ca.pem"
+                "job-1": "/etc/otelcol/certs/otel_job_1_ca.pem",
+                "job-2": "/etc/otelcol/certs/otel_job_2_ca.pem"
             },
             2
         ),
@@ -89,8 +89,8 @@ def test_write_certificates_to_disk_scenarios(mock_charm, mock_container, sample
     cert_mapping = {"sample_ca_cert": sample_ca_cert, "second_ca_cert": second_ca_cert}
 
     for job in jobs:
-        ca_file_key = job["tls_config"]["ca_file"]
-        job["tls_config"]["ca_file"] = cert_mapping[ca_file_key]
+        ca_key = job["tls_config"]["ca"]
+        job["tls_config"]["ca"] = cert_mapping[ca_key]
 
     # Execute - ensure certs dir exists first
     mock_charm._ensure_certs_dir(mock_container)
@@ -104,7 +104,7 @@ def test_write_certificates_to_disk_scenarios(mock_charm, mock_container, sample
 
     # Verify container operations
     # make_dir is called from _ensure_certs_dir once using make_dir
-    mock_container.make_dir.assert_called_once_with("/etc/ssl/certs/", make_parents=True)
+    mock_container.make_dir.assert_called_once_with("/etc/otelcol/certs/", make_parents=True)
     assert mock_container.push.call_count == expected_push_count
 
     # Verify specific push calls for single job scenarios
@@ -179,7 +179,7 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
                 {
                     "job_name": "job-with-cert",
                     "tls_config": {
-                        "ca_file": "original_cert_content",
+                        "ca": "original_cert_content",
                         "insecure_skip_verify": False
                     }
                 },
@@ -190,12 +190,12 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
                     }
                 }
             ],
-            {"job-with-cert": "/etc/ssl/certs/otel_job_with_cert_ca.pem"},
+            {"job-with-cert": "/etc/otelcol/certs/otel_job_with_cert_ca.pem"},
             [
                 {
                     "job_name": "job-with-cert",
                     "tls_config": {
-                        "ca_file": "/etc/ssl/certs/otel_job_with_cert_ca.pem",
+                        "ca": "/etc/otelcol/certs/otel_job_with_cert_ca.pem",
                         "insecure_skip_verify": False
                     }
                 },
@@ -210,12 +210,12 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
         # Jobs without tls_config should get config added
         (
             [{"job_name": "test-job"}],
-            {"test-job": "/etc/ssl/certs/otel_test_job_ca.pem"},
+            {"test-job": "/etc/otelcol/certs/otel_test_job_ca.pem"},
             [
                 {
                     "job_name": "test-job",
                     "tls_config": {
-                        "ca_file": "/etc/ssl/certs/otel_test_job_ca.pem"
+                        "ca": "/etc/otelcol/certs/otel_test_job_ca.pem"
                     }
                 }
             ]
@@ -239,24 +239,24 @@ def test_update_jobs_with_ca_paths_various_scenarios(config_manager, jobs, cert_
 
 
 @pytest.mark.parametrize(
-    "job_name,cert_paths,expected_ca_file",
+    "job_name,cert_paths,expected_ca",
     [
         # No matching cert path - should remain unchanged
         ("test-job", {"different-job": "/path/to/cert.pem"}, "original_cert_content"),
         # Empty cert paths - should remain unchanged
         ("test-job", {}, "original_cert_content"),
         # Default job name with matching cert - should be updated
-        ("default", {"default": "/etc/ssl/certs/otel_default_ca.pem"}, "/etc/ssl/certs/otel_default_ca.pem"),
+        ("default", {"default": "/etc/otelcol/certs/otel_default_ca.pem"}, "/etc/otelcol/certs/otel_default_ca.pem"),
     ],
 )
-def test_update_jobs_with_ca_paths_no_changes(config_manager, job_name, cert_paths, expected_ca_file):
+def test_update_jobs_with_ca_paths_no_changes(config_manager, job_name, cert_paths, expected_ca):
     """Test cases where jobs should remain unchanged."""
     # Test data
     jobs = [
         {
             "job_name": job_name,
             "tls_config": {
-                "ca_file": "original_cert_content",
+                "ca": "original_cert_content",
                 "insecure_skip_verify": False
             }
         }
@@ -267,4 +267,4 @@ def test_update_jobs_with_ca_paths_no_changes(config_manager, job_name, cert_pat
 
     # Verify - job should remain unchanged
     assert len(result) == 1
-    assert result[0]["tls_config"]["ca_file"] == expected_ca_file
+    assert result[0]["tls_config"]["ca"] == expected_ca

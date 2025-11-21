@@ -357,7 +357,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if container.exists(CERTS_DIR):
             return
 
-        container.make_dir(CERTS_DIR, make_parents= True)
+        container.make_dir(CERTS_DIR, make_parents=True)
 
     def _write_ca_certificates_to_disk(self, scrape_jobs: List[Dict], container: Container) -> Dict[str, str]:
         cert_paths = {}
@@ -368,16 +368,16 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         for job in scrape_jobs:
             tls_config = job.get("tls_config", {})
-            ca_file_content = tls_config.get("ca_file")
+            ca_content = tls_config.get("ca")
 
-            if not ca_file_content or not self._validate_cert(ca_file_content):
+            if not ca_content or not self._validate_cert(ca_content):
                 continue
 
             job_name = job.get("job_name", "default")
             safe_job_name = job_name.replace("/", "_").replace(" ", "_").replace("-", "_")
             ca_cert_path = f"{CERTS_DIR}otel_{safe_job_name}_ca.pem"
 
-            container.push(ca_cert_path, ca_file_content, permissions=0o644)
+            container.push(ca_cert_path, ca_content, permissions=0o644)
             cert_paths[job_name] = ca_cert_path
             logger.debug(f"CA certificate for job '{job_name}' written to {ca_cert_path}")
 

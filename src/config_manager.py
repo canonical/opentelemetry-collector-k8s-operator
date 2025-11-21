@@ -579,15 +579,15 @@ class ConfigManager:
             cert_paths: Dictionary mapping job names to their certificate file paths
 
         Returns:
-            List of updated scrape job dictionaries with ca_file pointing to file paths
+            List of updated scrape job dictionaries with ca pointing to file paths
         """
         for job in metrics_consumer_jobs:
             job_name = job.get("job_name", "default")
 
             if job_name in cert_paths:
                 tls_config = job.get("tls_config", {})
-                tls_config["ca_file"] = cert_paths[job_name]
+                tls_config["ca"] = cert_paths[job_name]
                 job["tls_config"] = tls_config
-                logger.debug(f"Updated job '{job_name}' to use certificate path: {cert_paths[job_name]}")
+                logger.debug(f"updated job '{job_name}' to use certificate path: {cert_paths[job_name]}")
 
         return metrics_consumer_jobs
