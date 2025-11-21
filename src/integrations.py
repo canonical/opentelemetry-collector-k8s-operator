@@ -488,7 +488,7 @@ def receive_server_cert(
     private_key_path: PathProtocol,
     root_ca_cert_path: PathProtocol,
 ) -> str:
-    """Integrate to receive a: private key, cert, CA cert for the charm from relation data.
+    """Integrate to receive private key, cert, CA cert for the charm from relation data.
 
     Thes key and certs are obtained via the tls_certificates(v4) library, and pushed to the
     workload container.
@@ -539,6 +539,8 @@ def receive_server_cert(
 
     logger.info("Certificates and private key have been pushed to disk")
 
+    # NOTE: we run `update-ca-certificates` in charm code
+
     return sha256(str(provider_certificate.certificate) + str(private_key))
 
 
@@ -564,6 +566,8 @@ def receive_ca_cert(charm: CharmBase, recv_ca_cert_folder_path: PathProtocol) ->
         for i, cert in enumerate(ca_certs):
             cert_path = recv_ca_cert_folder_path.joinpath(f"{i}.crt")
             cert_path.write_text(cert)
+
+    # NOTE: we run `update-ca-certificates` in charm code
 
     # A hot-reload doesn't pick up new system certs - need to restart the service
     return sha256(yaml.safe_dump(ca_certs))
