@@ -27,6 +27,7 @@ from constants import (
     CONFIG_PATH,
     RECV_CA_CERT_FOLDER_PATH,
     SERVER_CERT_PATH,
+    SERVER_CA_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
     SERVICE_NAME,
 )
@@ -137,6 +138,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self,
             server_cert_path=ContainerPath(SERVER_CERT_PATH, container=container),
             private_key_path=ContainerPath(SERVER_CERT_PRIVATE_KEY_PATH, container=container),
+            root_ca_cert_path=ContainerPath(SERVER_CA_CERT_PATH, container=container),
         )
 
         # Global scrape configs

@@ -487,6 +487,7 @@ def receive_server_cert(
     charm: CharmBase,
     server_cert_path: PathProtocol,
     private_key_path: PathProtocol,
+    root_ca_cert_path: PathProtocol,
 ) -> str:
     """Integrate to receive a certificate and private key for the charm from relation data.
 
@@ -526,13 +527,16 @@ def receive_server_cert(
 
         server_cert_path.unlink() if server_cert_path.exists() else None
         private_key_path.unlink() if private_key_path.exists() else None
+        root_ca_cert_path.unlink() if root_ca_cert_path.exists() else None
         return sha256("")
 
     # Push the certificate and key to disk
-    server_cert_path.parent.mkdir(parents=True, exist_ok=True)
-    server_cert_path.write_text(str(provider_certificate.certificate))
     private_key_path.parent.mkdir(parents=True, exist_ok=True)
     private_key_path.write_text(str(private_key))
+    server_cert_path.parent.mkdir(parents=True, exist_ok=True)
+    server_cert_path.write_text(str(provider_certificate.certificate.raw))
+    root_ca_cert_path.parent.mkdir(parents=True, exist_ok=True)
+    root_ca_cert_path.write_text(str(provider_certificate.ca.raw))
 
     logger.info("Certificate and private key have been pushed to disk")
 
