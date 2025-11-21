@@ -63,3 +63,9 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
     await _retry_prom_jobs_api(f"http://{prom_ip}:9090/api/v1/label/juju_application/values")
     # AND avalanche metrics arrive in prometheus
     await _retry_avalanche_metrics_arrive_prom(prom_ip)
+
+
+def test_metrics_pipeline_with_tls(juju: jubilant.Juju):
+    breakpoint()
+    juju.deploy("self-signed-certificates", app="ca", channel="1/stable", trust=True)
+    juju.integrate("avalanche", "otelcol:receive-server-cert")
