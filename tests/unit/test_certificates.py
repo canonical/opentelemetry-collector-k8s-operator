@@ -195,7 +195,7 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
                 {
                     "job_name": "job-with-cert",
                     "tls_config": {
-                        "ca": "/etc/otelcol/certs/otel_job_with_cert_ca.pem",
+                        "ca_file": "/etc/otelcol/certs/otel_job_with_cert_ca.pem",
                         "insecure_skip_verify": False
                     }
                 },
@@ -215,7 +215,7 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
                 {
                     "job_name": "test-job",
                     "tls_config": {
-                        "ca": "/etc/otelcol/certs/otel_test_job_ca.pem"
+                        "ca_file": "/etc/otelcol/certs/otel_test_job_ca.pem"
                     }
                 }
             ]
@@ -267,4 +267,8 @@ def test_update_jobs_with_ca_paths_no_changes(config_manager, job_name, cert_pat
 
     # Verify - job should remain unchanged
     assert len(result) == 1
-    assert result[0]["tls_config"]["ca"] == expected_ca
+
+    if "ca" in result[0]["tls_config"]:
+        assert result[0]["tls_config"]["ca"] == expected_ca
+    else:
+        assert result[0]["tls_config"]["ca_file"] == expected_ca
