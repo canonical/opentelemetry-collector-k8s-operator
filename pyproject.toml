@@ -46,6 +46,12 @@ branch = true
 
 [tool.coverage.report]
 show_missing = true
+omit = [
+    "lib/charms/*",
+    "lib/charms/**/*",
+    "tests/*",
+    "tests/**/*",
+]
 
 # Linting tools configuration
 [tool.ruff]
