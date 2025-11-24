@@ -374,7 +374,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 continue
 
             job_name = job.get("job_name", "default")
-			# Since the `MetricsEndpointProvider` accepts a `jobs` arg, we cannot rely on the job name being safe
+            # Since the `MetricsEndpointProvider` accepts a `jobs` arg, we cannot rely on the job name being safe
             safe_job_name = job_name.replace("/", "_").replace(" ", "_").replace("-", "_")
             ca_cert_path = f"{CERTS_DIR}otel_{safe_job_name}_ca.pem"
 
