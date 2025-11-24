@@ -7,7 +7,6 @@ import logging
 import os
 from typing import Dict, cast, Optional, List
 import re
-from functools import partial
 
 from charmlibs.pathops import ContainerPath
 from cosl import JujuTopology, MandatoryRelationPairs
@@ -28,6 +27,7 @@ from constants import (
     CONFIG_PATH,
     RECV_CA_CERT_FOLDER_PATH,
     SERVER_CERT_PATH,
+    SERVER_CA_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
     SERVICE_NAME,
 )
@@ -132,13 +132,17 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         receive_ca_certs_hash = integrations.receive_ca_cert(
             self,
             recv_ca_cert_folder_path=ContainerPath(RECV_CA_CERT_FOLDER_PATH, container=container),
-            refresh_certs=partial(refresh_certs, container=container),
         )
         server_cert_hash = integrations.receive_server_cert(
             self,
             server_cert_path=ContainerPath(SERVER_CERT_PATH, container=container),
             private_key_path=ContainerPath(SERVER_CERT_PRIVATE_KEY_PATH, container=container),
+            root_ca_cert_path=ContainerPath(SERVER_CA_CERT_PATH, container=container),
         )
+        # Refresh system certs
+        # This must be run after receive_ca_cert and/or receive_server_cert because they update
+        # certs in the /usr/local/share/ca-certificates directory
+        refresh_certs(container)
 
         # Global scrape configs
         global_configs = {

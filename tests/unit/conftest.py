@@ -4,6 +4,8 @@ from shutil import copytree
 import pytest
 from ops.testing import Container, Context, Exec
 from ops import ActiveStatus
+from dataclasses import dataclass
+
 
 from charm import OpenTelemetryCollectorK8sCharm
 
@@ -55,8 +57,13 @@ def execs():
 
 
 @pytest.fixture
-def cert():
-    return "mocked_certificate"
+def server_cert():
+    return "mocked_server_certificate"
+
+
+@pytest.fixture
+def ca_cert():
+    return "mocked_ca_certificate"
 
 
 @pytest.fixture
@@ -64,9 +71,16 @@ def private_key():
     return "mocked_private_key"
 
 
+@dataclass
+class Certificate:
+    raw: str
+
+
 class MockCertificate:
-    def __init__(self, certificate):
-        self.certificate = certificate
+    def __init__(self, server_cert, ca_cert):
+        self.certificate = Certificate(server_cert)
+        self.ca = Certificate(ca_cert)
+        # TODO: remove this comment certificates.certificate.raw, certificates.ca.raw
 
 
 @pytest.fixture
@@ -132,3 +146,6 @@ def config_manager():
         global_scrape_timeout="",
         insecure_skip_verify=True,
     )
+
+def cert_obj(server_cert, ca_cert):
+    return MockCertificate(server_cert, ca_cert)

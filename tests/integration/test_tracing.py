@@ -16,7 +16,7 @@ import jubilant
 @retry(
     stop=stop_after_attempt(24),
     wait=wait_fixed(10),
-    retry=retry_if_exception_type((ConnectionError, TimeoutError, KeyError, AssertionError))
+    retry=retry_if_exception_type((ConnectionError, TimeoutError, KeyError, AssertionError)),
 )
 async def check_traces_from_app(tempo_ip: str, app: str):
     response = request(
