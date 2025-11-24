@@ -426,15 +426,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         return adjust_resource_requirements(limits, requests, adhere_to_requests=True)
 
     def _validate_cert(self, cert: str) -> bool:
-        """Validate that the provided string is a PEM formatted certificate.
-
-        Args:
-            cert: The certificate string to validate.
-
-        Returns:
-            True if the certificate is valid PEM format, False otherwise.
-        """
-        # TODO: we should enhance this test to use x509 or a proper PEM parser as opposed to this relatively simple regex.
         pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"
         return bool(re.search(pem_pattern, cert, re.DOTALL))
 
