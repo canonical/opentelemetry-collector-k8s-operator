@@ -13,18 +13,6 @@ def mock_charm():
     with patch('charm.OpenTelemetryCollectorK8sCharm.__init__', lambda *args: None):
         return OpenTelemetryCollectorK8sCharm(MagicMock())
 
-
-@pytest.fixture
-def mock_container():
-    """Create a mock container specifically for certificate tests (directory doesn't exist)."""
-    container = MagicMock()
-    container.can_connect.return_value = True
-    container.exec.return_value.wait.return_value = None
-    container.make_dir = MagicMock()
-    container.exists.return_value = False  # Directory doesn't exist - needed for mkdir tests
-    return container
-
-
 # Tests for _write_ca_certificates_to_disk method
 @pytest.mark.parametrize(
     "jobs,expected_results,expected_push_count",
@@ -93,6 +81,7 @@ def test_write_certificates_to_disk_scenarios(mock_charm, mock_container, sample
         job["tls_config"]["ca"] = cert_mapping[ca_key]
 
     # Execute - ensure certs dir exists first
+    mock_container.exists.return_value = False
     mock_charm._ensure_certs_dir(mock_container)
     result = mock_charm._write_ca_certificates_to_disk(jobs, mock_container)
 
