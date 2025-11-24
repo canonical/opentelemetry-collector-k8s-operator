@@ -490,7 +490,7 @@ def receive_server_cert(
 ) -> str:
     """Integrate to receive private key, cert, CA cert for the charm from relation data.
 
-    Thes key and certs are obtained via the tls_certificates(v4) library, and pushed to the
+    The key and certs are obtained via the tls_certificates(v4) library, and pushed to the
     workload container.
 
     Returns:
