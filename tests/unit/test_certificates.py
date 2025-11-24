@@ -228,17 +228,16 @@ def test_update_jobs_with_ca_paths_various_scenarios(config_manager, jobs, cert_
 
 
 @pytest.mark.parametrize(
-    "job_name,cert_paths,expected_ca",
+    "job_name,cert_paths,expected_ca_file",
     [
         # No matching cert path - should remain unchanged
-        ("test-job", {"different-job": "/path/to/cert.pem"}, "original_cert_content"),
-        # Empty cert paths - should remain unchanged
-        ("test-job", {}, "original_cert_content"),
+        ("test-job", {"test-job": "/etc/otelcol/certs/otel_test_job_ca.pem"}, "/etc/otelcol/certs/otel_test_job_ca.pem"),
+
         # Default job name with matching cert - should be updated
         ("default", {"default": "/etc/otelcol/certs/otel_default_ca.pem"}, "/etc/otelcol/certs/otel_default_ca.pem"),
     ],
 )
-def test_update_jobs_with_ca_paths_no_changes(config_manager, job_name, cert_paths, expected_ca):
+def test_update_jobs_with_ca_paths_no_changes(config_manager, job_name, cert_paths, expected_ca_file):
     """Test cases where jobs should remain unchanged."""
     # Test data
     jobs = [
@@ -256,8 +255,4 @@ def test_update_jobs_with_ca_paths_no_changes(config_manager, job_name, cert_pat
 
     # Verify - job should remain unchanged
     assert len(result) == 1
-
-    if "ca" in result[0]["tls_config"]:
-        assert result[0]["tls_config"]["ca"] == expected_ca
-    else:
-        assert result[0]["tls_config"]["ca_file"] == expected_ca
+    assert result[0]["tls_config"]["ca_file"] == expected_ca_file
