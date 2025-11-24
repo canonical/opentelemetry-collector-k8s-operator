@@ -9,7 +9,7 @@ import socket
 from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, cast, get_args
+from typing import Any, Dict, List, Optional, Set, cast, get_args
 
 import yaml
 from charmlibs.pathops import PathProtocol
@@ -302,7 +302,8 @@ def receive_traces(charm: CharmBase, tls: bool) -> Set:
         )
     return requested_tracing_protocols
 
-def receive_profiles(charm: CharmBase, tls:bool) -> None:
+
+def receive_profiles(charm: CharmBase, tls: bool) -> None:
     """Integrate with other charms over the receive-profiles relation endpoint."""
     if not charm.unit.is_leader():
         # TODO: leader-only because of
@@ -312,12 +313,8 @@ def receive_profiles(charm: CharmBase, tls:bool) -> None:
     grpc_endpoint = f"{fqdn}:{Port.otlp_grpc.value}"
     # this charm lib exposes a holistic API, so we don't need to bind the instance
     ProfilingEndpointProvider(
-        charm.model.relations['receive-profiles'],
-        app=charm.app
-        ).publish_endpoint(
-        otlp_grpc_endpoint=grpc_endpoint,
-        insecure=not tls
-    )
+        charm.model.relations["receive-profiles"], app=charm.app
+    ).publish_endpoint(otlp_grpc_endpoint=grpc_endpoint, insecure=not tls)
 
 
 def send_profiles(charm: CharmBase) -> List[ProfilingEndpoint]:
@@ -326,8 +323,10 @@ def send_profiles(charm: CharmBase) -> List[ProfilingEndpoint]:
     Returns:
         All profiling endpoints that we are receiving over `profiling` integrations.
     """
-    profiling_requirer = ProfilingEndpointRequirer(charm.model.relations['send-profiles'])
-    return [ProfilingEndpoint(ep.otlp_grpc, ep.insecure) for ep in profiling_requirer.get_endpoints()]
+    profiling_requirer = ProfilingEndpointRequirer(charm.model.relations["send-profiles"])
+    return [
+        ProfilingEndpoint(ep.otlp_grpc, ep.insecure) for ep in profiling_requirer.get_endpoints()
+    ]
 
 
 def send_traces(charm: CharmBase) -> Optional[str]:
@@ -487,11 +486,12 @@ def receive_server_cert(
     charm: CharmBase,
     server_cert_path: PathProtocol,
     private_key_path: PathProtocol,
+    root_ca_cert_path: PathProtocol,
 ) -> str:
-    """Integrate to receive a certificate and private key for the charm from relation data.
+    """Integrate to receive private key, cert, CA cert for the charm from relation data.
 
-    The certificate and key are obtained via the tls_certificates(v4) library,
-    and pushed to the workload container.
+    The key and certs are obtained via the tls_certificates(v4) library, and pushed to the
+    workload container.
 
     Returns:
         Hash of server cert and private key, to be used as reload trigger if it changed.
@@ -526,26 +526,26 @@ def receive_server_cert(
 
         server_cert_path.unlink() if server_cert_path.exists() else None
         private_key_path.unlink() if private_key_path.exists() else None
+        root_ca_cert_path.unlink() if root_ca_cert_path.exists() else None
         return sha256("")
 
     # Push the certificate and key to disk
-    server_cert_path.parent.mkdir(parents=True, exist_ok=True)
-    server_cert_path.write_text(str(provider_certificate.certificate))
     private_key_path.parent.mkdir(parents=True, exist_ok=True)
     private_key_path.write_text(str(private_key))
+    server_cert_path.parent.mkdir(parents=True, exist_ok=True)
+    server_cert_path.write_text(str(provider_certificate.certificate.raw))
+    root_ca_cert_path.parent.mkdir(parents=True, exist_ok=True)
+    root_ca_cert_path.write_text(str(provider_certificate.ca.raw))
 
-    logger.info("Certificate and private key have been pushed to disk")
+    logger.info("Certificates and private key have been pushed to disk")
+
+    # NOTE: we run `update-ca-certificates` in charm code
 
     return sha256(str(provider_certificate.certificate) + str(private_key))
 
 
-def receive_ca_cert(
-    charm: CharmBase, recv_ca_cert_folder_path: PathProtocol, refresh_certs: Callable
-) -> str:
+def receive_ca_cert(charm: CharmBase, recv_ca_cert_folder_path: PathProtocol) -> str:
     """Reconcile the certificates from the `receive-ca-cert` relation.
-
-    This function saves the certificates to disk, and runs
-    `update-ca-certificates` to trust them.
 
     Returns:
         Hash of the certificates to trust, to be used as reload trigger when changed.
@@ -567,8 +567,7 @@ def receive_ca_cert(
             cert_path = recv_ca_cert_folder_path.joinpath(f"{i}.crt")
             cert_path.write_text(cert)
 
-    # Refresh system certs
-    refresh_certs()
+    # NOTE: we run `update-ca-certificates` in charm code
 
     # A hot-reload doesn't pick up new system certs - need to restart the service
     return sha256(yaml.safe_dump(ca_certs))
@@ -604,6 +603,6 @@ def setup_service_mesh(charm: CharmBase) -> None:
                     Port.otlp_http.value,
                 ],
             ),
-        ]
+        ],
     )
     charm.__setattr__("mesh_consumer", mesh_consumer)
