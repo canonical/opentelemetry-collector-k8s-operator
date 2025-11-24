@@ -340,9 +340,9 @@ class ConfigManager:
         if not jobs:
             return
         for scrape_job in jobs:
+            scrape_job.setdefault("tls_config", {})
             # Otelcol acts as a client and scrapes the metrics-generating server, so we enable
             # toggling of skipping the validation of the server certificate
-            scrape_job.setdefault("tls_config", {})
             scrape_job["tls_config"].update({"insecure_skip_verify": self._insecure_skip_verify})
 
         self.config.add_component(
