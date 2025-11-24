@@ -84,8 +84,8 @@ class MockCertificate:
 
 
 @pytest.fixture
-def cert_obj(cert):
-    return MockCertificate(cert)
+def cert_obj(server_cert, ca_cert):
+    return MockCertificate(server_cert, ca_cert)
 
 
 @pytest.fixture
@@ -146,6 +146,3 @@ def config_manager():
         global_scrape_timeout="",
         insecure_skip_verify=True,
     )
-
-def cert_obj(server_cert, ca_cert):
-    return MockCertificate(server_cert, ca_cert)
