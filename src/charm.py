@@ -13,7 +13,7 @@ from charmlibs.pathops import ContainerPath
 from cosl import JujuTopology, MandatoryRelationPairs
 from lightkube.models.core_v1 import ResourceRequirements
 from ops import BlockedStatus, CharmBase, Container, StatusBase, main
-from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
+from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus, Relation
 from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     KubernetesComputeResourcesPatch,
@@ -378,8 +378,15 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         return any(self.model.relations.get("receive-server-cert", []))
 
     @property
-    def peers(self):
-        """Alias for the replicas peer relation to maintain compatibility with libraries."""
+    def peers(self) -> Optional[Relation]:
+        """Alias for the replicas peer relation.
+
+        This property maintains compatibility with the GrafanaDashboardProvider library,
+        which expects the charm to have a 'peers' attribute.
+
+        Returns:
+            The replicas peer relation, or None if no relation exists.
+        """
         return self.model.get_relation("replicas")
 
     def _resource_reqs_from_config(self) -> ResourceRequirements:
