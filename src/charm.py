@@ -23,6 +23,7 @@ import integrations
 from config_builder import Port
 from config_manager import ConfigManager
 from constants import (
+    CERTS_DIR,
     CONFIG_PATH,
     RECV_CA_CERT_FOLDER_PATH,
     SERVER_CERT_PATH,
@@ -195,6 +196,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         # For now, the only incoming and outgoing metrics relations are remote-write/scrape
         metrics_consumer_jobs = integrations.scrape_metrics(self)
+        # Write CA certificates to disk and update job configurations
+        self._ensure_certs_dir(container)
+        cert_paths = self._write_ca_certificates_to_disk(metrics_consumer_jobs, container)
+        metrics_consumer_jobs = config_manager.update_jobs_with_ca_paths(metrics_consumer_jobs, cert_paths)
         config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
         remote_write_endpoints = integrations.send_remote_write(self)
         config_manager.add_remote_write(remote_write_endpoints)
@@ -347,6 +352,42 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         }
         return checks
 
+
+    def _ensure_certs_dir(self, container: Container) -> None:
+        if not container.can_connect():
+            logger.warning("container not accessible, skipping certificates directory creation")
+            return
+
+        if container.exists(CERTS_DIR):
+            return
+
+        container.make_dir(CERTS_DIR, make_parents=True)
+
+    def _write_ca_certificates_to_disk(self, scrape_jobs: List[Dict], container: Container) -> Dict[str, str]:
+        cert_paths = {}
+
+        if not container.can_connect():
+            logger.warning("Container not accessible, skipping CA certificate processing")
+            return cert_paths
+
+        for job in scrape_jobs:
+            tls_config = job.get("tls_config", {})
+            ca_content = tls_config.get("ca")
+
+            if not ca_content or not self._validate_cert(ca_content):
+                continue
+
+            job_name = job.get("job_name", "default")
+            # Since the `MetricsEndpointProvider` accepts a `jobs` arg, we cannot rely on the job name being safe
+            safe_job_name = job_name.replace("/", "_").replace(" ", "_").replace("-", "_")
+            ca_cert_path = f"{CERTS_DIR}otel_{safe_job_name}_ca.pem"
+
+            container.push(ca_cert_path, ca_content, permissions=0o644)
+            cert_paths[job_name] = ca_cert_path
+            logger.debug(f"CA certificate for job '{job_name}' written to {ca_cert_path}")
+
+        return cert_paths
+
     @property
     def _otelcol_version(self) -> Optional[str]:
         """Returns the otelcol workload version."""
@@ -389,6 +430,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         requests = {"cpu": "0.25", "memory": "200Mi"}
         return adjust_resource_requirements(limits, requests, adhere_to_requests=True)
 
+    def _validate_cert(self, cert: str) -> bool:
+        pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"
+        return bool(re.search(pem_pattern, cert, re.DOTALL))
 
 if __name__ == "__main__":
     main(OpenTelemetryCollectorK8sCharm)
