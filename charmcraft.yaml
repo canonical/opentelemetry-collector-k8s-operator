@@ -150,7 +150,7 @@ requires:
     description: Send charm traces to a charmed Tempo instance.
 
 peers:
-  peers:
+  replicas:
     interface: otelcol_replica
 
 config:
