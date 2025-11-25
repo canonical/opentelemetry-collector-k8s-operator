@@ -377,6 +377,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _has_server_cert_relation(self) -> bool:
         return any(self.model.relations.get("receive-server-cert", []))
 
+    @property
+    def peers(self):
+        """Alias for the replicas peer relation to maintain compatibility with libraries."""
+        return self.model.get_relation("replicas")
+
     def _resource_reqs_from_config(self) -> ResourceRequirements:
         limits = {
             "cpu": self.model.config.get("cpu"),
