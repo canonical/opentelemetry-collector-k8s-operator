@@ -381,7 +381,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def peers(self) -> Optional[Relation]:
         """Alias for the replicas peer relation.
 
-        This property maintains compatibility with the GrafanaDashboardProvider library,
+        This property maintains compatibility with the grafana_dashboard library,
         which expects the charm to have a 'peers' attribute.
 
         Returns:
