@@ -14,7 +14,12 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
 from helpers import get_otelcol_file
 from ops.testing import Container, Relation, State
 
-from constants import CONFIG_PATH, SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH
+from constants import (
+    CONFIG_PATH,
+    SERVER_CERT_PATH,
+    SERVER_CA_CERT_PATH,
+    SERVER_CERT_PRIVATE_KEY_PATH,
+)
 
 
 def no_certs_in_receivers(otelcol_config: dict):
@@ -61,7 +66,9 @@ def test_waiting_for_cert(ctx, execs):
     assert not state_out.get_container("otelcol").services["otelcol"].is_running()
 
 
-def test_transitioned_from_http_to_https_to_http(ctx, execs, cert, cert_obj, private_key):
+def test_transitioned_from_http_to_https_to_http(
+    ctx, execs, cert_obj, private_key, server_cert, ca_cert
+):
     """Scenario: a tls-certificates relation joins and is later removed."""
     # GIVEN otelcol has received a cert
     container = Container(name="otelcol", can_connect=True, execs=execs)
@@ -79,15 +86,20 @@ def test_transitioned_from_http_to_https_to_http(ctx, execs, cert, cert_obj, pri
     state_in = State(relations=[ssc, data_sink], containers=[container])
     # Note: We patch the cert creation process on disk since it requires a dynamic cert, CSR, CA,
     # and cert chain in the remote app databag
-    with patch.object(
-        TLSCertificatesRequiresV4, "_find_available_certificates", return_value=None
-    ), patch.object(
-        TLSCertificatesRequiresV4, "get_assigned_certificate", return_value=(cert_obj, private_key)
-    ), patch.object(Certificate, "from_string", return_value=cert_obj):
+    with (
+        patch.object(TLSCertificatesRequiresV4, "_find_available_certificates", return_value=None),
+        patch.object(
+            TLSCertificatesRequiresV4,
+            "get_assigned_certificate",
+            return_value=(cert_obj, private_key),
+        ),
+        patch.object(Certificate, "from_string", return_value=cert_obj),
+    ):
         state_out = ctx.run(ctx.on.update_status(), state=state_in)
     # THEN the cert and private key files were written to disk
-    assert cert == get_otelcol_file(state_out, ctx, SERVER_CERT_PATH)
     assert private_key == get_otelcol_file(state_out, ctx, SERVER_CERT_PRIVATE_KEY_PATH)
+    assert server_cert == get_otelcol_file(state_out, ctx, SERVER_CERT_PATH)
+    assert ca_cert == get_otelcol_file(state_out, ctx, SERVER_CA_CERT_PATH)
     otelcol_config = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     # AND config file includes "key_file" and "cert_file" for receivers with a "protocols" section
     protocols = otelcol_config["receivers"]["otlp"]["protocols"]
@@ -103,6 +115,8 @@ def test_transitioned_from_http_to_https_to_http(ctx, execs, cert, cert_obj, pri
     # AND the cert and private key files are not on disk
     with pytest.raises(AssertionError, match="file does not exist"):
         get_otelcol_file(state_out, ctx, SERVER_CERT_PATH)
+    with pytest.raises(AssertionError, match="file does not exist"):
+        get_otelcol_file(state_out, ctx, SERVER_CA_CERT_PATH)
     with pytest.raises(AssertionError, match="file does not exist"):
         get_otelcol_file(state_out, ctx, SERVER_CERT_PRIVATE_KEY_PATH)
 
@@ -122,11 +136,15 @@ def test_https_endpoint_is_provided(ctx, execs, cert, cert_obj, private_key):
     )
     state_in = State(relations=[ssc, data_source], containers=[container])
     # WHEN a relation_changed event on the "receive-loki-logs" endpoint fires
-    with patch.object(
-        TLSCertificatesRequiresV4, "_find_available_certificates", return_value=None
-    ), patch.object(
-        TLSCertificatesRequiresV4, "get_assigned_certificate", return_value=(cert_obj, private_key)
-    ), patch.object(Certificate, "from_string", return_value=cert_obj):
+    with (
+        patch.object(TLSCertificatesRequiresV4, "_find_available_certificates", return_value=None),
+        patch.object(
+            TLSCertificatesRequiresV4,
+            "get_assigned_certificate",
+            return_value=(cert_obj, private_key),
+        ),
+        patch.object(Certificate, "from_string", return_value=cert_obj),
+    ):
         state_out = ctx.run(ctx.on.relation_changed(data_source), state=state_in)
     # THEN Otelcol provides its TLS endpoint in the databag
     for relation in state_out.relations:
