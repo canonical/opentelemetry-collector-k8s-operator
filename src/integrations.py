@@ -148,6 +148,80 @@ def send_loki_logs(charm: CharmBase) -> List[Dict]:
     return loki_consumer.loki_endpoints
 
 
+def send_syslog(charm: CharmBase) -> List[Dict]:
+    """Integrate with syslog servers via Juju config options.
+
+    This function reads syslog configuration from charm config and returns
+    endpoint information in a format suitable for the syslog exporter.
+
+    Unlike relation-based integrations, syslog configuration comes from
+    static charm config options rather than Juju relations.
+
+    Supports both single and multiple endpoints:
+    - Single: syslog_endpoint="host:514"
+    - Multiple: syslog_endpoints="host1:514,host2:514,host3:514"
+
+    If both are set, syslog_endpoints takes precedence.
+
+    Returns:
+        A list of dictionaries with syslog endpoint configurations, for instance:
+        [
+            {
+                "endpoint": "syslog-server.example.com:514",
+                "protocol": "rfc5424",
+                "network": "tcp"
+            }
+        ]
+
+        Returns an empty list if no syslog endpoints are configured.
+    """
+    # Try multi-endpoint first (takes precedence)
+    syslog_endpoints_str = charm.config.get("syslog_endpoints")
+
+    if syslog_endpoints_str:
+        # Parse comma-separated list and sanitize
+        # Strip whitespace and filter out empty strings
+        endpoint_list = [
+            endpoint.strip()
+            for endpoint in syslog_endpoints_str.split(",")
+            if endpoint.strip()
+        ]
+
+        # If parsing resulted in empty list, fall through to single endpoint check
+        if endpoint_list:
+            pass  # Use this list
+        else:
+            endpoint_list = []
+    else:
+        # Fall back to single endpoint
+        syslog_endpoint = charm.config.get("syslog_endpoint")
+        if syslog_endpoint:
+            endpoint_list = [syslog_endpoint.strip()]
+        else:
+            # No syslog configured
+            return []
+
+    # If still no endpoints after parsing, return empty
+    if not endpoint_list:
+        return []
+
+    # Get protocol and network with sensible defaults
+    # RFC5424: Modern syslog format with structured data support
+    # TCP: Reliable transport (critical for security logs)
+    syslog_protocol = charm.config.get("syslog_protocol") or "rfc5424"
+    syslog_network = charm.config.get("syslog_network") or "tcp"
+
+    # Build list of endpoint configurations
+    return [
+        {
+            "endpoint": endpoint,
+            "protocol": syslog_protocol,
+            "network": syslog_network,
+        }
+        for endpoint in endpoint_list
+    ]
+
+
 def key_value_pair_string_to_dict(key_value_pair: str) -> dict:
     """Transform a comma-separated key-value pairs into a dict."""
     result = {}

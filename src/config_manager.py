@@ -247,6 +247,47 @@ class ConfigManager:
             pipelines=[f"logs/{self._unit_name}"],
         )
 
+    def add_syslog_forwarding(self, endpoints: List[dict]) -> None:
+        """Configure syslog forwarding to one or more syslog servers.
+
+        This method sets up the syslog exporter to forward logs to the specified
+        syslog endpoints using either TCP or UDP transport. The exporter supports
+        both RFC5424 (modern) and RFC3164 (legacy BSD) syslog formats.
+
+        Each endpoint is configured with retry logic and a persistent sending queue
+        (via file_storage) to ensure log delivery even during network interruptions.
+
+        Args:
+            endpoints: List of syslog endpoint configurations. Each dict should contain:
+                       - endpoint (str): Syslog server address in "host:port" format
+                       - protocol (str): Message format - "rfc5424" or "rfc3164"
+                       - network (str): Transport protocol - "tcp" or "udp"
+
+        Example:
+            endpoints = [
+                {
+                    "endpoint": "rsyslog.staging.secops.canonical.com:514",
+                    "protocol": "rfc5424",
+                    "network": "tcp"
+                }
+            ]
+
+        See Also:
+            https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/syslogexporter
+        """
+        for idx, endpoint in enumerate(endpoints):
+            self.config.add_component(
+                Component.exporter,
+                f"syslog/send-syslog/{idx}",
+                {
+                    "endpoint": endpoint["endpoint"],
+                    "protocol": endpoint["protocol"],
+                    "network": endpoint["network"],
+                    **self.sending_queue_config,
+                },
+                pipelines=[f"logs/{self._unit_name}"],
+            )
+
     def add_profile_ingestion(self):
         """Configure ingesting profiles."""
         self.config.add_component(

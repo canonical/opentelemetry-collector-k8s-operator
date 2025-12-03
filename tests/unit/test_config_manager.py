@@ -161,3 +161,116 @@ def test_add_remote_write():
     )
     expected_config = dict(sorted(expected_remote_write_cfg.items()))
     assert config == expected_config
+
+
+def test_add_syslog_forwarding_single_endpoint():
+    # GIVEN an empty config
+    config_manager = ConfigManager(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+        insecure_skip_verify=True,
+    )
+
+    # WHEN a single syslog exporter is added to the config
+    expected_syslog_forwarding_cfg = {
+        "endpoint": "rsyslog.example.com:514",
+        "protocol": "rfc5424",
+        "network": "tcp",
+        "retry_on_failure": {
+            "max_elapsed_time": "5m",
+        },
+        "sending_queue": {"enabled": True, "queue_size": 1000, "storage": "file_storage"},
+    }
+    config_manager.add_syslog_forwarding(
+        endpoints=[
+            {
+                "endpoint": "rsyslog.example.com:514",
+                "protocol": "rfc5424",
+                "network": "tcp",
+            }
+        ],
+    )
+    # THEN it exists in the syslog exporter config
+    config = dict(
+        sorted(config_manager.config._config["exporters"]["syslog/send-syslog/0"].items())
+    )
+    expected_config = dict(sorted(expected_syslog_forwarding_cfg.items()))
+    assert config == expected_config
+
+
+def test_add_syslog_forwarding_multiple_endpoints():
+    # GIVEN an empty config
+    config_manager = ConfigManager(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+        insecure_skip_verify=True,
+    )
+
+    # WHEN multiple syslog exporters are added to the config
+    config_manager.add_syslog_forwarding(
+        endpoints=[
+            {
+                "endpoint": "rsyslog1.example.com:514",
+                "protocol": "rfc5424",
+                "network": "tcp",
+            },
+            {
+                "endpoint": "rsyslog2.example.com:514",
+                "protocol": "rfc5424",
+                "network": "tcp",
+            },
+            {
+                "endpoint": "rsyslog3.example.com:514",
+                "protocol": "rfc5424",
+                "network": "tcp",
+            },
+        ],
+    )
+
+    # THEN all three syslog exporters exist in the config
+    assert "syslog/send-syslog/0" in config_manager.config._config["exporters"]
+    assert "syslog/send-syslog/1" in config_manager.config._config["exporters"]
+    assert "syslog/send-syslog/2" in config_manager.config._config["exporters"]
+
+    # AND each exporter has the correct endpoint
+    assert (
+        config_manager.config._config["exporters"]["syslog/send-syslog/0"]["endpoint"]
+        == "rsyslog1.example.com:514"
+    )
+    assert (
+        config_manager.config._config["exporters"]["syslog/send-syslog/1"]["endpoint"]
+        == "rsyslog2.example.com:514"
+    )
+    assert (
+        config_manager.config._config["exporters"]["syslog/send-syslog/2"]["endpoint"]
+        == "rsyslog3.example.com:514"
+    )
+
+
+def test_add_syslog_forwarding_rfc3164_udp():
+    # GIVEN an empty config
+    config_manager = ConfigManager(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+        insecure_skip_verify=True,
+    )
+
+    # WHEN a syslog exporter is added with RFC3164 protocol and UDP network
+    config_manager.add_syslog_forwarding(
+        endpoints=[
+            {
+                "endpoint": "legacy-rsyslog.example.com:514",
+                "protocol": "rfc3164",
+                "network": "udp",
+            }
+        ],
+    )
+
+    # THEN the exporter has RFC3164 protocol and UDP network
+    exporter_config = config_manager.config._config["exporters"]["syslog/send-syslog/0"]
+    assert exporter_config["protocol"] == "rfc3164"
+    assert exporter_config["network"] == "udp"
+    assert exporter_config["endpoint"] == "legacy-rsyslog.example.com:514"

@@ -47,6 +47,62 @@ def refresh_certs(container: Container):
     container.exec(["update-ca-certificates", "--fresh"]).wait()
 
 
+def _validate_syslog_endpoints(charm: CharmBase) -> Optional[str]:
+    """Validate syslog endpoint configuration.
+
+    Checks that syslog endpoints (if configured) are in valid "host:port" format.
+
+    Args:
+        charm: The charm instance to read config from.
+
+    Returns:
+        An error message string if validation fails, None if valid or not configured.
+    """
+    # Get endpoint configurations (could be single or multiple)
+    syslog_endpoints_str = charm.config.get("syslog_endpoints")
+    syslog_endpoint = charm.config.get("syslog_endpoint")
+
+    # Collect all endpoints to validate
+    endpoints_to_validate = []
+
+    if syslog_endpoints_str:
+        # Parse comma-separated list
+        endpoints_to_validate = [
+            ep.strip() for ep in syslog_endpoints_str.split(",") if ep.strip()
+        ]
+    elif syslog_endpoint:
+        # Single endpoint
+        endpoints_to_validate = [syslog_endpoint.strip()]
+
+    # If no endpoints configured, nothing to validate
+    if not endpoints_to_validate:
+        return None
+
+    # Validate each endpoint format: hostname:port or ip:port
+    # Pattern explanation:
+    # - Hostname: alphanumeric, dots, hyphens (e.g., rsyslog.example.com, rsyslog-1)
+    # - Port: 1-5 digits (ports 1-65535)
+    endpoint_pattern = r"^[a-zA-Z0-9.-]+:\d{1,5}$"
+
+    for endpoint in endpoints_to_validate:
+        if not re.match(endpoint_pattern, endpoint):
+            return (
+                f"Invalid syslog endpoint format: '{endpoint}'. "
+                f"Expected format: 'hostname:port' or 'ip:port' (e.g., 'rsyslog.example.com:514')"
+            )
+
+        # Additional check: port must be in valid range (1-65535)
+        try:
+            port = int(endpoint.split(":")[-1])
+            if port < 1 or port > 65535:
+                return f"Invalid port in syslog endpoint '{endpoint}': port must be between 1 and 65535"
+        except ValueError:
+            return f"Invalid port in syslog endpoint '{endpoint}': port must be numeric"
+
+    # All endpoints valid
+    return None
+
+
 def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
     """Check whether mandatory relations are in place.
 
@@ -176,6 +232,17 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             config_manager.add_log_ingestion()
         config_manager.add_log_forwarding(loki_endpoints, insecure_skip_verify)
 
+        # Syslog forwarding setup
+        # Validate syslog endpoint configuration
+        syslog_validation_error = _validate_syslog_endpoints(self)
+        if syslog_validation_error:
+            self.unit.status = BlockedStatus(syslog_validation_error)
+            return
+
+        syslog_endpoints = integrations.send_syslog(self)
+        if syslog_endpoints:
+            config_manager.add_syslog_forwarding(syslog_endpoints)
+
         # Metrics setup
         topology = JujuTopology.from_charm(self)
         config_manager.add_self_scrape(
@@ -245,6 +312,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # If the config file or any cert has changed, a change in this environment variable
         # will trigger a restart
+        try:
+            container.exec(["chmod", "+x", "/otelcol"]).wait()
+        except APIError as e:
+            logger.error(f"Failed to set executable permission on /otelcol: {e}")
+            self.unit.status = BlockedStatus("Failed to set permissions on /otelcol")
+            return
+
         pebble_extra_env = {
             "_reload": ",".join(
                 [
@@ -300,7 +374,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     SERVICE_NAME: {
                         "override": "replace",
                         "summary": "opentelemetry-collector-k8s service",
-                        "command": " ".join(("/usr/bin/otelcol", *otelcol_args)),
+                        "command": " ".join(("/otelcol", *otelcol_args)),
                         "startup": "enabled",
                         "environment": {
                             "https_proxy": os.environ.get("JUJU_CHARM_HTTPS_PROXY", ""),
