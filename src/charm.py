@@ -374,7 +374,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     SERVICE_NAME: {
                         "override": "replace",
                         "summary": "opentelemetry-collector-k8s service",
-                        "command": " ".join(("/otelcol", *otelcol_args)),
+                        "command": " ".join(("/usr/bin/otelcol", *otelcol_args)),
                         "startup": "enabled",
                         "environment": {
                             "https_proxy": os.environ.get("JUJU_CHARM_HTTPS_PROXY", ""),
