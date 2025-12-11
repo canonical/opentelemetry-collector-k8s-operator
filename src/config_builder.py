@@ -298,9 +298,15 @@ class ConfigBuilder:
         """Add `tls::insecure_skip_verify` to every exporter's config.
 
         If the key already exists, the value is not updated.
+
+        Note: Excludes 'debug' and 'syslog' exporters.
+        - debug: Doesn't support TLS
+        - syslog: TLS is controlled via syslog_tls_enabled config option
         """
         for exporter in self._config.get("exporters", {}):
-            if exporter.split("/")[0] == "debug":
+            exporter_type = exporter.split("/")[0]
+            # Skip exporters that handle TLS separately or don't support it
+            if exporter_type in ("debug", "syslog"):
                 continue
             self._config["exporters"][exporter].setdefault("tls", {}).setdefault(
                 "insecure_skip_verify", insecure_skip_verify

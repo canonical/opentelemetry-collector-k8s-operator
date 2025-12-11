@@ -50,7 +50,7 @@ def refresh_certs(container: Container):
 def _validate_syslog_endpoints(charm: CharmBase) -> Optional[str]:
     """Validate syslog endpoint configuration.
 
-    Checks that syslog endpoints (if configured) are in valid "host:port" format.
+    Checks that syslog endpoints (if configured) are valid YAML with proper format.
 
     Args:
         charm: The charm instance to read config from.
@@ -58,46 +58,81 @@ def _validate_syslog_endpoints(charm: CharmBase) -> Optional[str]:
     Returns:
         An error message string if validation fails, None if valid or not configured.
     """
-    # Get endpoint configurations (could be single or multiple)
-    syslog_endpoints_str = charm.config.get("syslog_endpoints")
-    syslog_endpoint = charm.config.get("syslog_endpoint")
+    import yaml
 
-    # Collect all endpoints to validate
-    endpoints_to_validate = []
+    syslog_endpoints_yaml = charm.config.get("syslog_endpoints")
 
-    if syslog_endpoints_str:
-        # Parse comma-separated list
-        endpoints_to_validate = [
-            ep.strip() for ep in syslog_endpoints_str.split(",") if ep.strip()
-        ]
-    elif syslog_endpoint:
-        # Single endpoint
-        endpoints_to_validate = [syslog_endpoint.strip()]
-
-    # If no endpoints configured, nothing to validate
-    if not endpoints_to_validate:
+    # If not configured, nothing to validate
+    if not syslog_endpoints_yaml:
         return None
 
-    # Validate each endpoint format: hostname:port or ip:port
-    # Pattern explanation:
-    # - Hostname: alphanumeric, dots, hyphens (e.g., rsyslog.example.com, rsyslog-1)
-    # - Port: 1-5 digits (ports 1-65535)
+    # Parse YAML configuration
+    try:
+        endpoints_config = yaml.safe_load(syslog_endpoints_yaml)
+    except yaml.YAMLError as e:
+        return f"Invalid YAML in syslog_endpoints: {e}"
+
+    # Validate that we got a list
+    if not isinstance(endpoints_config, list):
+        return (
+            f"syslog_endpoints must be a YAML list, got {type(endpoints_config).__name__}. "
+            "Example: syslog_endpoints: |\n  - endpoint: rsyslog:514"
+        )
+
+    # Validate each endpoint entry
     endpoint_pattern = r"^[a-zA-Z0-9.-]+:\d{1,5}$"
 
-    for endpoint in endpoints_to_validate:
-        if not re.match(endpoint_pattern, endpoint):
+    for idx, endpoint_config in enumerate(endpoints_config):
+        # Each item must be a dictionary
+        if not isinstance(endpoint_config, dict):
             return (
-                f"Invalid syslog endpoint format: '{endpoint}'. "
-                f"Expected format: 'hostname:port' or 'ip:port' (e.g., 'rsyslog.example.com:514')"
+                f"Endpoint #{idx} must be a dictionary with 'endpoint' field. "
+                f"Got {type(endpoint_config).__name__}"
             )
 
-        # Additional check: port must be in valid range (1-65535)
+        # Endpoint field is required
+        endpoint = endpoint_config.get("endpoint")
+        if not endpoint:
+            return f"Endpoint #{idx} missing required 'endpoint' field"
+
+        # Validate endpoint format: hostname:port or ip:port
+        if not re.match(endpoint_pattern, endpoint):
+            return (
+                f"Invalid endpoint format in entry #{idx}: '{endpoint}'. "
+                "Expected 'hostname:port' or 'ip:port' (e.g., 'rsyslog.example.com:514')"
+            )
+
+        # Validate port range (1-65535)
         try:
             port = int(endpoint.split(":")[-1])
             if port < 1 or port > 65535:
-                return f"Invalid port in syslog endpoint '{endpoint}': port must be between 1 and 65535"
+                return (
+                    f"Invalid port in endpoint #{idx} '{endpoint}': "
+                    "port must be between 1 and 65535"
+                )
         except ValueError:
-            return f"Invalid port in syslog endpoint '{endpoint}': port must be numeric"
+            return f"Invalid port in endpoint #{idx} '{endpoint}': port must be numeric"
+
+        # Validate optional protocol field
+        protocol = endpoint_config.get("protocol")
+        if protocol and protocol not in ["rfc5424", "rfc3164"]:
+            return (
+                f"Invalid protocol in endpoint #{idx}: '{protocol}'. "
+                "Must be 'rfc5424' or 'rfc3164'"
+            )
+
+        # Validate optional network field
+        network = endpoint_config.get("network")
+        if network and network not in ["tcp", "udp"]:
+            return f"Invalid network in endpoint #{idx}: '{network}'. Must be 'tcp' or 'udp'"
+
+        # Validate optional tls_enabled field
+        tls_enabled = endpoint_config.get("tls_enabled")
+        if tls_enabled is not None and not isinstance(tls_enabled, bool):
+            return (
+                f"Invalid tls_enabled in endpoint #{idx}: must be boolean (true/false), "
+                f"got {type(tls_enabled).__name__}"
+            )
 
     # All endpoints valid
     return None
@@ -346,6 +381,19 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Mandatory relation pairs
         missing_relations = _get_missing_mandatory_relations(self)
+
+        # Allow syslog-only deployments without Loki charm
+        # If syslog export is configured, treat it as a valid exporter
+        if missing_relations:
+            syslog_configured = bool(self.config.get("syslog_endpoints"))
+
+            # If only missing Loki relation but syslog is configured, allow deployment
+            if syslog_configured and "send-loki-logs" in missing_relations:
+                logger.info(
+                    "Syslog export configured - allowing deployment without Loki relation"
+                )
+                missing_relations = None
+
         if missing_relations:
             self.unit.status = BlockedStatus(missing_relations)
 

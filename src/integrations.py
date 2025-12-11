@@ -157,69 +157,88 @@ def send_syslog(charm: CharmBase) -> List[Dict]:
     Unlike relation-based integrations, syslog configuration comes from
     static charm config options rather than Juju relations.
 
-    Supports both single and multiple endpoints:
-    - Single: syslog_endpoint="host:514"
-    - Multiple: syslog_endpoints="host1:514,host2:514,host3:514"
-
-    If both are set, syslog_endpoints takes precedence.
+    Configuration format (YAML):
+        syslog_endpoints: |
+          - endpoint: rsyslog1.example.com:514
+            protocol: rfc5424  # optional, default: rfc5424
+            network: tcp       # optional, default: tcp
+            tls_enabled: false # optional, default: false
+          - endpoint: rsyslog2.example.com:6514
+            protocol: rfc5424
+            network: tcp
+            tls_enabled: true
 
     Returns:
         A list of dictionaries with syslog endpoint configurations, for instance:
         [
             {
-                "endpoint": "syslog-server.example.com:514",
+                "endpoint": "rsyslog1.example.com:514",
                 "protocol": "rfc5424",
-                "network": "tcp"
+                "network": "tcp",
+                "tls_enabled": false
+            },
+            {
+                "endpoint": "rsyslog2.example.com:6514",
+                "protocol": "rfc5424",
+                "network": "tcp",
+                "tls_enabled": true
             }
         ]
 
-        Returns an empty list if no syslog endpoints are configured.
+        Returns an empty list if no syslog endpoints are configured or if parsing fails.
     """
-    # Try multi-endpoint first (takes precedence)
-    syslog_endpoints_str = charm.config.get("syslog_endpoints")
+    syslog_endpoints_yaml = charm.config.get("syslog_endpoints")
 
-    if syslog_endpoints_str:
-        # Parse comma-separated list and sanitize
-        # Strip whitespace and filter out empty strings
-        endpoint_list = [
-            endpoint.strip()
-            for endpoint in syslog_endpoints_str.split(",")
-            if endpoint.strip()
-        ]
-
-        # If parsing resulted in empty list, fall through to single endpoint check
-        if endpoint_list:
-            pass  # Use this list
-        else:
-            endpoint_list = []
-    else:
-        # Fall back to single endpoint
-        syslog_endpoint = charm.config.get("syslog_endpoint")
-        if syslog_endpoint:
-            endpoint_list = [syslog_endpoint.strip()]
-        else:
-            # No syslog configured
-            return []
-
-    # If still no endpoints after parsing, return empty
-    if not endpoint_list:
+    # If not configured, return empty list
+    if not syslog_endpoints_yaml:
         return []
 
-    # Get protocol and network with sensible defaults
-    # RFC5424: Modern syslog format with structured data support
-    # TCP: Reliable transport (critical for security logs)
-    syslog_protocol = charm.config.get("syslog_protocol") or "rfc5424"
-    syslog_network = charm.config.get("syslog_network") or "tcp"
+    # Parse YAML configuration
+    try:
+        endpoints_config = yaml.safe_load(syslog_endpoints_yaml)
+    except yaml.YAMLError as e:
+        logger.error("Failed to parse syslog_endpoints YAML: %s", e)
+        return []
 
-    # Build list of endpoint configurations
-    return [
-        {
-            "endpoint": endpoint,
-            "protocol": syslog_protocol,
-            "network": syslog_network,
-        }
-        for endpoint in endpoint_list
-    ]
+    # Validate that we got a list
+    if not isinstance(endpoints_config, list):
+        logger.error(
+            "syslog_endpoints must be a YAML list, got %s", type(endpoints_config).__name__
+        )
+        return []
+
+    # Process each endpoint with defaults
+    result = []
+    for idx, endpoint_config in enumerate(endpoints_config):
+        # Validate that each item is a dictionary
+        if not isinstance(endpoint_config, dict):
+            logger.warning(
+                "Skipping syslog endpoint #%d: expected dict, got %s",
+                idx,
+                type(endpoint_config).__name__,
+            )
+            continue
+
+        # Endpoint is required
+        endpoint = endpoint_config.get("endpoint")
+        if not endpoint:
+            logger.warning("Skipping syslog endpoint #%d: missing required 'endpoint' field", idx)
+            continue
+
+        # Apply defaults for optional fields
+        # RFC5424: Modern syslog format with structured data support (recommended)
+        # TCP: Reliable transport (critical for security logs)
+        # TLS: Disabled by default (plain TCP/UDP)
+        result.append(
+            {
+                "endpoint": str(endpoint).strip(),
+                "protocol": endpoint_config.get("protocol", "rfc5424"),
+                "network": endpoint_config.get("network", "tcp"),
+                "tls_enabled": endpoint_config.get("tls_enabled", False),
+            }
+        )
+
+    return result
 
 
 def key_value_pair_string_to_dict(key_value_pair: str) -> dict:

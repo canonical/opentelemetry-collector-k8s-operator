@@ -257,34 +257,91 @@ class ConfigManager:
         Each endpoint is configured with retry logic and a persistent sending queue
         (via file_storage) to ensure log delivery even during network interruptions.
 
+        **IMPORTANT:** The syslog exporter requires specific log record attributes to
+        populate RFC5424/RFC3164 fields. This method automatically adds a transform
+        processor to map standard OTLP fields to syslog exporter attributes:
+        - log.body → message attribute (RFC5424 MSG field)
+        - resource.attributes["service.name"] → appname (RFC5424 APP-NAME)
+        - resource.attributes["host.name"] → hostname (RFC5424 HOSTNAME)
+        - resource.attributes["service.instance.id"] → proc_id (RFC5424 PROCID)
+
         Args:
             endpoints: List of syslog endpoint configurations. Each dict should contain:
                        - endpoint (str): Syslog server address in "host:port" format
                        - protocol (str): Message format - "rfc5424" or "rfc3164"
                        - network (str): Transport protocol - "tcp" or "udp"
+                       - tls_enabled (bool): Whether to enable TLS encryption
 
         Example:
             endpoints = [
                 {
                     "endpoint": "rsyslog.staging.secops.canonical.com:514",
                     "protocol": "rfc5424",
-                    "network": "tcp"
+                    "network": "tcp",
+                    "tls_enabled": False
                 }
             ]
 
         See Also:
-            https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/syslogexporter
+            Syslog Exporter: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/syslogexporter
+            Transform Processor: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/transformprocessor
         """
+        # Add transform processor to prepare OTLP logs for syslog exporter
+        # The syslog exporter expects specific attributes that standard OTLP logs don't provide
+        # See: https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/syslogexporter/README.md
+        self.config.add_component(
+            Component.processor,
+            "transform/prepare-for-syslog",
+            {
+                "error_mode": "ignore",  # Continue processing even if transformation fails
+                "log_statements": [
+                    # Copy log body to 'message' attribute (required for RFC5424 MSG field)
+                    'set(log.attributes["message"], log.body)',
+
+                    # Map standard OTLP resource attributes to syslog RFC5424 fields
+                    # These are optional - if not present, syslog exporter uses '-' (NIL)
+                    'set(log.attributes["appname"], resource.attributes["service.name"]) where resource.attributes["service.name"] != nil',
+                    'set(log.attributes["hostname"], resource.attributes["host.name"]) where resource.attributes["host.name"] != nil',
+                    'set(log.attributes["proc_id"], resource.attributes["service.instance.id"]) where resource.attributes["service.instance.id"] != nil',
+
+                    # Fallback: Map from Juju-specific attributes (for logs coming via Loki Push API)
+                    # Only set if standard OTLP attributes weren't available
+                    'set(log.attributes["appname"], log.attributes["juju_application"]) where log.attributes["juju_application"] != nil and log.attributes["appname"] == nil',
+                    'set(log.attributes["hostname"], log.attributes["juju_unit"]) where log.attributes["juju_unit"] != nil and log.attributes["hostname"] == nil',
+                ],
+            },
+            pipelines=[f"logs/{self._unit_name}"],
+        )
+
         for idx, endpoint in enumerate(endpoints):
+            # Split endpoint into host and port (required by syslog exporter)
+            # The exporter expects separate 'endpoint' (host) and 'port' (int) fields
+            # See: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/syslogexporter
+            host, port = endpoint["endpoint"].split(":")
+
+            # Build exporter config
+            exporter_config = {
+                "endpoint": host,
+                "port": int(port),
+                "protocol": endpoint["protocol"],
+                "network": endpoint["network"],
+                **self.sending_queue_config,
+            }
+
+            # Configure TLS based on syslog_tls_enabled setting
+            # NOTE: Syslog exporter defaults to TLS ENABLED (insecure=false)
+            # We must explicitly set insecure=true to disable TLS
+            if endpoint.get("tls_enabled", False):
+                # TLS enabled - use cert validation based on global setting
+                exporter_config["tls"] = {"insecure": False, "insecure_skip_verify": self._insecure_skip_verify}
+            else:
+                # TLS disabled - set insecure=true to use plain TCP/UDP
+                exporter_config["tls"] = {"insecure": True}
+
             self.config.add_component(
                 Component.exporter,
                 f"syslog/send-syslog/{idx}",
-                {
-                    "endpoint": endpoint["endpoint"],
-                    "protocol": endpoint["protocol"],
-                    "network": endpoint["network"],
-                    **self.sending_queue_config,
-                },
+                exporter_config,
                 pipelines=[f"logs/{self._unit_name}"],
             )
 
