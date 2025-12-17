@@ -268,9 +268,7 @@ class ConfigBuilder:
                     self._add_to_pipeline(f"nop/{self._unit_name}", Component.exporter, [name])
                     nop_exporter_required = True
         if nop_exporter_required:
-            self.add_component(
-                Component.exporter, f"nop/{self._unit_name}", {"verbosity": "normal"}
-            )
+            self.add_component(Component.exporter, f"nop/{self._unit_name}", {})
 
     def _add_tls_to_all_receivers(
         self,
