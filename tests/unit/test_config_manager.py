@@ -216,7 +216,7 @@ def test_add_debug_exporters(enabled_pipelines, expected_pipelines):
     config_manager = ConfigManager("otelcol/0", "", "")
     initial_cfg = copy.copy(config_manager.config._config)
 
-    # WHEN a debug exporters are added to the config
+    # WHEN debug exporters are added to the config
     config_manager.add_debug_exporters(**enabled_pipelines)
 
     # THEN the config remains unchanged if no pipelines are enabled
