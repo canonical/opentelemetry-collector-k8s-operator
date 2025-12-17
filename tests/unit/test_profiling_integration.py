@@ -158,10 +158,10 @@ def test_receive_profiles_integration(sock_mock, ctx, execs, insecure_skip_verif
         == f"otelcol validate --config={CONFIG_PATH} --feature-gates=service.profilesSupport"
     )
 
-    # AND the profiling pipeline contains a profiling pipeline, but no exporters other than debug
+    # AND the profiling pipeline contains a profiling pipeline, but no exporters other than nop
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     assert cfg["service"]["pipelines"]["profiles"]["exporters"] == [
-        "debug/opentelemetry-collector-k8s/0"
+        "nop/opentelemetry-collector-k8s/0"
     ]
 
     # AND we publish to app databag our profile ingestion endpoints for otlp_grpc
