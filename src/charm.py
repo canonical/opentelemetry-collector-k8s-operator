@@ -199,7 +199,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Write CA certificates to disk and update job configurations
         self._ensure_certs_dir(container)
         cert_paths = self._write_ca_certificates_to_disk(metrics_consumer_jobs, container)
-        metrics_consumer_jobs = config_manager.update_jobs_with_ca_paths(metrics_consumer_jobs, cert_paths)
+        metrics_consumer_jobs = config_manager.update_jobs_with_ca_paths(
+            metrics_consumer_jobs, cert_paths
+        )
         config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
         remote_write_endpoints = integrations.send_remote_write(self)
         config_manager.add_remote_write(remote_write_endpoints)
@@ -243,6 +245,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             prometheus_url=cloud_integrator_data.prometheus_url,
             loki_url=cloud_integrator_data.loki_url,
             tempo_url=cloud_integrator_data.tempo_url,
+        )
+
+        # Add debug exporters from Juju config
+        config_manager.add_debug_exporters(
+            cast(bool, self.config.get("debug_exporter_for_logs")),
+            cast(bool, self.config.get("debug_exporter_for_metrics")),
+            cast(bool, self.config.get("debug_exporter_for_traces")),
         )
 
         # Add custom processors from Juju config
@@ -352,7 +361,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         }
         return checks
 
-
     def _ensure_certs_dir(self, container: Container) -> None:
         if not container.can_connect():
             logger.warning("container not accessible, skipping certificates directory creation")
@@ -363,7 +371,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         container.make_dir(CERTS_DIR, make_parents=True)
 
-    def _write_ca_certificates_to_disk(self, scrape_jobs: List[Dict], container: Container) -> Dict[str, str]:
+    def _write_ca_certificates_to_disk(
+        self, scrape_jobs: List[Dict], container: Container
+    ) -> Dict[str, str]:
         cert_paths = {}
 
         if not container.can_connect():
@@ -433,6 +443,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _validate_cert(self, cert: str) -> bool:
         pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"
         return bool(re.search(pem_pattern, cert, re.DOTALL))
+
 
 if __name__ == "__main__":
     main(OpenTelemetryCollectorK8sCharm)

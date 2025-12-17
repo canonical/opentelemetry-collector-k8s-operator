@@ -3,6 +3,10 @@
 
 """Feature: Opentelemetry-collector config builder."""
 
+import copy
+
+import pytest
+
 from config_manager import ConfigManager
 
 
@@ -161,3 +165,74 @@ def test_add_remote_write():
     )
     expected_config = dict(sorted(expected_remote_write_cfg.items()))
     assert config == expected_config
+
+
+@pytest.mark.parametrize(
+    "enabled_pipelines,expected_pipelines",
+    [
+        (
+            {"logs": False, "metrics": False, "traces": False},
+            {
+                "logs/otelcol/0": {"receivers": ["otlp"], "exporters": []},
+                "metrics/otelcol/0": {"receivers": ["otlp"], "exporters": []},
+                "traces/otelcol/0": {"receivers": ["otlp"], "exporters": []},
+            },
+        ),
+        (
+            {"logs": True, "metrics": True, "traces": True},
+            {
+                "logs/otelcol/0": {
+                    "receivers": ["otlp"],
+                    "exporters": ["debug/juju-config-enabled"],
+                },
+                "metrics/otelcol/0": {
+                    "receivers": ["otlp"],
+                    "exporters": ["debug/juju-config-enabled"],
+                },
+                "traces/otelcol/0": {
+                    "receivers": ["otlp"],
+                    "exporters": ["debug/juju-config-enabled"],
+                },
+            },
+        ),
+        (
+            {"logs": True, "metrics": False, "traces": True},
+            {
+                "logs/otelcol/0": {
+                    "receivers": ["otlp"],
+                    "exporters": ["debug/juju-config-enabled"],
+                },
+                "metrics/otelcol/0": {"receivers": ["otlp"]},
+                "traces/otelcol/0": {
+                    "receivers": ["otlp"],
+                    "exporters": ["debug/juju-config-enabled"],
+                },
+            },
+        ),
+    ],
+)
+def test_add_debug_exporters(enabled_pipelines, expected_pipelines):
+    # GIVEN an empty config
+    config_manager = ConfigManager("otelcol/0", "", "")
+    initial_cfg = copy.copy(config_manager.config._config)
+
+    # WHEN a debug exporters are added to the config
+    config_manager.add_debug_exporters(**enabled_pipelines)
+
+    # THEN the config remains unchanged if no pipelines are enabled
+    if not any(enabled_pipelines.values()):
+        assert initial_cfg == config_manager.config._config
+        return
+
+    # AND only one debug exporter is added to the list of exporters
+    assert 1 == sum(
+        "debug/juju-config-enabled" in key for key in config_manager.config._config["exporters"]
+    )
+    # AND there are no additional pipelines configured
+    assert list(config_manager.config._config["service"]["pipelines"].keys()) == [
+        "logs/otelcol/0",
+        "metrics/otelcol/0",
+        "traces/otelcol/0",
+    ]
+    # AND the debug exporter is only attached to the enabled pipelines
+    assert expected_pipelines == config_manager.config._config["service"]["pipelines"]
