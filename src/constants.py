@@ -3,7 +3,9 @@
 from typing import Final
 
 RECV_CA_CERT_FOLDER_PATH: Final[str] = "/usr/local/share/ca-certificates/juju_receive-ca-cert"
-SERVER_CA_CERT_PATH: Final[str] = "/usr/local/share/ca-certificates/juju_receive-ca-cert/cos-ca.crt"
+SERVER_CA_CERT_PATH: Final[str] = (
+    "/usr/local/share/ca-certificates/juju_receive-ca-cert/cos-ca.crt"
+)
 SERVER_CERT_PATH: Final[str] = "/etc/otelcol/otelcol-server-cert.crt"
 SERVER_CERT_PRIVATE_KEY_PATH: Final[str] = "/etc/otelcol/otelcol-private-key.key"
 CONFIG_PATH: Final[str] = "/etc/otelcol/config.yaml"

@@ -52,14 +52,14 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
     juju.integrate("avalanche", "otelcol:metrics-endpoint")
     juju.integrate("otelcol:send-remote-write", "prometheus")
     juju.wait(jubilant.all_active, delay=10, timeout=600)
-    # THEN rules arrive in prometheus
     prom_ip = juju.status().apps["prometheus"].units["prometheus/0"].address
-    data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/rules").text)["data"]
-    group_names = [group["name"] for group in data["groups"]]
-    assert any("_avalanche_" in item for item in group_names)
-    # AND the AlwaysFiring alerts from Avalanche arrive in prometheus
+    # THEN the AlwaysFiring alerts from Avalanche arrive in prometheus
     await _retry_prom_alerts_api(f"http://{prom_ip}:9090/api/v1/alerts")
     # AND juju_application labels in prometheus contain otel-collector and avalanche
     await _retry_prom_jobs_api(f"http://{prom_ip}:9090/api/v1/label/juju_application/values")
     # AND avalanche metrics arrive in prometheus
     await _retry_avalanche_metrics_arrive_prom(prom_ip)
+    # AND rules arrive in prometheus
+    data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/rules").text)["data"]
+    group_names = [group["name"] for group in data["groups"]]
+    assert any("_avalanche_" in item for item in group_names)
