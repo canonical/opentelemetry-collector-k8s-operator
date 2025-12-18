@@ -1,13 +1,13 @@
 """Helper module to build the configuration for OpenTelemetry Collector."""
 
 import logging
-from typing import Any, Optional, Dict, List, Literal, Set
+from typing import Any, Dict, List, Literal, Optional, Set
 
 import yaml
 
 from config_builder import Component, ConfigBuilder, Port
-from integrations import ProfilingEndpoint
 from constants import FILE_STORAGE_DIRECTORY
+from integrations import ProfilingEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -340,9 +340,10 @@ class ConfigManager:
         if not jobs:
             return
         for scrape_job in jobs:
+            scrape_job.setdefault("tls_config", {})
             # Otelcol acts as a client and scrapes the metrics-generating server, so we enable
             # toggling of skipping the validation of the server certificate
-            scrape_job.update({"tls_config": {"insecure_skip_verify": self._insecure_skip_verify}})
+            scrape_job["tls_config"].update({"insecure_skip_verify": self._insecure_skip_verify})
 
         self.config.add_component(
             Component.receiver,
@@ -563,5 +564,55 @@ class ConfigManager:
                     f"metrics/{self._unit_name}",
                     f"logs/{self._unit_name}",
                     f"traces/{self._unit_name}",
+                ],
+            )
+
+    def update_jobs_with_ca_paths(
+        self, metrics_consumer_jobs: List[Dict], cert_paths: Dict[str, str]
+    ) -> List[Dict]:
+        """Update jobs to use certificate file paths instead of certificate content.
+
+        This method updates the TLS configuration of Prometheus scrape jobs to
+        reference CA certificates by file path instead of containing the
+        certificate content directly.
+
+        Args:
+            metrics_consumer_jobs: List of scrape job dictionaries from MetricsEndpointConsumer
+            cert_paths: Dictionary mapping job names to their certificate file paths
+
+        Returns:
+            List of updated scrape job dictionaries with ca pointing to file paths
+        """
+        for job in metrics_consumer_jobs:
+            job_name = job.get("job_name", "default")
+
+            if job_name in cert_paths:
+                tls_config = job.get("tls_config", {})
+                tls_config["ca_file"] = cert_paths[job_name]
+                if "ca" in tls_config:
+                    tls_config.pop("ca")
+                job["tls_config"] = tls_config
+                logger.debug(
+                    f"updated job '{job_name}' to use certificate path: {cert_paths[job_name]}"
+                )
+
+        return metrics_consumer_jobs
+
+    def add_debug_exporters(self, logs: bool = False, metrics: bool = False, traces: bool = False):
+        """Add debug exporters for enabled pipelines.
+
+        We set `use_internal_logger` to False to keep the debug output separate from the
+        collector's internal logs.
+        """
+        pipelines = {"logs": logs, "metrics": metrics, "traces": traces}
+        if any(pipelines.values()):
+            self.config.add_component(
+                Component.exporter,
+                "debug/juju-config-enabled",
+                {"verbosity": "normal", "use_internal_logger": False},
+                pipelines=[
+                    f"{pipeline}/{self._unit_name}"
+                    for pipeline, enabled in pipelines.items()
+                    if enabled
                 ],
             )
