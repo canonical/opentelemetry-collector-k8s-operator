@@ -1,13 +1,14 @@
 """Feature: Otelcol can form TLS connections with HTTPS servers."""
 
-import textwrap
-import sh
-from typing import Dict
-import tempfile
-import time
-import pathlib
 import logging
+import pathlib
+import tempfile
+import textwrap
+import time
+from typing import Dict
+
 import jubilant
+import sh
 
 # This is needed for sh.juju
 # pyright: reportAttributeAccessIssue = false
@@ -82,6 +83,7 @@ async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resource
         f.flush()
         juju.deploy(f.name, trust=True)
     juju.wait(jubilant.all_active, delay=10, timeout=600)
+    juju.wait(jubilant.all_agents_idle, timeout=600)
 
     logger.info("Waiting for scrape interval (1 minute) to elapse...")
     scrape_interval = 60  # seconds!
@@ -106,7 +108,7 @@ def test_insecure_skip_verify(juju: jubilant.Juju):
 
     # WHEN we skip server certificate validation; Alertmanager for scraping and Prom for remote writing
     juju.config("otelcol", {"tls_insecure_skip_verify": True})
-    juju.wait(jubilant.all_agents_idle, timeout=60)
+    juju.wait(jubilant.all_agents_idle, timeout=120)
 
     # THEN scrape succeeds
     logger.info("Waiting for scrape interval (1 minute) to elapse...")

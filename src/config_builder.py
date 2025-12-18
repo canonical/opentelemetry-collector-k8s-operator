@@ -169,10 +169,16 @@ class ConfigBuilder:
                 f"traces/{self._unit_name}",
             ],
         )
-        # TODO https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/healthcheckextension
+        # FIXME https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/11780
         # Add TLS config to extensions
         self.add_extension("health_check", {"endpoint": f"0.0.0.0:{Port.health.value}"})
-        self.add_telemetry("logs", {"level": "WARN"})
+        self.add_telemetry(
+            "logs",
+            {
+                "level": "INFO",
+                "disable_stacktrace": True,
+            },
+        )
         self.add_telemetry("metrics", {"level": "normal"})
 
     def add_component(
