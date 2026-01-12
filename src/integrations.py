@@ -160,13 +160,15 @@ def send_syslog(charm: CharmBase) -> List[Dict]:
     Configuration format (YAML):
         syslog_endpoints: |
           - endpoint: rsyslog1.example.com:514
-            protocol: rfc5424  # optional, default: rfc5424
-            network: tcp       # optional, default: tcp
-            tls_enabled: false # optional, default: false
+            protocol: rfc5424         # optional, default: rfc5424
+            network: tcp              # optional, default: tcp
+            tls_enabled: false        # optional, default: false
           - endpoint: rsyslog2.example.com:6514
             protocol: rfc5424
             network: tcp
             tls_enabled: true
+            tls_secret: secret:abc123 # optional, for mutual TLS with client certs
+            tls_skip_verify: false    # optional, default: false
 
     Returns:
         A list of dictionaries with syslog endpoint configurations, for instance:
@@ -181,7 +183,9 @@ def send_syslog(charm: CharmBase) -> List[Dict]:
                 "endpoint": "rsyslog2.example.com:6514",
                 "protocol": "rfc5424",
                 "network": "tcp",
-                "tls_enabled": true
+                "tls_enabled": true,
+                "tls_secret": "secret:abc123",
+                "tls_skip_verify": false
             }
         ]
 
@@ -229,16 +233,155 @@ def send_syslog(charm: CharmBase) -> List[Dict]:
         # RFC5424: Modern syslog format with structured data support (recommended)
         # TCP: Reliable transport (critical for security logs)
         # TLS: Disabled by default (plain TCP/UDP)
-        result.append(
-            {
-                "endpoint": str(endpoint).strip(),
-                "protocol": endpoint_config.get("protocol", "rfc5424"),
-                "network": endpoint_config.get("network", "tcp"),
-                "tls_enabled": endpoint_config.get("tls_enabled", False),
-            }
-        )
+        # tls_skip_verify: Validate server certificates by default
+        endpoint_dict = {
+            "endpoint": str(endpoint).strip(),
+            "protocol": endpoint_config.get("protocol", "rfc5424"),
+            "network": endpoint_config.get("network", "tcp"),
+            "tls_enabled": endpoint_config.get("tls_enabled", False),
+            "tls_skip_verify": endpoint_config.get("tls_skip_verify", False),
+        }
+
+        # Include tls_secret if provided (for mutual TLS with client certificates)
+        tls_secret = endpoint_config.get("tls_secret")
+        if tls_secret:
+            endpoint_dict["tls_secret"] = str(tls_secret).strip()
+
+        result.append(endpoint_dict)
 
     return result
+
+
+def _is_valid_pem(content: str) -> bool:
+    """Validate basic PEM format (starts/ends with appropriate markers).
+
+    Args:
+        content: String content to validate
+
+    Returns:
+        True if content appears to be valid PEM format, False otherwise
+    """
+    content = content.strip()
+    if not content.startswith("-----BEGIN"):
+        return False
+
+    # Check for common PEM end markers
+    valid_endings = [
+        "-----END CERTIFICATE-----",
+        "-----END PRIVATE KEY-----",
+        "-----END RSA PRIVATE KEY-----",
+        "-----END EC PRIVATE KEY-----",
+    ]
+    return any(content.endswith(ending) for ending in valid_endings)
+
+
+def retrieve_syslog_certificates(
+    charm: CharmBase,
+    secret_uri: str,
+    endpoint_idx: int,
+    container_cert_path: PathProtocol,
+) -> Optional[Dict[str, str]]:
+    """Retrieve syslog client certificates from Juju secret and write to disk.
+
+    This function retrieves client certificates for mutual TLS authentication
+    with syslog servers (e.g., Wazuh rsyslog endpoints). The certificates are
+    obtained from a Juju secret and written to the OTEL container filesystem.
+
+    Args:
+        charm: Charm instance
+        secret_uri: Juju secret URI (e.g., "secret:abc123" or "secret://model.name")
+        endpoint_idx: Endpoint index for directory naming (matches syslog/send-syslog/<idx>)
+        container_cert_path: Base path for certificate storage (e.g., /etc/otelcol/syslog/certs)
+
+    Returns:
+        Dict with certificate file paths if successful:
+        {
+            "cert_file": "/etc/otelcol/syslog/certs/0/client.crt",
+            "key_file": "/etc/otelcol/syslog/certs/0/client.key",
+            "ca_file": "/etc/otelcol/syslog/certs/0/ca.crt",
+        }
+        None if retrieval failed or validation failed.
+
+    Side Effects:
+        - Writes 3 certificate files to container filesystem
+        - Logs warnings on failure (does NOT raise exceptions)
+        - Creates certificate directory if it doesn't exist
+
+    Example Secret Structure:
+        juju add-secret wazuh-certs \\
+          client-cert="$(cat client.crt)" \\
+          client-key="$(cat client.key)" \\
+          ca-cert="$(cat ca.crt)"
+    """
+    try:
+        # Extract secret ID from URI (handle both formats: "secret:id" and "secret://model.name")
+        if secret_uri.startswith("secret://"):
+            # Format: secret://model.secret-name -> use secret name
+            secret_id = secret_uri.split("://")[1].split(".")[-1]
+        elif secret_uri.startswith("secret:"):
+            # Format: secret:abc123 -> use ID directly
+            secret_id = secret_uri.split(":", 1)[1]
+        else:
+            logger.warning(
+                f"Invalid secret URI format: {secret_uri}. "
+                "Expected 'secret:id' or 'secret://model.name'"
+            )
+            return None
+
+        # Get secret content from Juju
+        logger.debug(f"Retrieving secret {secret_uri} for syslog endpoint {endpoint_idx}")
+        secret = charm.model.get_secret(id=secret_id)
+        secret_content = secret.get_content()
+
+        # Validate required keys
+        required_keys = ["client-cert", "client-key", "ca-cert"]
+        missing_keys = [key for key in required_keys if key not in secret_content]
+        if missing_keys:
+            logger.warning(
+                f"Secret {secret_uri} missing required keys: {missing_keys}. "
+                f"Expected keys: {required_keys}"
+            )
+            return None
+
+        # Validate PEM format for all certificates
+        for key in required_keys:
+            content = secret_content[key]
+            if not _is_valid_pem(content):
+                logger.warning(
+                    f"Secret {secret_uri} key '{key}' is not valid PEM format. "
+                    "Expected content starting with '-----BEGIN' and ending with appropriate marker."
+                )
+                return None
+
+        # Write certificates to disk
+        cert_dir = container_cert_path / str(endpoint_idx)
+        cert_dir.mkdir(parents=True, exist_ok=True)
+
+        cert_file = cert_dir / "client.crt"
+        key_file = cert_dir / "client.key"
+        ca_file = cert_dir / "ca.crt"
+
+        cert_file.write_text(secret_content["client-cert"])
+        key_file.write_text(secret_content["client-key"])
+        ca_file.write_text(secret_content["ca-cert"])
+
+        logger.info(
+            f"Syslog certificates written for endpoint {endpoint_idx} "
+            f"from secret {secret_uri}"
+        )
+
+        return {
+            "cert_file": str(cert_file),
+            "key_file": str(key_file),
+            "ca_file": str(ca_file),
+        }
+
+    except Exception as e:
+        logger.warning(
+            f"Failed to retrieve certificates from secret {secret_uri}: {e}. "
+            f"Endpoint {endpoint_idx} will fall back to encryption-only TLS."
+        )
+        return None
 
 
 def key_value_pair_string_to_dict(key_value_pair: str) -> dict:

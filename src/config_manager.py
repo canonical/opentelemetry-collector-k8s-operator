@@ -1,13 +1,17 @@
 """Helper module to build the configuration for OpenTelemetry Collector."""
 
 import logging
-from typing import Any, Optional, Dict, List, Literal, Set
+from typing import Any, Optional, Dict, List, Literal, Set, TYPE_CHECKING
 
 import yaml
+from charmlibs.pathops import ContainerPath
 
 from config_builder import Component, ConfigBuilder, Port
 from integrations import ProfilingEndpoint
-from constants import FILE_STORAGE_DIRECTORY
+from constants import FILE_STORAGE_DIRECTORY, SYSLOG_CERT_BASE_PATH
+
+if TYPE_CHECKING:
+    from ops import CharmBase, Container
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +251,12 @@ class ConfigManager:
             pipelines=[f"logs/{self._unit_name}"],
         )
 
-    def add_syslog_forwarding(self, endpoints: List[dict]) -> None:
+    def add_syslog_forwarding(
+        self,
+        endpoints: List[dict],
+        charm: "CharmBase",
+        container: "Container",
+    ) -> None:
         """Configure syslog forwarding to one or more syslog servers.
 
         This method sets up the syslog exporter to forward logs to the specified
@@ -265,12 +274,21 @@ class ConfigManager:
         - resource.attributes["host.name"] → hostname (RFC5424 HOSTNAME)
         - resource.attributes["service.instance.id"] → proc_id (RFC5424 PROCID)
 
+        **TLS Support:** Three modes are supported:
+        1. Mutual TLS: tls_enabled=true + tls_secret provided → Client certificate authentication
+        2. Encryption-only: tls_enabled=true, no tls_secret → TLS without client auth
+        3. Plaintext: tls_enabled=false → No encryption
+
         Args:
             endpoints: List of syslog endpoint configurations. Each dict should contain:
                        - endpoint (str): Syslog server address in "host:port" format
                        - protocol (str): Message format - "rfc5424" or "rfc3164"
                        - network (str): Transport protocol - "tcp" or "udp"
                        - tls_enabled (bool): Whether to enable TLS encryption
+                       - tls_secret (str, optional): Juju secret URI for client certificates
+                       - tls_skip_verify (bool, optional): Skip server certificate validation
+            charm: Charm instance for accessing Juju secrets
+            container: Container instance for writing certificates
 
         Example:
             endpoints = [
@@ -279,6 +297,14 @@ class ConfigManager:
                     "protocol": "rfc5424",
                     "network": "tcp",
                     "tls_enabled": False
+                },
+                {
+                    "endpoint": "wazuh.secops.canonical.com:6514",
+                    "protocol": "rfc5424",
+                    "network": "tcp",
+                    "tls_enabled": True,
+                    "tls_secret": "secret://model.wazuh-certs",
+                    "tls_skip_verify": False
                 }
             ]
 
@@ -328,15 +354,76 @@ class ConfigManager:
                 **self.sending_queue_config,
             }
 
-            # Configure TLS based on syslog_tls_enabled setting
+            # Configure TLS with support for three modes:
+            # 1. Mutual TLS (tls_enabled + tls_secret) - Client certificate authentication
+            # 2. Encryption-only (tls_enabled, no tls_secret) - TLS without client auth
+            # 3. Plaintext (tls_enabled=false) - No encryption
+            #
             # NOTE: Syslog exporter defaults to TLS ENABLED (insecure=false)
             # We must explicitly set insecure=true to disable TLS
-            if endpoint.get("tls_enabled", False):
-                # TLS enabled - use cert validation based on global setting
-                exporter_config["tls"] = {"insecure": False, "insecure_skip_verify": self._insecure_skip_verify}
+            tls_enabled = endpoint.get("tls_enabled", False)
+            tls_secret = endpoint.get("tls_secret")
+            tls_skip_verify = endpoint.get("tls_skip_verify", False)
+
+            if tls_enabled:
+                if tls_secret:
+                    # Mode 1: Mutual TLS with client certificates
+                    # Retrieve certificates from Juju secret and write to container
+                    import integrations
+                    cert_paths = integrations.retrieve_syslog_certificates(
+                        charm=charm,
+                        secret_uri=tls_secret,
+                        endpoint_idx=idx,
+                        container_cert_path=ContainerPath(
+                            SYSLOG_CERT_BASE_PATH,
+                            container=container
+                        ),
+                    )
+
+                    if cert_paths:
+                        # Successfully retrieved certificates - configure mutual TLS
+                        exporter_config["tls"] = {
+                            "insecure": False,
+                            "insecure_skip_verify": tls_skip_verify,
+                            "cert_file": cert_paths["cert_file"],
+                            "key_file": cert_paths["key_file"],
+                            "ca_file": cert_paths["ca_file"],
+                        }
+                        logger.info(
+                            f"Syslog endpoint {idx} ({host}:{port}) configured with mutual TLS "
+                            f"using certificates from {tls_secret}"
+                        )
+                    else:
+                        # Failed to retrieve certificates - fall back to encryption-only TLS
+                        # This prevents blocking the charm if secret is unavailable
+                        logger.warning(
+                            f"Syslog endpoint {idx} ({host}:{port}): Failed to retrieve certificates "
+                            f"from {tls_secret}. Falling back to encryption-only TLS (no client auth). "
+                            "Server certificate validation will be skipped for safety."
+                        )
+                        exporter_config["tls"] = {
+                            "insecure": False,
+                            "insecure_skip_verify": True,  # Must skip - we don't have CA cert
+                        }
+                else:
+                    # Mode 2: TLS encryption only (no client certificate authentication)
+                    exporter_config["tls"] = {
+                        "insecure": False,
+                        "insecure_skip_verify": tls_skip_verify,
+                    }
+                    logger.info(
+                        f"Syslog endpoint {idx} ({host}:{port}) configured with encryption-only TLS "
+                        "(no client certificate authentication)"
+                    )
             else:
-                # TLS disabled - set insecure=true to use plain TCP/UDP
+                # Mode 3: Plaintext (no TLS)
+                # CRITICAL: Must explicitly set insecure=true to disable TLS
+                # (syslog exporter defaults to TLS enabled)
                 exporter_config["tls"] = {"insecure": True}
+                logger.info(
+                    f"Syslog endpoint {idx} ({host}:{port}) configured for plaintext "
+                    "(TLS disabled)"
+                )
 
             self.config.add_component(
                 Component.exporter,

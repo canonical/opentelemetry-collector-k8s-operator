@@ -7,6 +7,7 @@ SERVER_CERT_PATH: Final[str] = (
     "/usr/local/share/ca-certificates/juju_tls-certificates/otelcol-server.crt"
 )
 SERVER_CERT_PRIVATE_KEY_PATH: Final[str] = "/etc/otelcol/private.key"
+SYSLOG_CERT_BASE_PATH: Final[str] = "/etc/otelcol/syslog/certs"
 CONFIG_PATH: Final[str] = "/etc/otelcol/config.yaml"
 SERVICE_NAME: Final[str] = "otelcol"
 METRICS_RULES_SRC_PATH: Final[str] = "src/prometheus_alert_rules"

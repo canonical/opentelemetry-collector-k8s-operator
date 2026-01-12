@@ -134,6 +134,38 @@ def _validate_syslog_endpoints(charm: CharmBase) -> Optional[str]:
                 f"got {type(tls_enabled).__name__}"
             )
 
+        # Validate optional tls_skip_verify field
+        tls_skip_verify = endpoint_config.get("tls_skip_verify")
+        if tls_skip_verify is not None and not isinstance(tls_skip_verify, bool):
+            return (
+                f"Invalid tls_skip_verify in endpoint #{idx}: must be boolean (true/false), "
+                f"got {type(tls_skip_verify).__name__}"
+            )
+
+        # Validate optional tls_secret field
+        tls_secret = endpoint_config.get("tls_secret")
+        if tls_secret is not None:
+            # Must be a string
+            if not isinstance(tls_secret, str):
+                return (
+                    f"Invalid tls_secret in endpoint #{idx}: must be a string, "
+                    f"got {type(tls_secret).__name__}"
+                )
+
+            # Must start with "secret:" prefix
+            if not tls_secret.startswith("secret:"):
+                return (
+                    f"Invalid tls_secret in endpoint #{idx}: '{tls_secret}'. "
+                    "Must start with 'secret:' (e.g., 'secret:abc123' or 'secret://model.name')"
+                )
+
+            # If tls_secret provided, tls_enabled must be true
+            if not tls_enabled:
+                return (
+                    f"Invalid configuration in endpoint #{idx}: 'tls_secret' provided but 'tls_enabled' is false. "
+                    "Mutual TLS requires tls_enabled: true"
+                )
+
     # All endpoints valid
     return None
 
@@ -276,7 +308,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         syslog_endpoints = integrations.send_syslog(self)
         if syslog_endpoints:
-            config_manager.add_syslog_forwarding(syslog_endpoints)
+            config_manager.add_syslog_forwarding(syslog_endpoints, self, container)
 
         # Metrics setup
         topology = JujuTopology.from_charm(self)
