@@ -379,13 +379,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # If the config file or any cert has changed, a change in this environment variable
         # will trigger a restart
-        try:
-            container.exec(["chmod", "+x", "/otelcol"]).wait()
-        except APIError as e:
-            logger.error(f"Failed to set executable permission on /otelcol: {e}")
-            self.unit.status = BlockedStatus("Failed to set permissions on /otelcol")
-            return
-
         pebble_extra_env = {
             "_reload": ",".join(
                 [

@@ -164,49 +164,67 @@ def test_add_remote_write():
 
 
 def test_add_syslog_forwarding_single_endpoint():
-    # GIVEN an empty config
+    """Test configuring a single syslog endpoint with plaintext TCP."""
+    from unittest.mock import MagicMock
+
+    # GIVEN an empty config and mock charm/container
     config_manager = ConfigManager(
         unit_name="fake/0",
         global_scrape_interval="",
         global_scrape_timeout="",
         insecure_skip_verify=True,
     )
+    mock_charm = MagicMock()
+    mock_container = MagicMock()
 
     # WHEN a single syslog exporter is added to the config
-    expected_syslog_forwarding_cfg = {
-        "endpoint": "rsyslog.example.com:514",
-        "protocol": "rfc5424",
-        "network": "tcp",
-        "retry_on_failure": {
-            "max_elapsed_time": "5m",
-        },
-        "sending_queue": {"enabled": True, "queue_size": 1000, "storage": "file_storage"},
-    }
     config_manager.add_syslog_forwarding(
         endpoints=[
             {
                 "endpoint": "rsyslog.example.com:514",
                 "protocol": "rfc5424",
                 "network": "tcp",
+                "tls_enabled": False,
             }
         ],
+        charm=mock_charm,
+        container=mock_container,
     )
-    # THEN it exists in the syslog exporter config
-    config = dict(
-        sorted(config_manager.config._config["exporters"]["syslog/send-syslog/0"].items())
-    )
-    expected_config = dict(sorted(expected_syslog_forwarding_cfg.items()))
-    assert config == expected_config
+
+    # THEN the syslog exporter exists in the config
+    assert "syslog/send-syslog/0" in config_manager.config._config["exporters"]
+    exporter_config = config_manager.config._config["exporters"]["syslog/send-syslog/0"]
+
+    # AND endpoint is split into host and port (syslog exporter requirement)
+    assert exporter_config["endpoint"] == "rsyslog.example.com"
+    assert exporter_config["port"] == 514
+    assert exporter_config["protocol"] == "rfc5424"
+    assert exporter_config["network"] == "tcp"
+
+    # AND TLS is explicitly disabled for plaintext
+    assert exporter_config["tls"] == {"insecure": True}
+
+    # AND retry/queue settings are configured
+    assert exporter_config["retry_on_failure"]["max_elapsed_time"] == "5m"
+    assert exporter_config["sending_queue"]["enabled"] is True
+
+    # AND the transform processor is added for OTLP → syslog field mapping
+    assert "transform/prepare-for-syslog" in config_manager.config._config["processors"]
 
 
 def test_add_syslog_forwarding_multiple_endpoints():
-    # GIVEN an empty config
+    """Test configuring multiple syslog endpoints."""
+    from unittest.mock import MagicMock
+
+    # GIVEN an empty config and mock charm/container
     config_manager = ConfigManager(
         unit_name="fake/0",
         global_scrape_interval="",
         global_scrape_timeout="",
         insecure_skip_verify=True,
     )
+    mock_charm = MagicMock()
+    mock_container = MagicMock()
 
     # WHEN multiple syslog exporters are added to the config
     config_manager.add_syslog_forwarding(
@@ -215,18 +233,23 @@ def test_add_syslog_forwarding_multiple_endpoints():
                 "endpoint": "rsyslog1.example.com:514",
                 "protocol": "rfc5424",
                 "network": "tcp",
+                "tls_enabled": False,
             },
             {
-                "endpoint": "rsyslog2.example.com:514",
+                "endpoint": "rsyslog2.example.com:6514",
                 "protocol": "rfc5424",
                 "network": "tcp",
+                "tls_enabled": False,
             },
             {
-                "endpoint": "rsyslog3.example.com:514",
+                "endpoint": "rsyslog3.example.com:1514",
                 "protocol": "rfc5424",
                 "network": "tcp",
+                "tls_enabled": False,
             },
         ],
+        charm=mock_charm,
+        container=mock_container,
     )
 
     # THEN all three syslog exporters exist in the config
@@ -234,29 +257,30 @@ def test_add_syslog_forwarding_multiple_endpoints():
     assert "syslog/send-syslog/1" in config_manager.config._config["exporters"]
     assert "syslog/send-syslog/2" in config_manager.config._config["exporters"]
 
-    # AND each exporter has the correct endpoint
-    assert (
-        config_manager.config._config["exporters"]["syslog/send-syslog/0"]["endpoint"]
-        == "rsyslog1.example.com:514"
-    )
-    assert (
-        config_manager.config._config["exporters"]["syslog/send-syslog/1"]["endpoint"]
-        == "rsyslog2.example.com:514"
-    )
-    assert (
-        config_manager.config._config["exporters"]["syslog/send-syslog/2"]["endpoint"]
-        == "rsyslog3.example.com:514"
-    )
+    # AND each exporter has the correct host and port (separated)
+    assert config_manager.config._config["exporters"]["syslog/send-syslog/0"]["endpoint"] == "rsyslog1.example.com"
+    assert config_manager.config._config["exporters"]["syslog/send-syslog/0"]["port"] == 514
+
+    assert config_manager.config._config["exporters"]["syslog/send-syslog/1"]["endpoint"] == "rsyslog2.example.com"
+    assert config_manager.config._config["exporters"]["syslog/send-syslog/1"]["port"] == 6514
+
+    assert config_manager.config._config["exporters"]["syslog/send-syslog/2"]["endpoint"] == "rsyslog3.example.com"
+    assert config_manager.config._config["exporters"]["syslog/send-syslog/2"]["port"] == 1514
 
 
 def test_add_syslog_forwarding_rfc3164_udp():
-    # GIVEN an empty config
+    """Test configuring legacy RFC3164 syslog with UDP transport."""
+    from unittest.mock import MagicMock
+
+    # GIVEN an empty config and mock charm/container
     config_manager = ConfigManager(
         unit_name="fake/0",
         global_scrape_interval="",
         global_scrape_timeout="",
         insecure_skip_verify=True,
     )
+    mock_charm = MagicMock()
+    mock_container = MagicMock()
 
     # WHEN a syslog exporter is added with RFC3164 protocol and UDP network
     config_manager.add_syslog_forwarding(
@@ -265,12 +289,16 @@ def test_add_syslog_forwarding_rfc3164_udp():
                 "endpoint": "legacy-rsyslog.example.com:514",
                 "protocol": "rfc3164",
                 "network": "udp",
+                "tls_enabled": False,
             }
         ],
+        charm=mock_charm,
+        container=mock_container,
     )
 
     # THEN the exporter has RFC3164 protocol and UDP network
     exporter_config = config_manager.config._config["exporters"]["syslog/send-syslog/0"]
     assert exporter_config["protocol"] == "rfc3164"
     assert exporter_config["network"] == "udp"
-    assert exporter_config["endpoint"] == "legacy-rsyslog.example.com:514"
+    assert exporter_config["endpoint"] == "legacy-rsyslog.example.com"
+    assert exporter_config["port"] == 514
