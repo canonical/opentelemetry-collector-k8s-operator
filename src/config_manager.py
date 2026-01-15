@@ -7,7 +7,7 @@ import yaml
 from charmlibs.pathops import ContainerPath
 
 from config_builder import Component, ConfigBuilder, Port
-from integrations import ProfilingEndpoint
+from integrations import ProfilingEndpoint, retrieve_syslog_certificates
 from constants import FILE_STORAGE_DIRECTORY, SYSLOG_CERT_BASE_PATH
 
 if TYPE_CHECKING:
@@ -369,8 +369,7 @@ class ConfigManager:
                 if tls_secret:
                     # Mode 1: Mutual TLS with client certificates
                     # Retrieve certificates from Juju secret and write to container
-                    import integrations
-                    cert_paths = integrations.retrieve_syslog_certificates(
+                    cert_paths = retrieve_syslog_certificates(
                         charm=charm,
                         secret_uri=tls_secret,
                         endpoint_idx=idx,
@@ -390,16 +389,18 @@ class ConfigManager:
                             "ca_file": cert_paths["ca_file"],
                         }
                         logger.info(
-                            f"Syslog endpoint {idx} ({host}:{port}) configured with mutual TLS "
-                            f"using certificates from {tls_secret}"
+                            "Syslog endpoint %d (%s:%s) configured with mutual TLS "
+                            "using certificates from %s",
+                            idx, host, port, tls_secret
                         )
                     else:
                         # Failed to retrieve certificates - fall back to encryption-only TLS
                         # This prevents blocking the charm if secret is unavailable
                         logger.warning(
-                            f"Syslog endpoint {idx} ({host}:{port}): Failed to retrieve certificates "
-                            f"from {tls_secret}. Falling back to encryption-only TLS (no client auth). "
-                            "Server certificate validation will be skipped for safety."
+                            "Syslog endpoint %d (%s:%s): Failed to retrieve certificates "
+                            "from %s. Falling back to encryption-only TLS (no client auth). "
+                            "Server certificate validation will be skipped for safety.",
+                            idx, host, port, tls_secret
                         )
                         exporter_config["tls"] = {
                             "insecure": False,
@@ -412,8 +413,9 @@ class ConfigManager:
                         "insecure_skip_verify": tls_skip_verify,
                     }
                     logger.info(
-                        f"Syslog endpoint {idx} ({host}:{port}) configured with encryption-only TLS "
-                        "(no client certificate authentication)"
+                        "Syslog endpoint %d (%s:%s) configured with encryption-only TLS "
+                        "(no client certificate authentication)",
+                        idx, host, port
                     )
             else:
                 # Mode 3: Plaintext (no TLS)
@@ -421,8 +423,8 @@ class ConfigManager:
                 # (syslog exporter defaults to TLS enabled)
                 exporter_config["tls"] = {"insecure": True}
                 logger.info(
-                    f"Syslog endpoint {idx} ({host}:{port}) configured for plaintext "
-                    "(TLS disabled)"
+                    "Syslog endpoint %d (%s:%s) configured for plaintext (TLS disabled)",
+                    idx, host, port
                 )
 
             self.config.add_component(

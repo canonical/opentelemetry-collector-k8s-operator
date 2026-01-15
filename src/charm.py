@@ -5,9 +5,11 @@
 
 import logging
 import os
-from typing import Dict, cast, Optional, List
 import re
 from functools import partial
+from typing import Dict, cast, Optional, List
+
+import yaml
 
 from charmlibs.pathops import ContainerPath
 from cosl import JujuTopology, MandatoryRelationPairs
@@ -34,6 +36,9 @@ from constants import (
 
 logger = logging.getLogger(__name__)
 
+# Compiled regex for syslog endpoint validation (hostname:port or ip:port)
+_SYSLOG_ENDPOINT_PATTERN = re.compile(r"^[a-zA-Z0-9.-]+:\d{1,5}$")
+
 
 def is_tls_ready(container: Container) -> bool:
     """Return True if the server cert and private key are present on disk."""
@@ -58,8 +63,6 @@ def _validate_syslog_endpoints(charm: CharmBase) -> Optional[str]:
     Returns:
         An error message string if validation fails, None if valid or not configured.
     """
-    import yaml
-
     syslog_endpoints_yaml = charm.config.get("syslog_endpoints")
 
     # If not configured, nothing to validate
@@ -80,8 +83,6 @@ def _validate_syslog_endpoints(charm: CharmBase) -> Optional[str]:
         )
 
     # Validate each endpoint entry
-    endpoint_pattern = r"^[a-zA-Z0-9.-]+:\d{1,5}$"
-
     for idx, endpoint_config in enumerate(endpoints_config):
         # Each item must be a dictionary
         if not isinstance(endpoint_config, dict):
@@ -96,7 +97,7 @@ def _validate_syslog_endpoints(charm: CharmBase) -> Optional[str]:
             return f"Endpoint #{idx} missing required 'endpoint' field"
 
         # Validate endpoint format: hostname:port or ip:port
-        if not re.match(endpoint_pattern, endpoint):
+        if not _SYSLOG_ENDPOINT_PATTERN.match(endpoint):
             return (
                 f"Invalid endpoint format in entry #{idx}: '{endpoint}'. "
                 "Expected 'hostname:port' or 'ip:port' (e.g., 'rsyslog.example.com:514')"

@@ -148,7 +148,7 @@ def send_loki_logs(charm: CharmBase) -> List[Dict]:
     return loki_consumer.loki_endpoints
 
 
-def send_syslog(charm: CharmBase) -> List[Dict]:
+def send_syslog(charm: CharmBase) -> List[Dict[str, Any]]:
     """Integrate with syslog servers via Juju config options.
 
     This function reads syslog configuration from charm config and returns
@@ -323,13 +323,14 @@ def retrieve_syslog_certificates(
             secret_id = secret_uri.split(":", 1)[1]
         else:
             logger.warning(
-                f"Invalid secret URI format: {secret_uri}. "
-                "Expected 'secret:id' or 'secret://model.name'"
+                "Invalid secret URI format: %s. "
+                "Expected 'secret:id' or 'secret://model.name'",
+                secret_uri
             )
             return None
 
         # Get secret content from Juju
-        logger.debug(f"Retrieving secret {secret_uri} for syslog endpoint {endpoint_idx}")
+        logger.debug("Retrieving secret %s for syslog endpoint %d", secret_uri, endpoint_idx)
         secret = charm.model.get_secret(id=secret_id)
         secret_content = secret.get_content()
 
@@ -338,8 +339,8 @@ def retrieve_syslog_certificates(
         missing_keys = [key for key in required_keys if key not in secret_content]
         if missing_keys:
             logger.warning(
-                f"Secret {secret_uri} missing required keys: {missing_keys}. "
-                f"Expected keys: {required_keys}"
+                "Secret %s missing required keys: %s. Expected keys: %s",
+                secret_uri, missing_keys, required_keys
             )
             return None
 
@@ -348,8 +349,9 @@ def retrieve_syslog_certificates(
             content = secret_content[key]
             if not _is_valid_pem(content):
                 logger.warning(
-                    f"Secret {secret_uri} key '{key}' is not valid PEM format. "
-                    "Expected content starting with '-----BEGIN' and ending with appropriate marker."
+                    "Secret %s key '%s' is not valid PEM format. "
+                    "Expected content starting with '-----BEGIN' and ending with appropriate marker.",
+                    secret_uri, key
                 )
                 return None
 
@@ -366,8 +368,8 @@ def retrieve_syslog_certificates(
         ca_file.write_text(secret_content["ca-cert"])
 
         logger.info(
-            f"Syslog certificates written for endpoint {endpoint_idx} "
-            f"from secret {secret_uri}"
+            "Syslog certificates written for endpoint %d from secret %s",
+            endpoint_idx, secret_uri
         )
 
         return {
@@ -378,8 +380,9 @@ def retrieve_syslog_certificates(
 
     except Exception as e:
         logger.warning(
-            f"Failed to retrieve certificates from secret {secret_uri}: {e}. "
-            f"Endpoint {endpoint_idx} will fall back to encryption-only TLS."
+            "Failed to retrieve certificates from secret %s: %s. "
+            "Endpoint %d will fall back to encryption-only TLS.",
+            secret_uri, e, endpoint_idx
         )
         return None
 

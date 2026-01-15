@@ -194,6 +194,8 @@ config:
               protocol: rfc5424
               network: tcp
               tls_enabled: true
+              tls_secret: secret:abc123  # optional, for mutual TLS
+              tls_skip_verify: false     # optional, default: false
 
         Single endpoint example:
           syslog_endpoints: |
@@ -204,6 +206,8 @@ config:
           - protocol (optional): Message format - "rfc5424" (modern, recommended) or "rfc3164" (legacy BSD)
           - network (optional): Transport protocol - "tcp" (reliable) or "udp" (faster but may lose packets)
           - tls_enabled (optional): Enable TLS encryption (true/false)
+          - tls_secret (optional): Juju secret URI containing client certificates for mutual TLS (e.g., "secret:abc123")
+          - tls_skip_verify (optional): Skip server certificate validation (true/false, default: false)
 
         Reference: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/syslogexporter
       type: string
