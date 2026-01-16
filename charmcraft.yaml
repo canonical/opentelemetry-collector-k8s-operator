@@ -148,6 +148,12 @@ requires:
     limit: 1
     optional: true
     description: Send charm traces to a charmed Tempo instance.
+  ingress:
+    interface: traefik_route
+    optional: true
+    description: |
+      Ingress integration for the Otelcol server, so that cross-model workloads can send their data
+      through the ingress. Uses `traefik_route` to open ports on Traefik host for tracing ingesters.
 
 peers:
   peers:
