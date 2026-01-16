@@ -1,7 +1,7 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Feature: Ingress for otel-collector components."""
+"""Feature: Otelcol server can operate behind an ingress."""
 
 import json
 from typing import Dict
@@ -12,15 +12,13 @@ import yaml
 
 from src.config_builder import Port
 
-# pyright: reportAttributeAccessIssue = false
-
 
 def get_ingress_url(juju: jubilant.Juju) -> str:
     traefik_status = juju.status().apps["traefik"].units["traefik/0"].workload_status
     return traefik_status.message.split()[-1]
 
 
-def test_health_via_ingress(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+def test_health_through_ingress(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: log forwarding via the LogProxyConsumer."""
     # GIVEN a model with otel-collector and traefik
     juju.deploy(charm, "otelcol", resources=charm_resources, trust=True)
@@ -33,7 +31,6 @@ def test_health_via_ingress(juju: jubilant.Juju, charm: str, charm_resources: Di
     # THEN the /health check is reachable through the ingress
     health_service = f"{get_ingress_url(juju)}:{Port.health.value}"
 
-    # {"status":"Server available","upSince":"2026-01-16T17:28:20.808002859Z","uptime":"12m23.477573742s"}
     # THEN the health service is reachable through ingress
     response = urlopen(health_service, timeout=2.0)
     assert response.code == 200, f"{health_service} was not reachable"
