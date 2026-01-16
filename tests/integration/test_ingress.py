@@ -4,7 +4,6 @@
 """Feature: Ingress for otel-collector components."""
 
 import json
-import pathlib
 from typing import Dict
 from urllib.request import urlopen
 

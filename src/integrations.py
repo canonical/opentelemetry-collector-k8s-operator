@@ -99,6 +99,11 @@ def receive_loki_logs(charm: CharmBase, tls: bool, ingress_address: Optional[str
     This function must be called before `send_loki_logs`, so that the charm
     can gather all the alerts from relation data before sending them all
     to Loki.
+
+    Args:
+        charm: the otel-collector charm object
+        tls: whether TLS is enabled
+        ingress_address: the ingress address which will provide the push API endpoint
     """
     forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
     charm_root = charm.charm_dir.absolute()
@@ -108,7 +113,10 @@ def receive_loki_logs(charm: CharmBase, tls: bool, ingress_address: Optional[str
         port=Port.loki_http.value,
         scheme="https" if tls else "http",
     )
-    loki_provider.update_endpoint(ingress_address)
+
+    if ingress_address:
+        loki_provider.update_endpoint(ingress_address)
+
     charm.__setattr__("loki_provider", loki_provider)
     shutil.copytree(
         charm_root.joinpath(*LOKI_RULES_SRC_PATH.split("/")),
@@ -630,7 +638,6 @@ def _ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) 
     http_services = {}
     middlewares = {}
     for port in Port:
-        logger.warning(f"+++INGRESS: {ingress.is_ready()}, {ingress.scheme}, {ingress.external_host}+++")
         sanitized_protocol = port.name.replace("_", "-")
         redirect_middleware = (
             {
