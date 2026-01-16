@@ -699,7 +699,6 @@ def ingress_ready(ingress: TraefikRouteRequirer) -> bool:
     return bool(ingress.is_ready() and ingress.scheme and ingress.external_host)
 
 
-# TODO: Consider making this Ingress into a class like Luca did for CloudIntegrator to avoid passing args too often
 def setup_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
     """Integrate via ingress to enable ingress per app.
 

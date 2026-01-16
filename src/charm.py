@@ -152,7 +152,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         integrations.setup_service_mesh(self)
 
         # Ingress integration
-        self.framework.breakpoint()
         ingress = integrations.setup_ingress(self, tls=is_tls_ready(container))
 
         # Integrate with TLS relations
