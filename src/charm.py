@@ -16,6 +16,7 @@ from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
 )
 from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl import JujuTopology, MandatoryRelationPairs
+from cosl.reconciler import all_events, observe_events
 from lightkube.models.core_v1 import ResourceRequirements
 from ops import BlockedStatus, CharmBase, Container, StatusBase, main
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
@@ -116,7 +117,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.unit.status = MaintenanceStatus("Waiting for otelcol to start")
             return
 
-        self._reconcile()
+        observe_events(self, all_events, self._reconcile)
 
     def _reconcile(self):
         """Recreate the world state for the charm.
