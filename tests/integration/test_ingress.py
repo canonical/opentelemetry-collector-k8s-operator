@@ -4,8 +4,9 @@
 """Feature: Otelcol server can operate behind an ingress."""
 
 import json
+import time
 from typing import Dict
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
 
 import jubilant
 import yaml
@@ -26,7 +27,8 @@ def test_health_through_ingress(juju: jubilant.Juju, charm: str, charm_resources
 
     # WHEN otel-collector is related to an ingress provider
     juju.integrate("otelcol:ingress", "traefik")
-    juju.wait(jubilant.all_active, timeout=300, error=jubilant.any_error)
+    juju.wait(jubilant.all_active, timeout=450, error=jubilant.any_error)
+    juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
 
     # THEN the /health check is reachable through the ingress
     health_service = f"{get_ingress_url(juju)}:{Port.health.value}"
@@ -46,16 +48,37 @@ def test_logs_received_through_ingress(juju: jubilant.Juju):
 
     # WHEN otel-collector is related to an ingress provider
     juju.integrate("otelcol:receive-loki-logs", "otelcol-push")
-    juju.wait(jubilant.all_active, timeout=300, error=jubilant.any_error)
+    juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
 
     # THEN otel-collector is publishing its ingress address in the databag
-    # TODO: [1] is brittle, we could access list by object key search
-    push_show_unit = yaml.safe_load(juju.cli("show-unit", "otelcol-push/0"))
-    logs_relation = push_show_unit["otelcol-push/0"]["relation-info"][1]
+    push_show_unit = yaml.safe_load(juju.cli("show-unit", "otelcol-push/0"))["otelcol-push/0"]
+    logs_relation = next(
+        (item for item in push_show_unit["relation-info"] if item["endpoint"] == "send-loki-logs"),
+        None,
+    )
+    assert logs_relation
     push_api_url = json.loads(logs_relation["related-units"]["otelcol/0"]["data"]["endpoint"])[
         "url"
     ]
-    assert push_api_url == f"{get_ingress_url(juju)}/loki/api/v1/push"
+    assert push_api_url == f"{get_ingress_url(juju)}:{Port.loki_http.value}/loki/api/v1/push"
 
     # AND THEN the logs arrive in the otelcol pipeline
-    # TODO: add this
+    data = {
+        "streams": [
+            {
+                "stream": {"label": "value"},
+                "values": [
+                    [str(time.time_ns()), "log line 1"],
+                    [str(time.time_ns()), "log line 2"],
+                ],
+            }
+        ]
+    }
+    req = Request(
+        push_api_url,
+        data=json.dumps(data).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+
+    response = urlopen(req, timeout=2.0)
+    assert response.getcode() == 204

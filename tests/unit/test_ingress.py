@@ -24,7 +24,7 @@ def test_external_url_in_databag(ctx, otelcol_container):
 
     # THEN external_url is present in receive-loki-logs relation databag
     receive_logs_out = out.get_relations(receive_logs_endpoint.endpoint)[0]
-    expected_data = {"url": "http://1.2.3.4/loki/api/v1/push"}
+    expected_data = {"url": f"http://1.2.3.4:{Port.loki_http.value}/loki/api/v1/push"}
     assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data
 
 

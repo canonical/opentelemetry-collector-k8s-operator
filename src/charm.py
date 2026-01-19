@@ -46,19 +46,16 @@ def is_tls_ready(container: Container) -> bool:
 
 def scheme(container: Container) -> str:
     """Return the URI scheme that should be used when communicating with this unit."""
-    scheme = "http"
-    if is_tls_ready(container):
-        scheme = "https"
-    return scheme
+    return "https" if is_tls_ready(container) else "http"
 
 
 def external_url(ingress: TraefikRouteRequirer) -> Optional[str]:
     """Return the external URL for the ingress, if configured."""
-    ingress_url: Optional[str] = None
-    if integrations.ingress_ready(ingress):
-        ingress_url = f"{ingress.scheme}://{ingress.external_host}"
-    logger.debug("This unit's ingress URL: %s", ingress_url)
-    return ingress_url
+    return (
+        f"{ingress.scheme}://{ingress.external_host}"
+        if integrations.ingress_ready(ingress)
+        else None
+    )
 
 
 def internal_url(container: Container) -> str:

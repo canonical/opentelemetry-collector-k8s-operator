@@ -10,6 +10,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast, get_args
+from urllib.parse import urlparse
 
 import yaml
 from charmlibs.pathops import PathProtocol
@@ -111,11 +112,11 @@ def receive_loki_logs(charm: CharmBase, tls: bool, ingress_address: Optional[str
         charm,
         relation_name="receive-loki-logs",
         port=Port.loki_http.value,
-        scheme="https" if tls else "http",
+        scheme=urlparse(ingress_address).scheme if ingress_address else "https" if tls else "http",
     )
 
     if ingress_address:
-        loki_provider.update_endpoint(ingress_address)
+        loki_provider.update_endpoint(f"{ingress_address}:{Port.loki_http.value}")
 
     charm.__setattr__("loki_provider", loki_provider)
     shutil.copytree(
