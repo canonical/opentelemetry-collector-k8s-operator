@@ -5,19 +5,20 @@
 
 import logging
 import os
-from typing import Dict, cast, Optional, List
 import re
+from typing import Dict, List, Optional, cast
 
 from charmlibs.pathops import ContainerPath
-from cosl import JujuTopology, MandatoryRelationPairs
-from lightkube.models.core_v1 import ResourceRequirements
-from ops import BlockedStatus, CharmBase, Container, StatusBase, main
-from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
-from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     KubernetesComputeResourcesPatch,
     adjust_resource_requirements,
 )
+from cosl import JujuTopology, MandatoryRelationPairs
+from cosl.reconciler import all_events, observe_events
+from lightkube.models.core_v1 import ResourceRequirements
+from ops import BlockedStatus, CharmBase, Container, StatusBase, main
+from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
+from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
 
 import integrations
 from config_builder import Port
@@ -26,12 +27,11 @@ from constants import (
     CERTS_DIR,
     CONFIG_PATH,
     RECV_CA_CERT_FOLDER_PATH,
-    SERVER_CERT_PATH,
     SERVER_CA_CERT_PATH,
+    SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
     SERVICE_NAME,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.unit.status = MaintenanceStatus("Waiting for otelcol to start")
             return
 
-        self._reconcile()
+        observe_events(self, all_events, self._reconcile)
 
     def _reconcile(self):
         """Recreate the world state for the charm.
