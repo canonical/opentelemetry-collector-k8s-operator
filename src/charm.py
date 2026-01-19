@@ -16,7 +16,7 @@ from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
 from cosl import JujuTopology, MandatoryRelationPairs
 from cosl.reconciler import all_events, observe_events
 from lightkube.models.core_v1 import ResourceRequirements
-from ops import BlockedStatus, CharmBase, Container, StatusBase, main
+from ops import BlockedStatus, CharmBase, Container, StatusBase, ActionEvent, main
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
 
@@ -96,6 +96,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.unit.status = MaintenanceStatus("Waiting for otelcol to start")
             return
 
+        observe_events(self, [ActionEvent], self._reconcile)
         observe_events(self, all_events, self._reconcile)
 
     def _reconcile(self):
