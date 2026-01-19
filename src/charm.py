@@ -119,7 +119,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         observe_events(self, all_events, self._reconcile)
 
-    def _reconcile(self):
+    def _reconcile(self, event):
         """Recreate the world state for the charm.
 
         In order to trigger a restart when needed, this method tracks configuration changes
