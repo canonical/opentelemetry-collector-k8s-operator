@@ -48,6 +48,8 @@ def test_logs_received_through_ingress(juju: jubilant.Juju):
 
     # WHEN otel-collector is related to an ingress provider
     juju.integrate("otelcol:receive-loki-logs", "otelcol-push")
+    juju.wait(lambda status: jubilant.all_active(status, 'traefik', 'otelcol-push'), timeout=300, error=jubilant.any_error)
+    juju.wait(lambda status: jubilant.all_blocked(status, 'otelcol'), timeout=300, error=jubilant.any_error)
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
 
     # THEN otel-collector is publishing its ingress address in the databag
