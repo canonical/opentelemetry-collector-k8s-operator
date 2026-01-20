@@ -1351,6 +1351,8 @@ class LokiPushApiProvider(Object):
         else:
             relations_list = [relation]
 
+        # To make this library reconciler-friendly, the endpoint URL is now sticky i.e., once the
+        # endpoint is updated with a custom URL, using the public method, it cannot be unset.
         if url:
             self._custom_url = url
 
