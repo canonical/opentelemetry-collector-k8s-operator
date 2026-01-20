@@ -57,6 +57,7 @@ from config_builder import Port, sha256
 from constants import (
     DASHBOARDS_DEST_PATH,
     DASHBOARDS_SRC_PATH,
+    INGRESS_IP_MATCHER,
     LOKI_RULES_DEST_PATH,
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
@@ -658,8 +659,7 @@ def _ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) 
         http_routers[f"juju-{charm.model.name}-{charm.model.app.name}-{sanitized_protocol}"] = {
             "entryPoints": [sanitized_protocol],
             "service": f"juju-{charm.model.name}-{charm.model.app.name}-service-{sanitized_protocol}",
-            # TODO better matcher
-            "rule": "ClientIP(`0.0.0.0/0`)",
+            "rule": INGRESS_IP_MATCHER,
             **({"middlewares": list(redirect_middleware.keys())} if redirect_middleware else {}),
         }
         # anything else, including secured GRPC, can use _internal_url

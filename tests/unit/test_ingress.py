@@ -41,42 +41,42 @@ def test_traefik_sent_config(ctx, otelcol_container):
             "routers": {
                 f"juju-{state.model.name}-{charm_name}-health": {
                     "entryPoints": ["health"],
-                    "rule": "ClientIP(`0.0.0.0/0`)",
+                    "rule": INGRESS_IP_MATCHER,
                     "service": f"juju-{state.model.name}-{charm_name}-service-health",
                 },
                 f"juju-{state.model.name}-{charm_name}-jaeger-grpc": {
                     "entryPoints": ["jaeger-grpc"],
-                    "rule": "ClientIP(`0.0.0.0/0`)",
+                    "rule": INGRESS_IP_MATCHER,
                     "service": f"juju-{state.model.name}-{charm_name}-service-jaeger-grpc",
                 },
                 f"juju-{state.model.name}-{charm_name}-jaeger-thrift-http": {
                     "entryPoints": ["jaeger-thrift-http"],
-                    "rule": "ClientIP(`0.0.0.0/0`)",
+                    "rule": INGRESS_IP_MATCHER,
                     "service": f"juju-{state.model.name}-{charm_name}-service-jaeger-thrift-http",
                 },
                 f"juju-{state.model.name}-{charm_name}-loki-http": {
                     "entryPoints": ["loki-http"],
-                    "rule": "ClientIP(`0.0.0.0/0`)",
+                    "rule": INGRESS_IP_MATCHER,
                     "service": f"juju-{state.model.name}-{charm_name}-service-loki-http",
                 },
                 f"juju-{state.model.name}-{charm_name}-metrics": {
                     "entryPoints": ["metrics"],
-                    "rule": "ClientIP(`0.0.0.0/0`)",
+                    "rule": INGRESS_IP_MATCHER,
                     "service": f"juju-{state.model.name}-{charm_name}-service-metrics",
                 },
                 f"juju-{state.model.name}-{charm_name}-otlp-grpc": {
                     "entryPoints": ["otlp-grpc"],
-                    "rule": "ClientIP(`0.0.0.0/0`)",
+                    "rule": INGRESS_IP_MATCHER,
                     "service": f"juju-{state.model.name}-{charm_name}-service-otlp-grpc",
                 },
                 f"juju-{state.model.name}-{charm_name}-otlp-http": {
                     "entryPoints": ["otlp-http"],
-                    "rule": "ClientIP(`0.0.0.0/0`)",
+                    "rule": INGRESS_IP_MATCHER,
                     "service": f"juju-{state.model.name}-{charm_name}-service-otlp-http",
                 },
                 f"juju-{state.model.name}-{charm_name}-zipkin": {
                     "entryPoints": ["zipkin"],
-                    "rule": "ClientIP(`0.0.0.0/0`)",
+                    "rule": INGRESS_IP_MATCHER,
                     "service": f"juju-{state.model.name}-{charm_name}-service-zipkin",
                 },
             },
