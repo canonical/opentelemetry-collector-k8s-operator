@@ -10,6 +10,7 @@ import yaml
 from ops.testing import Relation, State
 
 from src.config_builder import Port
+from src.constants import INGRESS_IP_MATCHER
 
 
 def test_external_url_in_databag(ctx, otelcol_container):
