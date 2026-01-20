@@ -1189,6 +1189,7 @@ class LokiPushApiProvider(Object):
         self.scheme = scheme
         self.address = address
         self.path = path
+        self.custom_url = None
 
         events = self._charm.on[relation_name]
         self.framework.observe(self._charm.on.upgrade_charm, self._on_lifecycle_event)
@@ -1339,7 +1340,10 @@ class LokiPushApiProvider(Object):
         else:
             relations_list = [relation]
 
-        endpoint = self._endpoint(url or self._url)
+        if url:
+            self.custom_url = url
+
+        endpoint = self._endpoint(self.custom_url or self._url)
 
         for relation in relations_list:
             relation.data[self._charm.unit].update({"endpoint": json.dumps(endpoint)})
