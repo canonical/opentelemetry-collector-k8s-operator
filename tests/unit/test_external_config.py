@@ -18,9 +18,11 @@ We test:
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 from ops.testing import Relation, State
 
+from charm import OpenTelemetryCollectorK8sCharm
 from src.constants import EXTERNAL_CONFIG_SECRETS_DIR
 
 
@@ -384,3 +386,45 @@ def test_external_config_invalid_component_type(config_manager):
     # Invalid component type should not be in the config
     assert "invalid_component_type" not in config_dict
 
+
+@pytest.mark.parametrize(
+    "method_name,expected_warning,container_method_to_check",
+    [
+        (
+            "_remove_external_configs_secrets_dir",
+            "container not accessible, skipping external config secrets directory creation",
+            "remove_path",
+        ),
+        (
+            "_ensure_external_configs_secrets_dir",
+            "container not accessible, skipping external config secrets directory creation",
+            "make_dir",
+        ),
+        (
+            "_write_secrets_to_disk",
+            "Container not accessible, cannot write secrets to disk",
+            None,
+        ),
+    ],
+    ids=["remove_dir", "ensure_dir", "write_secrets"],
+)
+def test_container_operations_when_disconnected(
+    disconnected_container, method_name, expected_warning, container_method_to_check
+):
+    """Test that charm operations log warning and skip work when container is disconnected."""
+    # GIVEN a mock charm instance and a disconnected container
+    with patch('charm.OpenTelemetryCollectorK8sCharm.__init__', lambda *args: None):
+        mock_charm = OpenTelemetryCollectorK8sCharm(MagicMock())
+
+        with patch('charm.logger') as mock_logger:
+            # WHEN attempting to perform the operation
+            method = getattr(mock_charm, method_name)
+            method(disconnected_container)
+
+            # THEN a warning is logged about container not being accessible
+            mock_logger.warning.assert_called_once_with(expected_warning)
+
+            # AND no container operations are attempted (if applicable)
+            if container_method_to_check:
+                container_method = getattr(disconnected_container, container_method_to_check)
+                container_method.assert_not_called()
