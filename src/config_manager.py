@@ -617,7 +617,7 @@ class ConfigManager:
                 ],
             )
 
-    def add_external_config(self, external_configs: List[Dict[str, Any]]) -> None:
+    def add_external_configs(self, external_configs: List[Dict[str, Any]]) -> None:
         """Merge external configuration into the current config.
 
         This method merges the provided external configuration dictionary
@@ -626,7 +626,6 @@ class ConfigManager:
         Args:
             external_config: Dictionary containing external configuration to merge.
         """
-
         for configs in external_configs:
             if "config_yaml" not in configs:
                 logger.warning("external configs missing 'config_yaml' key, skipping")

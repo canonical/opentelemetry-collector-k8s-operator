@@ -458,7 +458,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         return
 
     def _configure_external_configs(self, config_manager: ConfigManager):
-        config_manager.add_external_config(self.external_configs)
+        config_manager.add_external_configs(self.external_configs)
 
 
     @property
