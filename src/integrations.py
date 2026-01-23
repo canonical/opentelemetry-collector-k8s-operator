@@ -10,6 +10,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast, get_args
+from urllib.parse import urlparse
 
 import yaml
 from charmlibs.pathops import PathProtocol
@@ -20,6 +21,10 @@ from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
     GrafanaCloudConfigRequirer,
 )
 from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
+from charms.istio_beacon_k8s.v0.service_mesh import (
+    ServiceMeshConsumer,
+    UnitPolicy,
+)
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
 from charms.otelcol_integrator.v0.otelcol_integrator import OtelcolIntegratorRequirer
 from charms.prometheus_k8s.v0.prometheus_scrape import (
@@ -29,8 +34,8 @@ from charms.prometheus_k8s.v1.prometheus_remote_write import (
     PrometheusRemoteWriteConsumer,
 )
 from charms.pyroscope_coordinator_k8s.v0.profiling import (
-    ProfilingEndpointRequirer,
     ProfilingEndpointProvider,
+    ProfilingEndpointRequirer,
 )
 from charms.tempo_coordinator_k8s.v0.tracing import (
     ReceiverProtocol,
@@ -44,6 +49,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     Mode,
     TLSCertificatesRequiresV4,
 )
+from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl import LZMABase64
 from ops import CharmBase, tracing
 from ops.model import Relation
@@ -53,15 +59,11 @@ from constants import (
     DASHBOARDS_DEST_PATH,
     DASHBOARDS_SRC_PATH,
     EXTERNAL_CONFIG_SECRETS_DIR,
+    INGRESS_IP_MATCHER,
     LOKI_RULES_DEST_PATH,
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
-)
-
-from charms.istio_beacon_k8s.v0.service_mesh import (
-    ServiceMeshConsumer,
-    UnitPolicy,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,12 +106,17 @@ def receive_external_configs(charm: CharmBase):
     charm.__setattr__("external_secret_files", external_secret_files)
 
 
-def receive_loki_logs(charm: CharmBase, tls: bool):
+def receive_loki_logs(charm: CharmBase, tls: bool, ingress_address: Optional[str]) -> None:
     """Integrate with other charms via the receive-loki-logs relation endpoint.
 
     This function must be called before `send_loki_logs`, so that the charm
     can gather all the alerts from relation data before sending them all
     to Loki.
+
+    Args:
+        charm: the otel-collector charm object
+        tls: whether TLS is enabled
+        ingress_address: the ingress address which will provide the push API endpoint
     """
     forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
     charm_root = charm.charm_dir.absolute()
@@ -117,8 +124,12 @@ def receive_loki_logs(charm: CharmBase, tls: bool):
         charm,
         relation_name="receive-loki-logs",
         port=Port.loki_http.value,
-        scheme="https" if tls else "http",
+        scheme=urlparse(ingress_address).scheme if ingress_address else "https" if tls else "http",
     )
+
+    if ingress_address:
+        loki_provider.update_endpoint(f"{ingress_address}:{Port.loki_http.value}")
+
     charm.__setattr__("loki_provider", loki_provider)
     shutil.copytree(
         charm_root.joinpath(*LOKI_RULES_SRC_PATH.split("/")),
@@ -618,3 +629,101 @@ def setup_service_mesh(charm: CharmBase) -> None:
         ],
     )
     charm.__setattr__("mesh_consumer", mesh_consumer)
+
+
+def _static_ingress_config() -> dict:
+    entry_points = {}
+    for port in Port:
+        sanitized_protocol = port.name.replace("_", "-")
+        entry_points[sanitized_protocol] = {"address": f":{port.value}"}
+
+    return {"entryPoints": entry_points}
+
+
+def _build_lb_server_config(scheme: str, port: int) -> List[Dict[str, str]]:
+    """Build the server portion of the loadbalancer config of Traefik ingress."""
+    return [{"url": f"{scheme}://{socket.getfqdn()}:{port}"}]
+
+
+def _ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> dict:
+    """Build a raw ingress configuration for Traefik."""
+    http_routers = {}
+    http_services = {}
+    middlewares = {}
+    for port in Port:
+        sanitized_protocol = port.name.replace("_", "-")
+        redirect_middleware = (
+            {
+                f"juju-{charm.model.name}-{charm.model.app.name}-middleware-{sanitized_protocol}": {
+                    "redirectScheme": {
+                        "permanent": True,
+                        "port": port.value,
+                        "scheme": "https",
+                    }
+                }
+            }
+            if ingress.is_ready() and ingress.scheme == "https"
+            else {}
+        )
+        middlewares.update(redirect_middleware)
+
+        http_routers[f"juju-{charm.model.name}-{charm.model.app.name}-{sanitized_protocol}"] = {
+            "entryPoints": [sanitized_protocol],
+            "service": f"juju-{charm.model.name}-{charm.model.app.name}-service-{sanitized_protocol}",
+            "rule": INGRESS_IP_MATCHER,
+            **({"middlewares": list(redirect_middleware.keys())} if redirect_middleware else {}),
+        }
+        # anything else, including secured GRPC, can use _internal_url
+        # ref https://doc.traefik.io/traefik/v2.0/user-guides/grpc/#with-https
+        http_services[
+            f"juju-{charm.model.name}-{charm.model.app.name}-service-{sanitized_protocol}"
+        ] = {
+            "loadBalancer": {
+                "servers": _build_lb_server_config("http" if not tls else "https", port.value)
+            }
+        }
+
+    return {
+        "http": {
+            "routers": http_routers,
+            "services": http_services,
+            # else we get: level=error msg="Error occurred during watcher callback:
+            # ...: middlewares cannot be a standalone element (type map[string]*dynamic.Middleware)"
+            # providerName=file
+            **({"middlewares": middlewares} if middlewares else {}),
+        }
+    }
+
+
+def _update_ingress_relation(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> None:
+    """Make sure the traefik route is up-to-date."""
+    if not charm.unit.is_leader():
+        return
+
+    if ingress.is_ready():
+        ingress.submit_to_traefik(
+            _ingress_config(charm, ingress, tls), static=_static_ingress_config()
+        )
+
+
+def ingress_ready(ingress: TraefikRouteRequirer) -> bool:
+    """Check if ingress is ready."""
+    return bool(ingress.is_ready() and ingress.scheme and ingress.external_host)
+
+
+def setup_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
+    """Integrate via ingress to enable ingress per app.
+
+    Returns:
+        A list of dictionaries where each dictionary provides information about
+        a single remote_write endpoint.
+    """
+    ingress = TraefikRouteRequirer(
+        charm,
+        charm.model.get_relation("ingress"),  # type: ignore
+        "ingress",
+    )
+    charm.__setattr__("ingress", ingress)
+    _update_ingress_relation(charm, ingress, tls)
+
+    return ingress

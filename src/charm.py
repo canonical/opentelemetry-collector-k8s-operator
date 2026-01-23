@@ -5,19 +5,21 @@
 
 import logging
 import os
-from typing import Dict, cast, Optional, List
 import re
+import socket
+from typing import Dict, List, Optional, cast
 
 from charmlibs.pathops import ContainerPath
+from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
+    KubernetesComputeResourcesPatch,
+    adjust_resource_requirements,
+)
+from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl import JujuTopology, MandatoryRelationPairs
 from lightkube.models.core_v1 import ResourceRequirements
 from ops import BlockedStatus, CharmBase, Container, StatusBase, main
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
-from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
-    KubernetesComputeResourcesPatch,
-    adjust_resource_requirements,
-)
 
 import integrations
 from config_builder import Port
@@ -27,12 +29,11 @@ from constants import (
     CONFIG_PATH,
     EXTERNAL_CONFIG_SECRETS_DIR,
     RECV_CA_CERT_FOLDER_PATH,
-    SERVER_CERT_PATH,
     SERVER_CA_CERT_PATH,
+    SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
     SERVICE_NAME,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,25 @@ def is_tls_ready(container: Container) -> bool:
     return container.exists(path=SERVER_CERT_PATH) and container.exists(
         path=SERVER_CERT_PRIVATE_KEY_PATH
     )
+
+
+def scheme(container: Container) -> str:
+    """Return the URI scheme that should be used when communicating with this unit."""
+    return "https" if is_tls_ready(container) else "http"
+
+
+def external_url(ingress: TraefikRouteRequirer) -> Optional[str]:
+    """Return the external URL for the ingress, if configured."""
+    return (
+        f"{ingress.scheme}://{ingress.external_host}"
+        if integrations.ingress_ready(ingress)
+        else None
+    )
+
+
+def internal_url(container: Container) -> str:
+    """Return the locally addressable, FQDN based service address."""
+    return f"{scheme(container)}://{socket.getfqdn()}"
 
 
 def refresh_certs(container: Container):
@@ -129,6 +149,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Service mesh integration
         integrations.setup_service_mesh(self)
 
+        # Ingress integration
+        ingress = integrations.setup_ingress(self, tls=is_tls_ready(container))
+
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
             self,
@@ -176,7 +199,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         feature_gates: Optional[str] = None
 
         # Logs setup
-        integrations.receive_loki_logs(self, tls=is_tls_ready(container))
+        integrations.receive_loki_logs(self, is_tls_ready(container), external_url(ingress))
         loki_endpoints = integrations.send_loki_logs(self)
         if self._incoming_logs:
             config_manager.add_log_ingestion()
