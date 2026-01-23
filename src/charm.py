@@ -435,7 +435,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         return
 
     def _configure_external_configs(self, config_manager: ConfigManager):
-        self.framework.breakpoint()
         config_manager.add_external_config(self.external_configs)
 
 

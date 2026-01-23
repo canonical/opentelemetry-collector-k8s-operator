@@ -629,24 +629,26 @@ class ConfigManager:
 
         for configs in external_configs:
             if "config_yaml" not in configs:
-                logger.warning("External configs missing 'config_yaml' key, skipping")
+                logger.warning("external configs missing 'config_yaml' key, skipping")
                 continue
 
             if "pipelines" not in configs:
-                logger.warning("External configs missing 'pipelines' key, skipping")
+                logger.warning("external configs missing 'pipelines' key, skipping")
                 continue
 
             config_block = yaml.safe_load(configs["config_yaml"])
 
             for config_type, config in config_block.items():
                 if config_type not in Component:
+                    logger.warning("wrong component type '%s' in external config, skipping", config_type)
                     continue
 
                 for name, cnf in config.items():
-
+                    comp_name = f"{name}/{self._unit_name}"
                     self.config.add_component(
                         Component(config_type),
-                        f"{name}/{self._unit_name}",
+                        comp_name,
                         cnf,
                         pipelines=[f"{pipeline}/{self._unit_name}" for pipeline in configs["pipelines"]],
                     )
+                    logger.debug("component type: '%s', name: '%s' added to config", config_type, comp_name)
