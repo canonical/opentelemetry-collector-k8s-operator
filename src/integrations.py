@@ -30,6 +30,7 @@ from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
 )
 from charms.prometheus_k8s.v1.prometheus_remote_write import (
+    PrometheusRemoteWriteProvider,
     PrometheusRemoteWriteConsumer,
 )
 from charms.pyroscope_coordinator_k8s.v0.profiling import (
@@ -95,7 +96,7 @@ def _add_alerts(alerts: Dict, dest_path: Path):
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
 
 
-def receive_loki_logs(charm: CharmBase, tls: bool, ingress_address: Optional[str]) -> None:
+def receive_loki_logs(charm: CharmBase, address_mgr: "AddressManager") -> None:
     """Integrate with other charms via the receive-loki-logs relation endpoint.
 
     This function must be called before `send_loki_logs`, so that the charm
@@ -105,7 +106,7 @@ def receive_loki_logs(charm: CharmBase, tls: bool, ingress_address: Optional[str
     Args:
         charm: the otel-collector charm object
         tls: whether TLS is enabled
-        ingress_address: the ingress address which will provide the push API endpoint
+        address_mgr: a dataclass for determining network addressing
     """
     forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
     charm_root = charm.charm_dir.absolute()
@@ -113,11 +114,10 @@ def receive_loki_logs(charm: CharmBase, tls: bool, ingress_address: Optional[str
         charm,
         relation_name="receive-loki-logs",
         port=Port.loki_http.value,
-        scheme=urlparse(ingress_address).scheme if ingress_address else "https" if tls else "http",
+        scheme=address_mgr.resolved_scheme,
     )
 
-    if ingress_address:
-        loki_provider.update_endpoint(f"{ingress_address}:{Port.loki_http.value}")
+    loki_provider.update_endpoint(f"{address_mgr.resolved_url}:{Port.loki_http.value}")
 
     charm.__setattr__("loki_provider", loki_provider)
     shutil.copytree(
@@ -230,6 +230,16 @@ def scrape_metrics(charm: CharmBase) -> List:
     return metrics_consumer.jobs()
 
 
+def receive_remote_write(charm: CharmBase, address_mgr: "AddressManager"):
+    """Integrate via receive-remote-write to receive metrics at a Prometheus-compatible endpoint."""
+    remote_write = PrometheusRemoteWriteProvider(
+        charm,
+        server_url_func=lambda: f"{address_mgr.resolved_url}:{Port.prometheus_http.value}",
+    )
+    charm.__setattr__("remote_write", remote_write)
+    remote_write.update_endpoint()
+
+
 def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
     """Integrate via send-remote-write to send metrics to a Prometheus-compatible endpoint.
 
@@ -247,7 +257,7 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
         peer_relation_name="peers",
     )
     charm.__setattr__("remote_write", remote_write)
-    # TODO: add alerts from remote write
+    # TODO: add alerts from remote write, reminder
     # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
     # TODO: Luca: probably don't need this anymore
     remote_write.reload_alerts()
@@ -632,6 +642,37 @@ def _static_ingress_config() -> dict:
 def _build_lb_server_config(scheme: str, port: int) -> List[Dict[str, str]]:
     """Build the server portion of the loadbalancer config of Traefik ingress."""
     return [{"url": f"{scheme}://{socket.getfqdn()}:{port}"}]
+
+
+@dataclass
+class AddressManager:
+    """Provide address information for the charm.
+
+    This class must be instantiated after all networking-related events have occurred. For example:
+        - ingress events
+        - tls events
+    """
+
+    internal_url: str
+    external_url: Optional[str]
+    tls: bool
+
+    @property
+    def resolved_url(self) -> str:
+        """Return the outer most URL."""
+        return self.external_url if self.external_url else self.internal_url
+
+    @property
+    def resolved_scheme(self) -> str:
+        """Return the scheme, dependant on ingress and TLS state."""
+        # TODO: Add tests for this method?
+        return (
+            urlparse(self.external_url).scheme
+            if self.external_url
+            else "https"
+            if self.tls
+            else "http"
+        )
 
 
 def _ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> dict:

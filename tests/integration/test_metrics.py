@@ -63,3 +63,14 @@ async def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources
     data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/rules").text)["data"]
     group_names = [group["name"] for group in data["groups"]]
     assert any("_avalanche_" in item for item in group_names)
+
+
+async def test_receive_remote_write(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+    """Scenario: scrape-to-remote-write forwarding."""
+    # GIVEN a model with avalanche, otel-collector, and prometheus charms
+    juju.deploy(charm, app="otelcol-receive-rw", resources=charm_resources, trust=True)
+    juju.deploy("prometheus-k8s", app="prom-rw", channel="2/edge", trust=True)
+    juju.deploy("opentelemetry-collector-k8s", app="otelcol-send-rw", channel="2/edge", trust=True)
+    juju.integrate("otelcol-send-rw", "otelcol-receive-rw:receive-remote-write")
+    # TODO: Find a cleaner test for remote write
+    assert False

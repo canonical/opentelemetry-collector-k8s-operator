@@ -13,22 +13,6 @@ from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
 
 
-def test_external_url_in_databag(ctx, otelcol_container):
-    # WHEN traefik ingress is related to otelcol
-    receive_logs_endpoint = Relation("receive-loki-logs")
-    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
-    state = State(
-        relations=[ingress, receive_logs_endpoint], containers=otelcol_container, leader=True
-    )
-
-    out = ctx.run(ctx.on.relation_created(receive_logs_endpoint), state)
-
-    # THEN external_url is present in receive-loki-logs relation databag
-    receive_logs_out = out.get_relations(receive_logs_endpoint.endpoint)[0]
-    expected_data = {"url": f"http://1.2.3.4:{Port.loki_http.value}/loki/api/v1/push"}
-    assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data
-
-
 @patch("socket.getfqdn", lambda: "1.2.3.4")
 def test_traefik_sent_config(ctx, otelcol_container):
     """Scenario: Otelcol deployed without tls-certificates relation."""
@@ -75,6 +59,11 @@ def test_traefik_sent_config(ctx, otelcol_container):
                     "rule": INGRESS_IP_MATCHER,
                     "service": f"juju-{state.model.name}-{charm_name}-service-otlp-http",
                 },
+                f"juju-{state.model.name}-{charm_name}-prometheus-http": {
+                    "entryPoints": ["prometheus-http"],
+                    "rule": INGRESS_IP_MATCHER,
+                    "service": f"juju-{state.model.name}-{charm_name}-service-prometheus-http",
+                },
                 f"juju-{state.model.name}-{charm_name}-zipkin": {
                     "entryPoints": ["zipkin"],
                     "rule": INGRESS_IP_MATCHER,
@@ -102,6 +91,9 @@ def test_traefik_sent_config(ctx, otelcol_container):
                 },
                 f"juju-{state.model.name}-{charm_name}-service-otlp-http": {
                     "loadBalancer": {"servers": [{"url": "http://1.2.3.4:4318"}]}
+                },
+                f"juju-{state.model.name}-{charm_name}-service-prometheus-http": {
+                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:9090"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-zipkin": {
                     "loadBalancer": {"servers": [{"url": "http://1.2.3.4:9411"}]}
@@ -145,3 +137,52 @@ def test_ingress_config_middleware_tls(ctx, otelcol_container):
                 "scheme": "https",
             }
         }
+
+
+@patch("socket.getfqdn", new=lambda *args: "fqdn")
+def test_loki_url_in_databag(ctx, otelcol_container):
+    # WHEN traefik ingress is related to otelcol
+    receive_logs_endpoint = Relation("receive-loki-logs")
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
+    state = State(
+        relations=[ingress, receive_logs_endpoint], containers=otelcol_container, leader=True
+    )
+
+    out_1 = ctx.run(ctx.on.relation_created(receive_logs_endpoint), state)
+
+    # THEN ingress URL is present in receive-loki-logs relation databag
+    receive_logs_out = out_1.get_relations(receive_logs_endpoint.endpoint)[0]
+    expected_data = {"url": f"http://1.2.3.4:{Port.loki_http.value}/loki/api/v1/push"}
+    assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data
+
+    # AND WHEN ingress is removed
+    out_2 = ctx.run(ctx.on.relation_broken(ingress), state)
+    # THEN the internal URL is present in receive-loki-logs relation databag
+    receive_logs_out = out_2.get_relations(receive_logs_endpoint.endpoint)[0]
+    expected_data = {"url": f"http://fqdn:{Port.loki_http.value}/loki/api/v1/push"}
+    assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data
+
+
+@patch("socket.getfqdn", new=lambda *args: "fqdn")
+def test_remote_write_url_in_databag(ctx, otelcol_container):
+    # WHEN traefik ingress is related to otelcol
+    receive_rw_endpoint = Relation("receive-remote-write")
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
+    state = State(
+        relations=[ingress, receive_rw_endpoint], containers=otelcol_container, leader=True
+    )
+
+    out_1 = ctx.run(ctx.on.relation_created(receive_rw_endpoint), state)
+
+    # TODO: We are missing the case of receive-remote-write exists, and ingress joins. Same for logging
+    # THEN ingress URL is present in receive-remote-write relation databag
+    receive_rw_out = out_1.get_relations(receive_rw_endpoint.endpoint)[0]
+    expected_data = {"url": f"http://1.2.3.4:{Port.prometheus_http.value}/api/v1/write"}
+    assert json.loads(receive_rw_out.local_unit_data["remote_write"]) == expected_data
+
+    # AND WHEN ingress is removed
+    out_2 = ctx.run(ctx.on.relation_broken(ingress), state)
+    # THEN the internal URL is present in receive-remote-write relation databag
+    receive_rw_out = out_2.get_relations(receive_rw_endpoint.endpoint)[0]
+    expected_data = {"url": f"http://fqdn:{Port.prometheus_http.value}/api/v1/write"}
+    assert json.loads(receive_rw_out.local_unit_data["remote_write"]) == expected_data
