@@ -7,7 +7,7 @@ import logging
 import os
 import re
 import socket
-from typing import Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 from charmlibs.pathops import ContainerPath
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
@@ -110,6 +110,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
     _container_name = "otelcol"
+    external_configs: List[Dict[str, Any]] = []
+    external_secret_files: Dict[str, str] = {}
 
     def __init__(self, *args):
         super().__init__(*args)

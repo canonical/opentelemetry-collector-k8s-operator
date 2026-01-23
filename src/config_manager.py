@@ -635,7 +635,12 @@ class ConfigManager:
                 logger.warning("external configs missing 'pipelines' key, skipping")
                 continue
 
-            config_block = yaml.safe_load(configs["config_yaml"])
+            # Parse YAML with error handling
+            try:
+                config_block = yaml.safe_load(configs["config_yaml"])
+            except yaml.YAMLError as e:
+                logger.error("failed to parse external config YAML: %s, skipping", e)
+                continue
 
             for config_type, config in config_block.items():
                 if config_type not in Component:
