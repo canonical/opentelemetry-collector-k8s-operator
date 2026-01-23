@@ -6,7 +6,6 @@
 import json
 import time
 from typing import Dict
-from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import jubilant
@@ -66,25 +65,4 @@ def test_push_logs_through_ingress(juju: jubilant.Juju):
     )
     response = urlopen(req, timeout=2.0)
     # THEN the logs arrive in the otelcol pipeline
-    assert response.getcode() == 204
-
-
-def test_query_metrics_through_ingress(juju: jubilant.Juju):
-    """Scenario: query metrics through ingress.
-
-    Test that otelcol's prometheus component is working via ingress. This proves that the rest of
-    the /api/v1 API is (likely) working.
-    """
-    # THEN the metrics arrive in the otelcol pipeline
-    remote_write_url = f"{get_ingress_url(juju)}:{Port.prometheus_http.value}/api/v1/query"
-
-    params = {
-        "query": "up",
-        "time": "2015-07-01T20:10:51.781Z"
-    }
-    query_string = urlencode(params)
-    full_url = f"{remote_write_url}?{query_string}"
-    req = Request(full_url)
-
-    response = urlopen(req, timeout=2.0)
     assert response.getcode() == 204

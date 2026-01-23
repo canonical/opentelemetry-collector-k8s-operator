@@ -187,28 +187,6 @@ def test_add_remote_write():
     assert config == expected_config
 
 
-def test_add_receive_remote_write():
-    # GIVEN an empty config
-    config_manager = ConfigManager(
-        unit_name="fake/0",
-        global_scrape_interval="",
-        global_scrape_timeout="",
-    )
-    # WHEN a remote write receiver is added to the config
-    expected_remote_write_cfg = {"endpoint": "0.0.0.0:9090"}  # supports the /api/v1/write endpoint
-    config_manager.add_receive_remote_write()
-    # THEN it exists in the remote write receiver config
-    config = dict(
-        sorted(
-            config_manager.config._config["receivers"][
-                "prometheusremotewrite/receive-remote-write/fake/0"
-            ].items()
-        )
-    )
-    expected_config = dict(sorted(expected_remote_write_cfg.items()))
-    assert config == expected_config
-
-
 @pytest.mark.parametrize(
     "enabled_pipelines,expected_pipelines",
     [

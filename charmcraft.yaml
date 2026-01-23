@@ -72,10 +72,6 @@ provides:
     interface: tracing
     optional: true
     description: Receive traces from other charms.
-  receive-remote-write:
-    interface: prometheus_remote_write
-    optional: true
-    description: Receive metrics by allowing other charms to push them to the collector.
   provide-cmr-mesh:
     interface: cross_model_mesh
     description: |

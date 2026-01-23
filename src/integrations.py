@@ -30,7 +30,6 @@ from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
 )
 from charms.prometheus_k8s.v1.prometheus_remote_write import (
-    PrometheusRemoteWriteProvider,
     PrometheusRemoteWriteConsumer,
 )
 from charms.pyroscope_coordinator_k8s.v0.profiling import (
@@ -51,7 +50,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
 )
 from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl import LZMABase64
-from ops import CharmBase, tracing
+from ops import CharmBase, Container, tracing
 from ops.model import Relation
 
 from config_builder import Port, sha256
@@ -63,6 +62,8 @@ from constants import (
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
+    SERVER_CERT_PATH,
+    SERVER_CERT_PRIVATE_KEY_PATH,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,7 +97,7 @@ def _add_alerts(alerts: Dict, dest_path: Path):
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
 
 
-def receive_loki_logs(charm: CharmBase, address_mgr: "AddressManager") -> None:
+def receive_loki_logs(charm: CharmBase, address: "Address") -> None:
     """Integrate with other charms via the receive-loki-logs relation endpoint.
 
     This function must be called before `send_loki_logs`, so that the charm
@@ -106,7 +107,7 @@ def receive_loki_logs(charm: CharmBase, address_mgr: "AddressManager") -> None:
     Args:
         charm: the otel-collector charm object
         tls: whether TLS is enabled
-        address_mgr: a dataclass for determining network addressing
+        address: a dataclass for determining network addressing
     """
     forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
     charm_root = charm.charm_dir.absolute()
@@ -114,10 +115,10 @@ def receive_loki_logs(charm: CharmBase, address_mgr: "AddressManager") -> None:
         charm,
         relation_name="receive-loki-logs",
         port=Port.loki_http.value,
-        scheme=address_mgr.resolved_scheme,
+        scheme=address.resolved_scheme,
     )
 
-    loki_provider.update_endpoint(f"{address_mgr.resolved_url}:{Port.loki_http.value}")
+    loki_provider.update_endpoint(f"{address.resolved_url}:{Port.loki_http.value}")
 
     charm.__setattr__("loki_provider", loki_provider)
     shutil.copytree(
@@ -230,16 +231,6 @@ def scrape_metrics(charm: CharmBase) -> List:
     return metrics_consumer.jobs()
 
 
-def receive_remote_write(charm: CharmBase, address_mgr: "AddressManager"):
-    """Integrate via receive-remote-write to receive metrics at a Prometheus-compatible endpoint."""
-    remote_write = PrometheusRemoteWriteProvider(
-        charm,
-        server_url_func=lambda: f"{address_mgr.resolved_url}:{Port.prometheus_http.value}",
-    )
-    charm.__setattr__("remote_write", remote_write)
-    remote_write.update_endpoint()
-
-
 def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
     """Integrate via send-remote-write to send metrics to a Prometheus-compatible endpoint.
 
@@ -257,7 +248,7 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
         peer_relation_name="peers",
     )
     charm.__setattr__("remote_write", remote_write)
-    # TODO: add alerts from remote write, reminder
+    # TODO: add alerts from remote write
     # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
     # TODO: Luca: probably don't need this anymore
     remote_write.reload_alerts()
@@ -645,7 +636,7 @@ def _build_lb_server_config(scheme: str, port: int) -> List[Dict[str, str]]:
 
 
 @dataclass
-class AddressManager:
+class Address:
     """Provide address information for the charm.
 
     This class must be instantiated after all networking-related events have occurred. For example:
@@ -653,25 +644,49 @@ class AddressManager:
         - tls events
     """
 
-    internal_url: str
-    external_url: Optional[str]
+    internal_scheme: str  # Only TLS context
+    internal_url: str  # Only TLS context
+    external_url: Optional[str]  # Only ingress context
+    resolved_scheme: str  # TLS & ingress context
+    resolved_url: str  # TLS & ingress context
     tls: bool
 
-    @property
-    def resolved_url(self) -> str:
-        """Return the outer most URL."""
-        return self.external_url if self.external_url else self.internal_url
+    @staticmethod
+    def is_tls_ready(container: Container) -> bool:
+        """Return True if the server cert and private key are present on disk."""
+        return container.exists(path=SERVER_CERT_PATH) and container.exists(
+            path=SERVER_CERT_PRIVATE_KEY_PATH
+        )
 
-    @property
-    def resolved_scheme(self) -> str:
-        """Return the scheme, dependant on ingress and TLS state."""
-        # TODO: Add tests for this method?
-        return (
-            urlparse(self.external_url).scheme
-            if self.external_url
-            else "https"
-            if self.tls
-            else "http"
+    @staticmethod
+    def from_charm_context(container: Container, ingress: TraefikRouteRequirer) -> "Address":
+        """Return the Address dataclass from charm context.
+
+        Args:
+            container: An ops.Container where the TLS certificates exist
+            ingress: A TraefikRouteRequirer containing ingress context
+
+        Returns:
+            the Address dataclass summarizing the charm's networking context
+        """
+        tls = Address.is_tls_ready(container)
+        internal_scheme = "https" if tls else "http"
+        internal_url = f"{internal_scheme}://{socket.getfqdn()}"
+        external_url = (
+            f"{ingress.scheme}://{ingress.external_host}" if ingress_ready(ingress) else None
+        )
+        resolved_url = external_url if external_url else internal_url
+        resolved_scheme = (
+            urlparse(external_url).scheme if external_url else "https" if tls else "http"
+        )
+
+        return Address(
+            internal_scheme,
+            internal_url,
+            external_url,
+            resolved_scheme,
+            resolved_url,
+            tls,
         )
 
 

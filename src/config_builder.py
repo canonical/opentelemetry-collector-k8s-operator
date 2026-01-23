@@ -52,8 +52,6 @@ class Port(int, Enum):
     """HTTP endpoint for Jaeger Thrift protocol"""
     zipkin = 9411
     """HTTP endpoint for Zipkin protocol"""
-    prometheus_http = 9090
-    """HTTP endpoint for Prometheus."""
 
 
 @unique

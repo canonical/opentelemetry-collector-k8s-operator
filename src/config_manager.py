@@ -370,19 +370,6 @@ class ConfigManager:
         # TODO Receive alert rules via remote write
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
 
-    def add_receive_remote_write(self):
-        """Configure the collector to receive pushed metrics via Prometheus remote-write."""
-        # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusremotewritereceiver
-        # TODO: How does Luca's TODO tie into this one. What do we do with alert rules from the databag?
-        self.config.add_component(
-            Component.receiver,
-            f"prometheusremotewrite/receive-remote-write/{self._unit_name}",
-            {
-                "endpoint": f"0.0.0.0:{Port.prometheus_http.value}",
-            },
-            pipelines=[f"metrics/{self._unit_name}"],
-        )
-
     def add_traces_ingestion(
         self,
         requested_tracing_protocols: Set[Literal["zipkin", "jaeger_grpc", "jaeger_thrift_http"]],
