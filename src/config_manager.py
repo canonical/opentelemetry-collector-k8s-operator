@@ -624,7 +624,7 @@ class ConfigManager:
         into the existing OpenTelemetry Collector configuration.
 
         Args:
-            external_config: Dictionary containing external configuration to merge.
+            external_configs: Dictionary containing external configuration to merge.
         """
         for configs in external_configs:
             if "config_yaml" not in configs:
