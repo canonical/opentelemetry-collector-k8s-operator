@@ -4,7 +4,6 @@
 """Feature: Opentelemetry-collector config builder."""
 
 import copy
-from unittest.mock import patch
 
 import pytest
 
