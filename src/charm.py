@@ -398,7 +398,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             return
 
         directory = ContainerPath(CERTS_DIR, container=container)
-        directory.mkdir(exist_ok=True)
+        directory.mkdir(parents=True, exist_ok=True)
 
     def _ensure_external_configs_secrets_dir(self, container: Container) -> None:
         if not container.can_connect():
@@ -406,7 +406,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             return
 
         directory = ContainerPath(EXTERNAL_CONFIG_SECRETS_DIR, container=container)
-        directory.mkdir(exist_ok=True)
+        directory.mkdir(parents=True, exist_ok=True)
 
     def _remove_external_configs_secrets_dir(self, container: Container) -> None:
         if not container.can_connect():
