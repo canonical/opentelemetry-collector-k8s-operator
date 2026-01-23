@@ -7,9 +7,7 @@ import logging
 import os
 import re
 import socket
-from dataclasses import dataclass
 from typing import Dict, List, Optional, cast
-from urllib.parse import urlparse
 
 from charmlibs.pathops import ContainerPath
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
@@ -63,7 +61,8 @@ def external_url(ingress: TraefikRouteRequirer) -> Optional[str]:
         else None
     )
 
-
+# TODO: Move these methods into AddressManager so address manager requires container and ingress
+# NOTE: This makes it more clear not to use these methods
 def internal_url(container: Container) -> str:
     """Return the locally addressable, FQDN based service address."""
     return f"{scheme(container)}://{socket.getfqdn()}"

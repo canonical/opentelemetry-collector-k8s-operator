@@ -6,10 +6,10 @@
 import json
 import time
 from typing import Dict
-from urllib.request import urlopen, Request
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 import jubilant
-import yaml
 
 from src.config_builder import Port
 
@@ -40,10 +40,9 @@ def test_health_through_ingress(juju: jubilant.Juju, charm: str, charm_resources
         f"{health_service} did not return expected metrics"
     )
 
-def test_logs_received_through_ingress(juju: jubilant.Juju):
+def test_push_logs_through_ingress(juju: jubilant.Juju):
     """Scenario: receive logs via the LokiPushApiProvider through ingress."""
     # GIVEN a model with otel-collector and traefik
-    juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="2/edge", trust=True)
     juju.wait(lambda status: jubilant.all_active(status, 'traefik'), timeout=300, error=jubilant.any_error)
     juju.wait(lambda status: jubilant.all_blocked(status, 'otelcol'), timeout=300, error=jubilant.any_error)
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
@@ -70,26 +69,22 @@ def test_logs_received_through_ingress(juju: jubilant.Juju):
     assert response.getcode() == 204
 
 
-def test_metrics_received_through_ingress(juju: jubilant.Juju):
-    """Scenario: receive metrics via the PrometheusRemoteWriteProvider through ingress."""
+def test_query_metrics_through_ingress(juju: jubilant.Juju):
+    """Scenario: query metrics through ingress.
+
+    Test that otelcol's prometheus component is working via ingress. This proves that the rest of
+    the /api/v1 API is (likely) working.
+    """
     # THEN the metrics arrive in the otelcol pipeline
-    remote_write_url = f"{get_ingress_url(juju)}:{Port.loki_http.value}/loki/api/v1/push"
-    data = {
-        "streams": [
-            {
-                "stream": {"label": "value"},
-                "values": [
-                    [str(time.time_ns()), "log line 1"],
-                    [str(time.time_ns()), "log line 2"],
-                ],
-            }
-        ]
+    remote_write_url = f"{get_ingress_url(juju)}:{Port.prometheus_http.value}/api/v1/query"
+
+    params = {
+        "query": "up",
+        "time": "2015-07-01T20:10:51.781Z"
     }
-    req = Request(
-        remote_write_url,
-        data=json.dumps(data).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
+    query_string = urlencode(params)
+    full_url = f"{remote_write_url}?{query_string}"
+    req = Request(full_url)
 
     response = urlopen(req, timeout=2.0)
     assert response.getcode() == 204
