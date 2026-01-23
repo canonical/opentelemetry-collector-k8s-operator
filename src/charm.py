@@ -7,7 +7,9 @@ import logging
 import os
 import re
 import socket
+from dataclasses import dataclass
 from typing import Dict, List, Optional, cast
+from urllib.parse import urlparse
 
 from charmlibs.pathops import ContainerPath
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
@@ -45,12 +47,16 @@ def is_tls_ready(container: Container) -> bool:
 
 
 def scheme(container: Container) -> str:
-    """Return the URI scheme that should be used when communicating with this unit."""
+    """Return the URI scheme that should be used when communicating with this unit.
+
+    This scheme does not apply when there is an ingress service.
+    """
     return "https" if is_tls_ready(container) else "http"
 
 
 def external_url(ingress: TraefikRouteRequirer) -> Optional[str]:
     """Return the external URL for the ingress, if configured."""
+    # TODO: Should this return the internal URL if not ingress? This would match the Loki implementations
     return (
         f"{ingress.scheme}://{ingress.external_host}"
         if integrations.ingress_ready(ingress)
@@ -149,7 +155,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         integrations.setup_service_mesh(self)
 
         # Ingress integration
-        ingress = integrations.setup_ingress(self, tls=is_tls_ready(container))
+        ingress = integrations.setup_ingress(self, is_tls_ready(container))
 
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
@@ -166,6 +172,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # This must be run after receive_ca_cert and/or receive_server_cert because they update
         # certs in the /usr/local/share/ca-certificates directory
         refresh_certs(container)
+
+        # Address manager
+        address_mgr = integrations.AddressManager(
+            internal_url(container), external_url(ingress), is_tls_ready(container)
+        )
 
         # Global scrape configs
         global_configs = {
@@ -198,7 +209,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         feature_gates: Optional[str] = None
 
         # Logs setup
-        integrations.receive_loki_logs(self, is_tls_ready(container), external_url(ingress))
+        integrations.receive_loki_logs(self, address_mgr)
         loki_endpoints = integrations.send_loki_logs(self)
         if self._incoming_logs:
             config_manager.add_log_ingestion()
@@ -228,6 +239,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
         remote_write_endpoints = integrations.send_remote_write(self)
         config_manager.add_remote_write(remote_write_endpoints)
+        integrations.receive_remote_write(self, address_mgr)
+        if self._incoming_metrics:
+            config_manager.add_receive_remote_write()
 
         # Profiling setup
         if self._incoming_profiles:
@@ -442,6 +456,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     @property
     def _incoming_logs(self) -> bool:
         return any(self.model.relations.get("receive-loki-logs", []))
+
+    @property
+    def _incoming_metrics(self) -> bool:
+        return any(self.model.relations.get("receive-remote-write", []))
 
     @property
     def _incoming_traces(self) -> bool:

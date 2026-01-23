@@ -4,10 +4,11 @@
 """Feature: Opentelemetry-collector config builder."""
 
 import copy
+from unittest.mock import patch
 
 import pytest
 
-from config_manager import ConfigManager
+from src.config_manager import ConfigManager
 
 
 def test_add_prometheus_scrape():
@@ -72,6 +73,27 @@ def test_add_prometheus_scrape():
     assert job_names == ["second_job", "third_job"]
 
 
+def test_add_log_ingestion():
+    # GIVEN an empty config
+    config_manager = ConfigManager(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+    )
+    # WHEN a loki receiver is added to the config
+    expected_loki_ingestion_cfg = {
+        "protocols": {"http": {"endpoint": "0.0.0.0:3500"}},
+        "use_incoming_timestamp": True,
+    }
+    config_manager.add_log_ingestion()
+    # THEN it exists in the loki receiver config
+    config = dict(
+        sorted(config_manager.config._config["receivers"]["loki/receive-loki-logs/fake/0"].items())
+    )
+    expected_config = dict(sorted(expected_loki_ingestion_cfg.items()))
+    assert config == expected_config
+
+
 def test_add_log_forwarding():
     # GIVEN an empty config
     config_manager = ConfigManager(
@@ -80,7 +102,6 @@ def test_add_log_forwarding():
         global_scrape_timeout="",
         insecure_skip_verify=True,
     )
-
     # WHEN a loki exporter is added to the config
     expected_loki_forwarding_cfg = {
         "default_labels_enabled": {
@@ -160,6 +181,28 @@ def test_add_remote_write():
         sorted(
             config_manager.config._config["exporters"][
                 "prometheusremotewrite/send-remote-write/0"
+            ].items()
+        )
+    )
+    expected_config = dict(sorted(expected_remote_write_cfg.items()))
+    assert config == expected_config
+
+
+def test_add_receive_remote_write():
+    # GIVEN an empty config
+    config_manager = ConfigManager(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+    )
+    # WHEN a remote write receiver is added to the config
+    expected_remote_write_cfg = {"endpoint": "0.0.0.0:9090"}  # supports the /api/v1/write endpoint
+    config_manager.add_receive_remote_write()
+    # THEN it exists in the remote write receiver config
+    config = dict(
+        sorted(
+            config_manager.config._config["receivers"][
+                "prometheusremotewrite/receive-remote-write/fake/0"
             ].items()
         )
     )
