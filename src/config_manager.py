@@ -616,3 +616,37 @@ class ConfigManager:
                     if enabled
                 ],
             )
+
+    def add_external_config(self, external_configs: List[Dict[str, Any]]) -> None:
+        """Merge external configuration into the current config.
+
+        This method merges the provided external configuration dictionary
+        into the existing OpenTelemetry Collector configuration.
+
+        Args:
+            external_config: Dictionary containing external configuration to merge.
+        """
+
+        for configs in external_configs:
+            if "config_yaml" not in configs:
+                logger.warning("External configs missing 'config_yaml' key, skipping")
+                continue
+
+            if "pipelines" not in configs:
+                logger.warning("External configs missing 'pipelines' key, skipping")
+                continue
+
+            config_block = yaml.safe_load(configs["config_yaml"])
+
+            for config_type, config in config_block.items():
+                if config_type not in Component:
+                    continue
+
+                for name, cnf in config.items():
+
+                    self.config.add_component(
+                        Component(config_type),
+                        f"{name}/{self._unit_name}",
+                        cnf,
+                        pipelines=[f"{pipeline}/{self._unit_name}" for pipeline in configs["pipelines"]],
+                    )

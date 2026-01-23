@@ -211,6 +211,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         integrations.receive_external_configs(self)
         self._ensure_external_configs_secrets_dir(container)
         self._write_secrets_to_disk(container)
+        self._configure_external_configs(config_manager)
         self._remove_external_configs_secrets_dir(container)
 
         # Profiling setup
@@ -432,6 +433,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             logger.debug("secret written to %s", filepath)
 
         return
+
+    def _configure_external_configs(self, config_manager: ConfigManager):
+        self.framework.breakpoint()
+        config_manager.add_external_config(self.external_configs)
+
 
     @property
     def _otelcol_version(self) -> Optional[str]:
