@@ -43,11 +43,15 @@ def test_health_through_ingress(juju: jubilant.Juju, charm: str, charm_resources
 def test_push_logs_through_ingress(juju: jubilant.Juju):
     """Scenario: receive logs via the LokiPushApiProvider through ingress."""
     # GIVEN a model with otel-collector and traefik
+    # AND a receive-loki-logs relation
+    juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="2/edge", trust=True)
+    juju.integrate("otelcol:receive-loki-logs", "otelcol-push")
     juju.wait(
-        lambda status: jubilant.all_active(status, "traefik", "otelcol"),
+        lambda status: jubilant.all_active(status, "traefik", "otelcol-push"),
         timeout=300,
         error=jubilant.any_error,
     )
+    juju.wait(lambda status: jubilant.all_blocked(status, 'otelcol'), timeout=300, error=jubilant.any_error)
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
     # WHEN logs are sent through ingress
     push_api_url = f"{get_ingress_url(juju)}:{Port.loki_http.value}/loki/api/v1/push"
