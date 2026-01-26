@@ -648,7 +648,6 @@ class Address:
     internal_url: str  # Only TLS context
     resolved_scheme: str  # TLS & ingress context
     resolved_url: str  # TLS & ingress context
-    tls: bool
 
     @staticmethod
     def is_tls_ready(container: Container) -> bool:
@@ -684,7 +683,6 @@ class Address:
             internal_url,
             resolved_scheme,
             resolved_url,
-            tls,
         )
 
 
