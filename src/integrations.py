@@ -646,7 +646,6 @@ class Address:
 
     internal_scheme: str  # Only TLS context
     internal_url: str  # Only TLS context
-    external_url: Optional[str]  # Only ingress context
     resolved_scheme: str  # TLS & ingress context
     resolved_url: str  # TLS & ingress context
     tls: bool
@@ -683,7 +682,6 @@ class Address:
         return Address(
             internal_scheme,
             internal_url,
-            external_url,
             resolved_scheme,
             resolved_url,
             tls,
