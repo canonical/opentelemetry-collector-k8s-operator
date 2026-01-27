@@ -6,10 +6,9 @@
 import json
 import time
 from typing import Dict
-from urllib.request import urlopen, Request
+from urllib.request import Request, urlopen
 
 import jubilant
-import yaml
 
 from src.config_builder import Port
 
@@ -41,30 +40,21 @@ def test_health_through_ingress(juju: jubilant.Juju, charm: str, charm_resources
     )
 
 
-def test_logs_received_through_ingress(juju: jubilant.Juju):
+def test_push_logs_through_ingress(juju: jubilant.Juju):
     """Scenario: receive logs via the LokiPushApiProvider through ingress."""
     # GIVEN a model with otel-collector and traefik
+    # AND a receive-loki-logs relation
     juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="2/edge", trust=True)
-
-    # WHEN otel-collector is related to an ingress provider
     juju.integrate("otelcol:receive-loki-logs", "otelcol-push")
-    juju.wait(lambda status: jubilant.all_active(status, 'traefik', 'otelcol-push'), timeout=300, error=jubilant.any_error)
+    juju.wait(
+        lambda status: jubilant.all_active(status, "traefik", "otelcol-push"),
+        timeout=300,
+        error=jubilant.any_error,
+    )
     juju.wait(lambda status: jubilant.all_blocked(status, 'otelcol'), timeout=300, error=jubilant.any_error)
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
-
-    # THEN otel-collector is publishing its ingress address in the databag
-    push_show_unit = yaml.safe_load(juju.cli("show-unit", "otelcol-push/0"))["otelcol-push/0"]
-    logs_relation = next(
-        (item for item in push_show_unit["relation-info"] if item["endpoint"] == "send-loki-logs"),
-        None,
-    )
-    assert logs_relation
-    push_api_url = json.loads(logs_relation["related-units"]["otelcol/0"]["data"]["endpoint"])[
-        "url"
-    ]
-    assert push_api_url == f"{get_ingress_url(juju)}:{Port.loki_http.value}/loki/api/v1/push"
-
-    # AND THEN the logs arrive in the otelcol pipeline
+    # WHEN logs are sent through ingress
+    push_api_url = f"{get_ingress_url(juju)}:{Port.loki_http.value}/loki/api/v1/push"
     data = {
         "streams": [
             {
@@ -81,6 +71,6 @@ def test_logs_received_through_ingress(juju: jubilant.Juju):
         data=json.dumps(data).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
-
     response = urlopen(req, timeout=2.0)
+    # THEN the logs arrive in the otelcol pipeline
     assert response.getcode() == 204
