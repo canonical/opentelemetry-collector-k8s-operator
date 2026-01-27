@@ -10,7 +10,6 @@ from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast, get_args
-from urllib.parse import urlparse
 
 import yaml
 from charmlibs.pathops import PathProtocol
@@ -655,35 +654,6 @@ class Address:
     internal_url: str  # Only TLS context
     resolved_scheme: str  # TLS & ingress context
     resolved_url: str  # TLS & ingress context
-
-    @classmethod
-    def from_charm_context(cls, container: Container, ingress: TraefikRouteRequirer) -> "Address":
-        """Return the Address dataclass from charm context.
-
-        Args:
-            container: An ops.Container where the TLS certificates exist
-            ingress: A TraefikRouteRequirer containing ingress context
-
-        Returns:
-            the Address dataclass summarizing the charm's networking context
-        """
-        tls = is_tls_ready(container)
-        internal_scheme = "https" if tls else "http"
-        internal_url = f"{internal_scheme}://{socket.getfqdn()}"
-        external_url = (
-            f"{ingress.scheme}://{ingress.external_host}" if ingress_ready(ingress) else None
-        )
-        resolved_url = external_url if external_url else internal_url
-        resolved_scheme = (
-            urlparse(external_url).scheme if external_url else "https" if tls else "http"
-        )
-
-        return Address(
-            internal_scheme,
-            internal_url,
-            resolved_scheme,
-            resolved_url,
-        )
 
 
 def _ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> dict:

@@ -6,7 +6,9 @@
 import logging
 import os
 import re
+import socket
 from typing import Dict, List, Optional, cast
+from urllib.parse import urlparse
 
 from charmlibs.pathops import ContainerPath
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
@@ -34,6 +36,31 @@ from constants import (
 
 logger = logging.getLogger(__name__)
 
+def charm_address(container: Container, ingress: integrations.TraefikRouteRequirer) -> integrations.Address:
+    """Return the Address dataclass from charm context.
+
+    Args:
+        container: An ops.Container where the TLS certificates exist
+        ingress: A TraefikRouteRequirer containing ingress context
+
+    Returns:
+        the Address dataclass summarizing the charm's networking context
+    """
+    tls = integrations.is_tls_ready(container)
+    internal_scheme = "https" if tls else "http"
+    internal_url = f"{internal_scheme}://{socket.getfqdn()}"
+    external_url = (
+        f"{ingress.scheme}://{ingress.external_host}" if integrations.ingress_ready(ingress) else None
+    )
+    resolved_url = external_url if external_url else internal_url
+    resolved_scheme = urlparse(external_url).scheme if external_url else "https" if tls else "http"
+
+    return integrations.Address(
+        internal_scheme,
+        internal_url,
+        resolved_scheme,
+        resolved_url,
+    )
 
 def refresh_certs(container: Container):
     """Run `update-ca-certificates` to refresh the trusted system certs."""
@@ -141,7 +168,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Address manager
         # NOTE: executed after ingress and TLS events
-        otelcol_address = integrations.Address.from_charm_context(container, ingress)
+        otelcol_address = charm_address(container, ingress)
 
         # Global scrape configs
         global_configs = {
