@@ -635,6 +635,13 @@ def _build_lb_server_config(scheme: str, port: int) -> List[Dict[str, str]]:
     return [{"url": f"{scheme}://{socket.getfqdn()}:{port}"}]
 
 
+def is_tls_ready(container: Container) -> bool:
+    """Return True if the server cert and private key are present on disk."""
+    return container.exists(path=SERVER_CERT_PATH) and container.exists(
+        path=SERVER_CERT_PRIVATE_KEY_PATH
+    )
+
+
 @dataclass
 class Address:
     """Provide address information for the charm.
@@ -649,15 +656,8 @@ class Address:
     resolved_scheme: str  # TLS & ingress context
     resolved_url: str  # TLS & ingress context
 
-    @staticmethod
-    def is_tls_ready(container: Container) -> bool:
-        """Return True if the server cert and private key are present on disk."""
-        return container.exists(path=SERVER_CERT_PATH) and container.exists(
-            path=SERVER_CERT_PRIVATE_KEY_PATH
-        )
-
-    @staticmethod
-    def from_charm_context(container: Container, ingress: TraefikRouteRequirer) -> "Address":
+    @classmethod
+    def from_charm_context(cls, container: Container, ingress: TraefikRouteRequirer) -> "Address":
         """Return the Address dataclass from charm context.
 
         Args:
@@ -667,7 +667,7 @@ class Address:
         Returns:
             the Address dataclass summarizing the charm's networking context
         """
-        tls = Address.is_tls_ready(container)
+        tls = is_tls_ready(container)
         internal_scheme = "https" if tls else "http"
         internal_url = f"{internal_scheme}://{socket.getfqdn()}"
         external_url = (

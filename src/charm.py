@@ -121,7 +121,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         integrations.setup_service_mesh(self)
 
         # Ingress integration
-        ingress = integrations.setup_ingress(self, integrations.Address.is_tls_ready(container))
+        ingress = integrations.setup_ingress(self, integrations.is_tls_ready(container))
 
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
@@ -161,7 +161,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         config_manager = ConfigManager(
             global_scrape_interval=global_configs["global_scrape_interval"],
             global_scrape_timeout=global_configs["global_scrape_timeout"],
-            receiver_tls=otelcol_address.is_tls_ready(container),
+            receiver_tls=integrations.is_tls_ready(container),
             insecure_skip_verify=cast(bool, self.config.get("tls_insecure_skip_verify")),
             queue_size=cast(int, self.config.get("queue_size")),
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
@@ -208,7 +208,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Profiling setup
         if self._incoming_profiles:
             config_manager.add_profile_ingestion()
-            integrations.receive_profiles(self, otelcol_address.is_tls_ready(container))
+            integrations.receive_profiles(self, integrations.is_tls_ready(container))
         if profiling_endpoints := integrations.send_profiles(self):
             config_manager.add_profile_forwarding(profiling_endpoints)
         if self._incoming_profiles or integrations.send_profiles(self):
@@ -216,7 +216,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Tracing setup
         requested_tracing_protocols = integrations.receive_traces(
-            self, otelcol_address.is_tls_ready(container)
+            self, integrations.is_tls_ready(container)
         )
         if self._incoming_traces:
             config_manager.add_traces_ingestion(requested_tracing_protocols)
@@ -279,7 +279,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # TODO: Conditionally open ports based on the otelcol config file rather than opening all ports
         self.unit.set_ports(*[port.value for port in Port])
 
-        if self._has_server_cert_relation and not otelcol_address.is_tls_ready(container):
+        if self._has_server_cert_relation and not integrations.is_tls_ready(container):
             # A tls relation to a CA was formed, but we didn't get the cert yet.
             container.stop(SERVICE_NAME)
             self.unit.status = WaitingStatus("CSR sent; otelcol down while waiting for a cert")
