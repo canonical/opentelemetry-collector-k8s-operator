@@ -15,6 +15,8 @@ dependencies = [
   "cosl @ git+https://github.com/canonical/cos-lib.git@temp/otlp-lib",
   "pydantic",
   "charmlibs-pathops",
+  "charmed-service-mesh-helpers>=0.2.0", # istio-beacon lib requirement"lightkube-extensions@git+https://github.com/canonical/lightkube-extensions.git@main", # istio-beacon lib requirement,
+  "lightkube-extensions", # istio-beacon lib requirement
 ]
 
 [project.optional-dependencies]
@@ -44,6 +46,12 @@ branch = true
 
 [tool.coverage.report]
 show_missing = true
+omit = [
+    "lib/charms/*",
+    "lib/charms/**/*",
+    "tests/*",
+    "tests/**/*",
+]
 
 # Linting tools configuration
 [tool.ruff]

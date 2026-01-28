@@ -9,7 +9,7 @@ import socket
 from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, cast, get_args
+from typing import Any, Dict, List, Optional, Set, cast, get_args
 
 import yaml
 from charmlibs.pathops import PathProtocol
@@ -47,20 +47,24 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     Mode,
     TLSCertificatesRequiresV4,
 )
+from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl import LZMABase64
-from otlp import OtlpConsumer, OtlpProvider, OtlpEndpoint
-from ops import CharmBase, tracing
+from ops import CharmBase, Container, tracing
 from ops.model import Relation
 
 from config_builder import Port, sha256
 from constants import (
     DASHBOARDS_DEST_PATH,
     DASHBOARDS_SRC_PATH,
+    INGRESS_IP_MATCHER,
     LOKI_RULES_DEST_PATH,
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
+    SERVER_CERT_PATH,
+    SERVER_CERT_PRIVATE_KEY_PATH,
 )
+from otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +97,17 @@ def _add_alerts(alerts: Dict, dest_path: Path):
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
 
 
-def receive_loki_logs(charm: CharmBase, tls: bool):
+def receive_loki_logs(charm: CharmBase, address: "Address") -> None:
     """Integrate with other charms via the receive-loki-logs relation endpoint.
 
     This function must be called before `send_loki_logs`, so that the charm
     can gather all the alerts from relation data before sending them all
     to Loki.
+
+    Args:
+        charm: the otel-collector charm object
+        tls: whether TLS is enabled
+        address: a dataclass for determining network addressing
     """
     forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
     charm_root = charm.charm_dir.absolute()
@@ -106,8 +115,11 @@ def receive_loki_logs(charm: CharmBase, tls: bool):
         charm,
         relation_name="receive-loki-logs",
         port=Port.loki_http.value,
-        scheme="https" if tls else "http",
+        scheme=address.resolved_scheme,
     )
+
+    loki_provider.update_endpoint(f"{address.resolved_url}:{Port.loki_http.value}")
+
     charm.__setattr__("loki_provider", loki_provider)
     shutil.copytree(
         charm_root.joinpath(*LOKI_RULES_SRC_PATH.split("/")),
@@ -233,6 +245,7 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
         extra_alert_labels=key_value_pair_string_to_dict(
             cast(str, charm.model.config.get("extra_alert_labels", ""))
         ),
+        peer_relation_name="peers",
     )
     charm.__setattr__("remote_write", remote_write)
     # TODO: add alerts from remote write
@@ -501,11 +514,12 @@ def receive_server_cert(
     charm: CharmBase,
     server_cert_path: PathProtocol,
     private_key_path: PathProtocol,
+    root_ca_cert_path: PathProtocol,
 ) -> str:
-    """Integrate to receive a certificate and private key for the charm from relation data.
+    """Integrate to receive private key, cert, CA cert for the charm from relation data.
 
-    The certificate and key are obtained via the tls_certificates(v4) library,
-    and pushed to the workload container.
+    Thes key and certs are obtained via the tls_certificates(v4) library, and pushed to the
+    workload container.
 
     Returns:
         Hash of server cert and private key, to be used as reload trigger if it changed.
@@ -540,26 +554,26 @@ def receive_server_cert(
 
         server_cert_path.unlink() if server_cert_path.exists() else None
         private_key_path.unlink() if private_key_path.exists() else None
+        root_ca_cert_path.unlink() if root_ca_cert_path.exists() else None
         return sha256("")
 
     # Push the certificate and key to disk
-    server_cert_path.parent.mkdir(parents=True, exist_ok=True)
-    server_cert_path.write_text(str(provider_certificate.certificate))
     private_key_path.parent.mkdir(parents=True, exist_ok=True)
     private_key_path.write_text(str(private_key))
+    server_cert_path.parent.mkdir(parents=True, exist_ok=True)
+    server_cert_path.write_text(str(provider_certificate.certificate.raw))
+    root_ca_cert_path.parent.mkdir(parents=True, exist_ok=True)
+    root_ca_cert_path.write_text(str(provider_certificate.ca.raw))
 
-    logger.info("Certificate and private key have been pushed to disk")
+    logger.info("Certificates and private key have been pushed to disk")
+
+    # NOTE: we run `update-ca-certificates` in charm code
 
     return sha256(str(provider_certificate.certificate) + str(private_key))
 
 
-def receive_ca_cert(
-    charm: CharmBase, recv_ca_cert_folder_path: PathProtocol, refresh_certs: Callable
-) -> str:
+def receive_ca_cert(charm: CharmBase, recv_ca_cert_folder_path: PathProtocol) -> str:
     """Reconcile the certificates from the `receive-ca-cert` relation.
-
-    This function saves the certificates to disk, and runs
-    `update-ca-certificates` to trust them.
 
     Returns:
         Hash of the certificates to trust, to be used as reload trigger when changed.
@@ -581,8 +595,7 @@ def receive_ca_cert(
             cert_path = recv_ca_cert_folder_path.joinpath(f"{i}.crt")
             cert_path.write_text(cert)
 
-    # Refresh system certs
-    refresh_certs()
+    # NOTE: we run `update-ca-certificates` in charm code
 
     # A hot-reload doesn't pick up new system certs - need to restart the service
     return sha256(yaml.safe_dump(ca_certs))
@@ -621,3 +634,123 @@ def setup_service_mesh(charm: CharmBase) -> None:
         ],
     )
     charm.__setattr__("mesh_consumer", mesh_consumer)
+
+
+def _static_ingress_config() -> dict:
+    entry_points = {}
+    for port in Port:
+        sanitized_protocol = port.name.replace("_", "-")
+        entry_points[sanitized_protocol] = {"address": f":{port.value}"}
+
+    return {"entryPoints": entry_points}
+
+
+def _build_lb_server_config(scheme: str, port: int) -> List[Dict[str, str]]:
+    """Build the server portion of the loadbalancer config of Traefik ingress."""
+    return [{"url": f"{scheme}://{socket.getfqdn()}:{port}"}]
+
+
+def is_tls_ready(container: Container) -> bool:
+    """Return True if the server cert and private key are present on disk."""
+    return container.exists(path=SERVER_CERT_PATH) and container.exists(
+        path=SERVER_CERT_PRIVATE_KEY_PATH
+    )
+
+
+@dataclass
+class Address:
+    """Provide address information for the charm.
+
+    This class must be instantiated after all networking-related events have occurred. For example:
+        - ingress events
+        - tls events
+    """
+
+    internal_scheme: str  # Only TLS context
+    internal_url: str  # Only TLS context
+    resolved_scheme: str  # TLS & ingress context
+    resolved_url: str  # TLS & ingress context
+
+
+def _ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> dict:
+    """Build a raw ingress configuration for Traefik."""
+    http_routers = {}
+    http_services = {}
+    middlewares = {}
+    for port in Port:
+        sanitized_protocol = port.name.replace("_", "-")
+        redirect_middleware = (
+            {
+                f"juju-{charm.model.name}-{charm.model.app.name}-middleware-{sanitized_protocol}": {
+                    "redirectScheme": {
+                        "permanent": True,
+                        "port": port.value,
+                        "scheme": "https",
+                    }
+                }
+            }
+            if ingress.is_ready() and ingress.scheme == "https"
+            else {}
+        )
+        middlewares.update(redirect_middleware)
+
+        http_routers[f"juju-{charm.model.name}-{charm.model.app.name}-{sanitized_protocol}"] = {
+            "entryPoints": [sanitized_protocol],
+            "service": f"juju-{charm.model.name}-{charm.model.app.name}-service-{sanitized_protocol}",
+            "rule": INGRESS_IP_MATCHER,
+            **({"middlewares": list(redirect_middleware.keys())} if redirect_middleware else {}),
+        }
+        # anything else, including secured GRPC, can use _internal_url
+        # ref https://doc.traefik.io/traefik/v2.0/user-guides/grpc/#with-https
+        http_services[
+            f"juju-{charm.model.name}-{charm.model.app.name}-service-{sanitized_protocol}"
+        ] = {
+            "loadBalancer": {
+                "servers": _build_lb_server_config("http" if not tls else "https", port.value)
+            }
+        }
+
+    return {
+        "http": {
+            "routers": http_routers,
+            "services": http_services,
+            # else we get: level=error msg="Error occurred during watcher callback:
+            # ...: middlewares cannot be a standalone element (type map[string]*dynamic.Middleware)"
+            # providerName=file
+            **({"middlewares": middlewares} if middlewares else {}),
+        }
+    }
+
+
+def _update_ingress_relation(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> None:
+    """Make sure the traefik route is up-to-date."""
+    if not charm.unit.is_leader():
+        return
+
+    if ingress.is_ready():
+        ingress.submit_to_traefik(
+            _ingress_config(charm, ingress, tls), static=_static_ingress_config()
+        )
+
+
+def ingress_ready(ingress: TraefikRouteRequirer) -> bool:
+    """Check if ingress is ready."""
+    return bool(ingress.is_ready() and ingress.scheme and ingress.external_host)
+
+
+def setup_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
+    """Integrate via ingress to enable ingress per app.
+
+    Returns:
+        A list of dictionaries where each dictionary provides information about
+        a single remote_write endpoint.
+    """
+    ingress = TraefikRouteRequirer(
+        charm,
+        charm.model.get_relation("ingress"),  # type: ignore
+        "ingress",
+    )
+    charm.__setattr__("ingress", ingress)
+    _update_ingress_relation(charm, ingress, tls)
+
+    return ingress

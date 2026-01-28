@@ -5,6 +5,11 @@
 
 from src.config_manager import ConfigManager
 from src.otlp import OtlpEndpoint
+import copy
+
+import pytest
+
+from src.config_manager import ConfigManager
 
 
 def test_add_prometheus_scrape():
@@ -69,6 +74,27 @@ def test_add_prometheus_scrape():
     assert job_names == ["second_job", "third_job"]
 
 
+def test_add_log_ingestion():
+    # GIVEN an empty config
+    config_manager = ConfigManager(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+    )
+    # WHEN a loki receiver is added to the config
+    expected_loki_ingestion_cfg = {
+        "protocols": {"http": {"endpoint": "0.0.0.0:3500"}},
+        "use_incoming_timestamp": True,
+    }
+    config_manager.add_log_ingestion()
+    # THEN it exists in the loki receiver config
+    config = dict(
+        sorted(config_manager.config._config["receivers"]["loki/receive-loki-logs/fake/0"].items())
+    )
+    expected_config = dict(sorted(expected_loki_ingestion_cfg.items()))
+    assert config == expected_config
+
+
 def test_add_log_forwarding():
     # GIVEN an empty config
     config_manager = ConfigManager(
@@ -77,7 +103,6 @@ def test_add_log_forwarding():
         global_scrape_timeout="",
         insecure_skip_verify=True,
     )
-
     # WHEN a loki exporter is added to the config
     expected_loki_forwarding_cfg = {
         "default_labels_enabled": {
@@ -176,8 +201,20 @@ def test_add_otlp_forwarding():
     # WHEN an OTLP exporters (of gRPC and HTTP protocols) are added to the config
     config_manager.add_otlp_forwarding(
         {
-            "0": OtlpEndpoint(**{"protocol": "grpc", "endpoint": "http://host-1:grpc-port", "telemetries": ["logs"]}),
-            "1": OtlpEndpoint(**{"protocol": "http", "endpoint": "http://host-2:http-port", "telemetries": ["metrics", "traces"]}),
+            "0": OtlpEndpoint(
+                **{
+                    "protocol": "grpc",
+                    "endpoint": "http://host-1:grpc-port",
+                    "telemetries": ["logs"],
+                }
+            ),
+            "1": OtlpEndpoint(
+                **{
+                    "protocol": "http",
+                    "endpoint": "http://host-2:http-port",
+                    "telemetries": ["metrics", "traces"],
+                }
+            ),
         }
     )
 
@@ -190,3 +227,74 @@ def test_add_otlp_forwarding():
         "otlphttp/rel-1": {"endpoint": "http://host-2:http-port", "tls": {"insecure": True}},
     }
     assert config_manager.config._config["exporters"] == expected_otlp_cfg
+
+
+@pytest.mark.parametrize(
+    "enabled_pipelines,expected_pipelines",
+    [
+        (
+            {"logs": False, "metrics": False, "traces": False},
+            {
+                "logs/otelcol/0": {"receivers": ["otlp"], "exporters": []},
+                "metrics/otelcol/0": {"receivers": ["otlp"], "exporters": []},
+                "traces/otelcol/0": {"receivers": ["otlp"], "exporters": []},
+            },
+        ),
+        (
+            {"logs": True, "metrics": True, "traces": True},
+            {
+                "logs/otelcol/0": {
+                    "receivers": ["otlp"],
+                    "exporters": ["debug/juju-config-enabled"],
+                },
+                "metrics/otelcol/0": {
+                    "receivers": ["otlp"],
+                    "exporters": ["debug/juju-config-enabled"],
+                },
+                "traces/otelcol/0": {
+                    "receivers": ["otlp"],
+                    "exporters": ["debug/juju-config-enabled"],
+                },
+            },
+        ),
+        (
+            {"logs": True, "metrics": False, "traces": True},
+            {
+                "logs/otelcol/0": {
+                    "receivers": ["otlp"],
+                    "exporters": ["debug/juju-config-enabled"],
+                },
+                "metrics/otelcol/0": {"receivers": ["otlp"]},
+                "traces/otelcol/0": {
+                    "receivers": ["otlp"],
+                    "exporters": ["debug/juju-config-enabled"],
+                },
+            },
+        ),
+    ],
+)
+def test_add_debug_exporters(enabled_pipelines, expected_pipelines):
+    # GIVEN an empty config
+    config_manager = ConfigManager("otelcol/0", "", "")
+    initial_cfg = copy.copy(config_manager.config._config)
+
+    # WHEN debug exporters are added to the config
+    config_manager.add_debug_exporters(**enabled_pipelines)
+
+    # THEN the config remains unchanged if no pipelines are enabled
+    if not any(enabled_pipelines.values()):
+        assert initial_cfg == config_manager.config._config
+        return
+
+    # AND only one debug exporter is added to the list of exporters
+    assert 1 == sum(
+        "debug/juju-config-enabled" in key for key in config_manager.config._config["exporters"]
+    )
+    # AND there are no additional pipelines configured
+    assert list(config_manager.config._config["service"]["pipelines"].keys()) == [
+        "logs/otelcol/0",
+        "metrics/otelcol/0",
+        "traces/otelcol/0",
+    ]
+    # AND the debug exporter is only attached to the enabled pipelines
+    assert expected_pipelines == config_manager.config._config["service"]["pipelines"]

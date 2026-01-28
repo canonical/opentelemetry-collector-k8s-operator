@@ -5,42 +5,62 @@
 
 import logging
 import os
-from typing import Dict, cast, Optional, List
 import re
-from functools import partial
+import socket
+from typing import Dict, List, Optional, cast
+from urllib.parse import urlparse
 
 from charmlibs.pathops import ContainerPath
+from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
+    KubernetesComputeResourcesPatch,
+    adjust_resource_requirements,
+)
 from cosl import JujuTopology, MandatoryRelationPairs
 from lightkube.models.core_v1 import ResourceRequirements
 from ops import BlockedStatus, CharmBase, Container, StatusBase, main
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
-from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
-    KubernetesComputeResourcesPatch,
-    adjust_resource_requirements,
-)
 
 import integrations
 from config_builder import Port
 from config_manager import ConfigManager
 from constants import (
+    CERTS_DIR,
     CONFIG_PATH,
     RECV_CA_CERT_FOLDER_PATH,
+    SERVER_CA_CERT_PATH,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
     SERVICE_NAME,
 )
 
-
 logger = logging.getLogger(__name__)
 
+def charm_address(container: Container, ingress: integrations.TraefikRouteRequirer) -> integrations.Address:
+    """Return the Address dataclass from charm context.
 
-def is_tls_ready(container: Container) -> bool:
-    """Return True if the server cert and private key are present on disk."""
-    return container.exists(path=SERVER_CERT_PATH) and container.exists(
-        path=SERVER_CERT_PRIVATE_KEY_PATH
+    Args:
+        container: An ops.Container where the TLS certificates exist
+        ingress: A TraefikRouteRequirer containing ingress context
+
+    Returns:
+        the Address dataclass summarizing the charm's networking context
+    """
+    tls = integrations.is_tls_ready(container)
+    internal_scheme = "https" if tls else "http"
+    internal_url = f"{internal_scheme}://{socket.getfqdn()}"
+    external_url = (
+        f"{ingress.scheme}://{ingress.external_host}" if integrations.ingress_ready(ingress) else None
     )
+    resolved_url = external_url if external_url else internal_url
+    resolved_scheme = urlparse(external_url).scheme if external_url else "https" if tls else "http"
 
+    return integrations.Address(
+        internal_scheme,
+        internal_url,
+        resolved_scheme,
+        resolved_url,
+    )
 
 def refresh_certs(container: Container):
     """Run `update-ca-certificates` to refresh the trusted system certs."""
@@ -127,17 +147,28 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Service mesh integration
         integrations.setup_service_mesh(self)
 
+        # Ingress integration
+        ingress = integrations.setup_ingress(self, integrations.is_tls_ready(container))
+
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
             self,
             recv_ca_cert_folder_path=ContainerPath(RECV_CA_CERT_FOLDER_PATH, container=container),
-            refresh_certs=partial(refresh_certs, container=container),
         )
         server_cert_hash = integrations.receive_server_cert(
             self,
             server_cert_path=ContainerPath(SERVER_CERT_PATH, container=container),
             private_key_path=ContainerPath(SERVER_CERT_PRIVATE_KEY_PATH, container=container),
+            root_ca_cert_path=ContainerPath(SERVER_CA_CERT_PATH, container=container),
         )
+        # Refresh system certs
+        # This must be run after receive_ca_cert and/or receive_server_cert because they update
+        # certs in the /usr/local/share/ca-certificates directory
+        refresh_certs(container)
+
+        # Address manager
+        # NOTE: executed after ingress and TLS events
+        otelcol_address = charm_address(container, ingress)
 
         # Global scrape configs
         global_configs = {
@@ -157,7 +188,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         config_manager = ConfigManager(
             global_scrape_interval=global_configs["global_scrape_interval"],
             global_scrape_timeout=global_configs["global_scrape_timeout"],
-            receiver_tls=is_tls_ready(container),
+            receiver_tls=integrations.is_tls_ready(container),
             insecure_skip_verify=cast(bool, self.config.get("tls_insecure_skip_verify")),
             queue_size=cast(int, self.config.get("queue_size")),
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
@@ -175,7 +206,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         config_manager.add_otlp_forwarding(otlp_endpoints)
 
         # Logs setup
-        integrations.receive_loki_logs(self, tls=is_tls_ready(container))
+        integrations.receive_loki_logs(self, otelcol_address)
         loki_endpoints = integrations.send_loki_logs(self)
         if self._incoming_logs:
             config_manager.add_log_ingestion()
@@ -196,6 +227,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         # For now, the only incoming and outgoing metrics relations are remote-write/scrape
         metrics_consumer_jobs = integrations.scrape_metrics(self)
+        # Write CA certificates to disk and update job configurations
+        self._ensure_certs_dir(container)
+        cert_paths = self._write_ca_certificates_to_disk(metrics_consumer_jobs, container)
+        metrics_consumer_jobs = config_manager.update_jobs_with_ca_paths(
+            metrics_consumer_jobs, cert_paths
+        )
         config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
         remote_write_endpoints = integrations.send_remote_write(self)
         config_manager.add_remote_write(remote_write_endpoints)
@@ -203,7 +240,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Profiling setup
         if self._incoming_profiles:
             config_manager.add_profile_ingestion()
-            integrations.receive_profiles(self, tls=is_tls_ready(container))
+            integrations.receive_profiles(self, integrations.is_tls_ready(container))
         if profiling_endpoints := integrations.send_profiles(self):
             config_manager.add_profile_forwarding(profiling_endpoints)
         if self._incoming_profiles or integrations.send_profiles(self):
@@ -211,7 +248,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Tracing setup
         requested_tracing_protocols = integrations.receive_traces(
-            self, tls=is_tls_ready(container)
+            self, integrations.is_tls_ready(container)
         )
         if self._incoming_traces:
             config_manager.add_traces_ingestion(requested_tracing_protocols)
@@ -241,6 +278,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             tempo_url=cloud_integrator_data.tempo_url,
         )
 
+        # Add debug exporters from Juju config
+        config_manager.add_debug_exporters(
+            cast(bool, self.config.get("debug_exporter_for_logs")),
+            cast(bool, self.config.get("debug_exporter_for_metrics")),
+            cast(bool, self.config.get("debug_exporter_for_traces")),
+        )
+
         # Add custom processors from Juju config
         if custom_processors := cast(str, self.config.get("processors")):
             config_manager.add_custom_processors(custom_processors)
@@ -267,7 +311,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # TODO: Conditionally open ports based on the otelcol config file rather than opening all ports
         self.unit.set_ports(*[port.value for port in Port])
 
-        if self._has_server_cert_relation and not is_tls_ready(container):
+        if self._has_server_cert_relation and not integrations.is_tls_ready(container):
             # A tls relation to a CA was formed, but we didn't get the cert yet.
             container.stop(SERVICE_NAME)
             self.unit.status = WaitingStatus("CSR sent; otelcol down while waiting for a cert")
@@ -348,6 +392,43 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         }
         return checks
 
+    def _ensure_certs_dir(self, container: Container) -> None:
+        if not container.can_connect():
+            logger.warning("container not accessible, skipping certificates directory creation")
+            return
+
+        if container.exists(CERTS_DIR):
+            return
+
+        container.make_dir(CERTS_DIR, make_parents=True)
+
+    def _write_ca_certificates_to_disk(
+        self, scrape_jobs: List[Dict], container: Container
+    ) -> Dict[str, str]:
+        cert_paths = {}
+
+        if not container.can_connect():
+            logger.warning("Container not accessible, skipping CA certificate processing")
+            return cert_paths
+
+        for job in scrape_jobs:
+            tls_config = job.get("tls_config", {})
+            ca_content = tls_config.get("ca")
+
+            if not ca_content or not self._validate_cert(ca_content):
+                continue
+
+            job_name = job.get("job_name", "default")
+            # Since the `MetricsEndpointProvider` accepts a `jobs` arg, we cannot rely on the job name being safe
+            safe_job_name = job_name.replace("/", "_").replace(" ", "_").replace("-", "_")
+            ca_cert_path = f"{CERTS_DIR}otel_{safe_job_name}_ca.pem"
+
+            container.push(ca_cert_path, ca_content, permissions=0o644)
+            cert_paths[job_name] = ca_cert_path
+            logger.debug(f"CA certificate for job '{job_name}' written to {ca_cert_path}")
+
+        return cert_paths
+
     @property
     def _otelcol_version(self) -> Optional[str]:
         """Returns the otelcol workload version."""
@@ -389,6 +470,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         }
         requests = {"cpu": "0.25", "memory": "200Mi"}
         return adjust_resource_requirements(limits, requests, adhere_to_requests=True)
+
+    def _validate_cert(self, cert: str) -> bool:
+        pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"
+        return bool(re.search(pem_pattern, cert, re.DOTALL))
 
 
 if __name__ == "__main__":
