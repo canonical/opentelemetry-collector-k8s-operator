@@ -20,7 +20,7 @@ from enum import Enum, unique
 from typing import Callable, Dict, Final, List, Optional
 
 from cosl.juju_topology import JujuTopology
-from ops import CharmBase, Relation
+from ops import CharmBase
 from ops.framework import EventBase, EventSource, Object, ObjectEvents
 from pydantic import BaseModel, ConfigDict
 

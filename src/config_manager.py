@@ -1,6 +1,5 @@
 """Helper module to build the configuration for OpenTelemetry Collector."""
 
-import json
 import logging
 from typing import Any, Dict, List, Literal, Optional, Set
 

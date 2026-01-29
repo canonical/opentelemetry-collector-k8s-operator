@@ -9,8 +9,6 @@ import copy
 
 import pytest
 
-from src.config_manager import ConfigManager
-
 
 def test_add_prometheus_scrape():
     # GIVEN an empty config
@@ -198,33 +196,64 @@ def test_add_otlp_forwarding():
         insecure_skip_verify=True,
     )
 
-    # WHEN OTLP exporters (of gRPC and HTTP protocols) are added to the config
+    # WHEN the OTLP providers for multiple relations have provided the preferred protocols
     config_manager.add_otlp_forwarding(
         {
-            "0": OtlpEndpoint(
+            0: OtlpEndpoint(
                 **{
                     "protocol": "grpc",
-                    "endpoint": "http://host-1:grpc-port",
+                    "endpoint": "http://host-0:grpc-port",
                     "telemetries": ["logs"],
                 }
             ),
-            "1": OtlpEndpoint(
+            1: OtlpEndpoint(
+                **{
+                    "protocol": "grpc",
+                    "endpoint": "http://host-1:grpc-port",
+                    "telemetries": ["metrics", "traces"],
+                }
+            ),
+            2: OtlpEndpoint(
                 **{
                     "protocol": "http",
                     "endpoint": "http://host-2:http-port",
                     "telemetries": ["metrics", "traces"],
                 }
             ),
+            3: OtlpEndpoint(
+                **{
+                    "protocol": "http",
+                    "endpoint": "http://host-3:http-port",
+                    "telemetries": ["logs"],
+                }
+            ),
         }
     )
-    # TODO: Check that this is correct? Should the otelcol config not contain ONLY the preferred protocol?
-    # TODO: E.g. for one relation: {123 = OtlpEndpoint(protocol='grpc', endpoint='http://host:4317', telemetries=['logs'])}
-    # THEN the exporter config contains an "otlp" exporter, and an "otlphttp" exporter
-    expected_otlp_cfg = {
-        "otlp/rel-0": {"endpoint": "http://host-1:grpc-port", "tls": {"insecure": True}},
-        "otlphttp/rel-1": {"endpoint": "http://host-2:http-port", "tls": {"insecure": True}},
+
+    # THEN the exporter config contains appropriate "otlp" and "otlphttp" exporters
+    expected_exporters = {
+        "otlp/rel-0": {"endpoint": "http://host-0:grpc-port", "tls": {"insecure": True}},
+        "otlp/rel-1": {"endpoint": "http://host-1:grpc-port", "tls": {"insecure": True}},
+        "otlphttp/rel-2": {"endpoint": "http://host-2:http-port", "tls": {"insecure": True}},
+        "otlphttp/rel-3": {"endpoint": "http://host-3:http-port", "tls": {"insecure": True}},
     }
-    assert config_manager.config._config["exporters"] == expected_otlp_cfg
+    # AND the exporters are added to the appropriate pipelines
+    expected_pipelines = {
+        "logs/fake/0": {
+            "receivers": ["otlp"],
+            "exporters": ["otlp/rel-0", "otlphttp/rel-3"],
+        },
+        "metrics/fake/0": {
+            "receivers": ["otlp"],
+            "exporters": ["otlp/rel-1", "otlphttp/rel-2"],
+        },
+        "traces/fake/0": {
+            "receivers": ["otlp"],
+            "exporters": ["otlp/rel-1", "otlphttp/rel-2"],
+        },
+    }
+    assert config_manager.config._config["exporters"] == expected_exporters
+    assert config_manager.config._config["service"]["pipelines"] == expected_pipelines
 
 
 @pytest.mark.parametrize(
@@ -295,4 +324,5 @@ def test_add_debug_exporters(enabled_pipelines, expected_pipelines):
         "traces/otelcol/0",
     ]
     # AND the debug exporter is only attached to the enabled pipelines
+    # AND there is an OTLP receiver in each pipeline
     assert expected_pipelines == config_manager.config._config["service"]["pipelines"]
