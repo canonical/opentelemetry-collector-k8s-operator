@@ -5,16 +5,15 @@
 
 import json
 
-from ops.testing import Container, Relation, State
+from ops.testing import Relation, State
+from unittest.mock import patch
 
 from src.constants import CONFIG_PATH
 from tests.unit.helpers import get_otelcol_file
 
 
-def test_send_otlp_favoring_grpc(ctx, execs):
-    """Scenario: Dashboards are forwarded when a dashboard provider is related."""
-    # GIVEN otelcol prefers the gRPC endpoint
-    # AND a remote app provides both gRPC and HTTP OTLP endpoints
+def test_send_otlp_favoring_grpc(ctx, otelcol_container):
+    # GIVEN a remote app provides both gRPC and HTTP OTLP endpoints
     provides = [
         {"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["logs"]},
         {"protocol": "http", "endpoint": "http://host:4318", "telemetries": ["metrics"]},
@@ -29,7 +28,7 @@ def test_send_otlp_favoring_grpc(ctx, execs):
     state = State(
         relations=[provider],
         leader=True,
-        containers=[Container("otelcol", can_connect=True, execs=execs)],
+        containers=otelcol_container,
     )
 
     # AND WHEN any event executes the reconciler
@@ -44,7 +43,6 @@ def test_send_otlp_favoring_grpc(ctx, execs):
     }
     exporter_telemetries = provides[0].get("telemetries")
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
-    # TODO: Why is the debug exporter also in the list of exporters?
     assert cfg["exporters"].get(exporter_name) == exporter_config
     for pipeline in cfg["service"]["pipelines"]:
         if pipeline.split("/")[0] in exporter_telemetries:
@@ -53,10 +51,8 @@ def test_send_otlp_favoring_grpc(ctx, execs):
             assert exporter_name not in cfg["service"]["pipelines"][pipeline]["exporters"]
 
 
-def test_send_otlp_over_http(ctx, execs):
-    """Scenario: Dashboards are forwarded when a dashboard provider is related."""
-    # GIVEN otelcol prefers the gRPC endpoint
-    # AND a remote app provides only the HTTP OTLP endpoint
+def test_send_otlp_over_http(ctx, otelcol_container):
+    # GIVEN a remote app provides only the HTTP OTLP endpoint
     provides = [
         {"protocol": "http", "endpoint": "http://host:4318", "telemetries": ["logs", "traces"]}
     ]
@@ -70,7 +66,7 @@ def test_send_otlp_over_http(ctx, execs):
     state = State(
         relations=[provider],
         leader=True,
-        containers=[Container("otelcol", can_connect=True, execs=execs)],
+        containers=otelcol_container,
     )
 
     # AND WHEN any event executes the reconciler
@@ -85,7 +81,6 @@ def test_send_otlp_over_http(ctx, execs):
     }
     exporter_telemetries = provides[0].get("telemetries")
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
-    # TODO: Why is the debug exporter also in the list of exporters?
     assert cfg["exporters"].get(exporter_name) == exporter_config
     for pipeline in cfg["service"]["pipelines"]:
         if pipeline.split("/")[0] in exporter_telemetries:
@@ -94,16 +89,14 @@ def test_send_otlp_over_http(ctx, execs):
             assert exporter_name not in cfg["service"]["pipelines"][pipeline]["exporters"]
 
 
-def test_receive_otlp(ctx, execs):
-    """Scenario: Dashboards are forwarded when a dashboard provider is related."""
-    # GIVEN otelcol prefers the gRPC endpoint
-    # AND a remote app provides only the HTTP OTLP endpoint
-
-    # WHEN they are related over the "send-otlp" endpoint
+@patch("socket.getfqdn", new=lambda *args: "fqdn")
+def test_receive_otlp(ctx, otelcol_container):
+    # GIVEN a remote app provides only the HTTP OTLP endpoint
+    # WHEN they are related over the "receive-otlp" endpoint
     state = State(
         relations=[Relation("receive-otlp")],
         leader=True,
-        containers=[Container("otelcol", can_connect=True, execs=execs)],
+        containers=otelcol_container,
     )
 
     # AND WHEN any event executes the reconciler
@@ -111,9 +104,11 @@ def test_receive_otlp(ctx, execs):
         state_out = mgr.run()
 
     expected_endpoints = [
-        '{"protocol":"grpc","endpoint":"http://laptop:4317","telemetries":["logs","metrics","traces"]}',
-        '{"protocol":"http","endpoint":"http://laptop:4318","telemetries":["logs","metrics","traces"]}',
+        '{"protocol":"grpc","endpoint":"http://fqdn:4317","telemetries":["logs","metrics","traces"]}',
+        '{"protocol":"http","endpoint":"http://fqdn:4318","telemetries":["logs","metrics","traces"]}',
     ]
     for rel in state_out.relations:
         endpoints = json.loads(rel.local_app_data.get("data"))
         assert endpoints == expected_endpoints
+
+# TODO: Test multiple otlp relations (send and receive)

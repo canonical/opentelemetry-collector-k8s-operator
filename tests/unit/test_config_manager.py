@@ -198,7 +198,7 @@ def test_add_otlp_forwarding():
         insecure_skip_verify=True,
     )
 
-    # WHEN an OTLP exporters (of gRPC and HTTP protocols) are added to the config
+    # WHEN OTLP exporters (of gRPC and HTTP protocols) are added to the config
     config_manager.add_otlp_forwarding(
         {
             "0": OtlpEndpoint(
@@ -217,11 +217,9 @@ def test_add_otlp_forwarding():
             ),
         }
     )
-
-    # THEN they exists in the exporter config
-    # AND the grpc protocol created an "otlp" exporter, while the "http" protocol created an
-    # "otlphttp" exporter
-    # TODO: This test is duplicating test_otlp Scenario test
+    # TODO: Check that this is correct? Should the otelcol config not contain ONLY the preferred protocol?
+    # TODO: E.g. for one relation: {123 = OtlpEndpoint(protocol='grpc', endpoint='http://host:4317', telemetries=['logs'])}
+    # THEN the exporter config contains an "otlp" exporter, and an "otlphttp" exporter
     expected_otlp_cfg = {
         "otlp/rel-0": {"endpoint": "http://host-1:grpc-port", "tls": {"insecure": True}},
         "otlphttp/rel-1": {"endpoint": "http://host-2:http-port", "tls": {"insecure": True}},

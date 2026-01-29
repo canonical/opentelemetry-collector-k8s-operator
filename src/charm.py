@@ -201,7 +201,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         feature_gates: Optional[str] = None
 
         # OTLP setup
-        integrations.receive_otlp(self)
+        integrations.receive_otlp(self, lambda: otelcol_address.resolved_url)
         otlp_endpoints = integrations.send_otlp(self)
         config_manager.add_otlp_forwarding(otlp_endpoints)
 

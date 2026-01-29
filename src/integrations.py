@@ -9,7 +9,7 @@ import socket
 from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, cast, get_args
+from typing import Any, Callable, Dict, List, Optional, Set, cast, get_args
 
 import yaml
 from charmlibs.pathops import PathProtocol
@@ -461,11 +461,12 @@ def forward_dashboards(charm: CharmBase):
     # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
 
-def receive_otlp(charm: CharmBase):
+def receive_otlp(charm: CharmBase, resolved_url: Callable[[], str]) -> None:
     otlp_provider = OtlpProvider(
         charm,
         # TODO: We should read the config file for the configured receiver
         {"grpc": Port.otlp_grpc.value, "http": Port.otlp_http.value},
+        server_host_func=resolved_url,
     )
     charm.__setattr__("otlp_provider", otlp_provider)
 

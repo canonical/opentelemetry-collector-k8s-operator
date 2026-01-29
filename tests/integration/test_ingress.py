@@ -74,3 +74,5 @@ def test_push_logs_through_ingress(juju: jubilant.Juju):
     response = urlopen(req, timeout=2.0)
     # THEN the logs arrive in the otelcol pipeline
     assert response.getcode() == 204
+
+# TODO: Add a test for receiving OTLP through ingress
