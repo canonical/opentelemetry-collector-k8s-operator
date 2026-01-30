@@ -265,7 +265,7 @@ class ConfigManager:
 
     def add_profile_forwarding(self, endpoints: List[ProfilingEndpoint]):
         """Configure forwarding profiles to a profiling backend (Pyroscope)."""
-        # TODO: I think this is incorrect since we always set a default 
+        # TODO: I think this is incorrect since we always set a default
         # if we don't do this, and there is no relation on receive-profiles, otelcol will complain
         # that there are no receivers configured for this exporter.
         self.add_profile_ingestion()
@@ -371,9 +371,6 @@ class ConfigManager:
                 pipelines=[f"metrics/{self._unit_name}"],
             )
 
-        # TODO Receive alert rules via remote write
-        # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
-
     def add_otlp_forwarding(self, relation_map: Dict[int, OtlpEndpoint]):
         """Configure sending OTLP telemetry to an OTLP endpoint.
 
@@ -388,10 +385,6 @@ class ConfigManager:
         if not relation_map:
             return
 
-        # Receiver config
-        # TODO: Add a way to configure the default OTLP receivers -> Better yet, create a new one with a good namespace for otlp
-        # TODO: Add a test for OTLP with TLS (integration?)
-
         # Exporter config
         for rel_id, otlp_endpoint in relation_map.items():
             if otlp_endpoint.protocol == "grpc":
@@ -400,7 +393,10 @@ class ConfigManager:
                     f"otlp/rel-{rel_id}",
                     {
                         "endpoint": otlp_endpoint.endpoint,
-                        "tls": {"insecure_skip_verify": self._insecure_skip_verify},
+                        "tls": {
+                            "insecure": True,  # TODO: use a variable
+                            "insecure_skip_verify": self._insecure_skip_verify,
+                        },
                     },
                     pipelines=[
                         f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
@@ -412,7 +408,10 @@ class ConfigManager:
                     f"otlphttp/rel-{rel_id}",
                     {
                         "endpoint": otlp_endpoint.endpoint,
-                        "tls": {"insecure_skip_verify": self._insecure_skip_verify},
+                        "tls": {
+                            "insecure": True,
+                            "insecure_skip_verify": self._insecure_skip_verify,
+                        },
                     },
                     pipelines=[
                         f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries

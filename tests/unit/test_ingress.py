@@ -173,7 +173,7 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
                 {
                     "protocol": "grpc",
                     "endpoint": f"http://{host}:{Port.otlp_grpc.value}",
-                    "telemetries": ["logs", "metrics", "traces"],
+                    "telemetries": ["metrics"],
                 },
                 separators=(",", ":"),
             ),
@@ -181,7 +181,7 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
                 {
                     "protocol": "http",
                     "endpoint": f"http://{host}:{Port.otlp_http.value}",
-                    "telemetries": ["logs", "metrics", "traces"],
+                    "telemetries": ["metrics"],
                 },
                 separators=(",", ":"),
             ),

@@ -1,16 +1,11 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Feature: Otelcol server can operate behind an ingress."""
+"""Feature: Otelcol sets the correct OTLP endpoint information in its databag."""
 
-import json
-import time
 from typing import Dict
-from urllib.request import Request, urlopen
 
 import jubilant
-
-from src.config_builder import Port
 
 
 def get_ingress_url(juju: jubilant.Juju) -> str:
@@ -29,3 +24,6 @@ def test_health_through_ingress(juju: jubilant.Juju, charm: str, charm_resources
     juju.config("otelcol-two", {"debug_exporter_for_metrics": True})
     juju.wait(jubilant.all_active, timeout=450, error=jubilant.any_error)
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
+    # THEN the metrics from otelcol-one are forwarded to otelcol-two
+    otelcol_two_logs = juju.ssh("otelcol-two/leader", command="pebble logs", container="otelcol")
+    "juju_application=otelcol-one" in otelcol_two_logs

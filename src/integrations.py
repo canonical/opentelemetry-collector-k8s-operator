@@ -64,7 +64,7 @@ from constants import (
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
-from otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider
+from otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider, TelemetryType
 
 logger = logging.getLogger(__name__)
 
@@ -472,7 +472,7 @@ def receive_otlp(charm: CharmBase, resolved_url: Callable[[], str]) -> None:
         charm,
         # TODO: We should read the config file for the configured receiver
         {"grpc": Port.otlp_grpc.value, "http": Port.otlp_http.value},
-        supported_telemetries=["metrics"],  # TODO: Add more telemetries here once tested/supported
+        supported_telemetries=[TelemetryType.metric],  # TODO: Add more telemetries here once tested/supported
         server_host_func=resolved_url,
     )
     charm.__setattr__("otlp_provider", otlp_provider)

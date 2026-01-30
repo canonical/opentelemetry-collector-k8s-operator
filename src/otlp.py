@@ -17,7 +17,7 @@ import json
 import logging
 import socket
 from enum import Enum, unique
-from typing import Callable, Dict, Final, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from cosl.juju_topology import JujuTopology
 from ops import CharmBase
@@ -27,7 +27,6 @@ from pydantic import BaseModel, ConfigDict
 DEFAULT_CONSUMER_RELATION_NAME = "send-otlp"
 DEFAULT_PROVIDER_RELATION_NAME = "receive-otlp"
 RELATION_INTERFACE_NAME = "otlp"
-SUPPORTED_TELEMETRIES: Final = ["logs", "metrics", "traces"]
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +51,10 @@ class TelemetryType(str, Enum):
     """OTLP metrics data."""
     trace = "traces"
     """OTLP traces data."""
-    profile = "profiles"
-    """OTLP traces data."""
 
 
 class ProtocolPort(BaseModel):
+    """A pydantic model for OTLP protocols and their associated port."""
     model_config = ConfigDict(extra="forbid")
 
     grpc: Optional[int] = None
@@ -64,6 +62,7 @@ class ProtocolPort(BaseModel):
 
 
 class OtlpEndpoint(BaseModel):
+    """A pydantic model for a single OTLP endpoint."""
     model_config = ConfigDict(extra="forbid")
 
     protocol: ProtocolType
@@ -72,6 +71,7 @@ class OtlpEndpoint(BaseModel):
 
 
 class OtlpProviderAppData(BaseModel):
+    """A pydantic model for the OTLP provider's databag."""
     model_config = ConfigDict(extra="forbid")
 
     data: List[OtlpEndpoint]
@@ -94,6 +94,8 @@ class OtlpConsumerEvents(ObjectEvents):
 
 
 class OtlpConsumer(Object):
+    """A class for consuming OTLP endpoints."""
+
     on = OtlpConsumerEvents()  # pyright: ignore
 
     def __init__(
@@ -151,10 +153,8 @@ class OtlpProviderEvents(ObjectEvents):
     consumers_changed = EventSource(OtlpProviderConsumersChangedEvent)
 
 
-# TODO: Consider renaming to SendOTLP
 class OtlpProvider(Object):
-    # TODO: update
-    """docstring."""
+    """A class for publishing all supported OTLP endpoints."""
 
     on = OtlpProviderEvents()  # pyright: ignore
 
@@ -164,7 +164,7 @@ class OtlpProvider(Object):
         protocol_ports: Dict[str, int],
         relation_name: str = DEFAULT_PROVIDER_RELATION_NAME,
         path: str = "",
-        supported_telemetries: List[str] = SUPPORTED_TELEMETRIES,
+        supported_telemetries: List[TelemetryType] = list(TelemetryType),
         server_host_func: Callable[[], str] = lambda: f"http://{socket.getfqdn()}",
     ):
         super().__init__(charm, relation_name)
@@ -189,6 +189,7 @@ class OtlpProvider(Object):
 
     @property
     def otlp_endpoints(self) -> List[OtlpEndpoint]:
+        """List all available OTLP endpoints for this server."""
         endpoints = []
         for protocol, port in self._protocol_ports.model_dump(exclude_none=True).items():
             endpoint = f"{self._get_server_host().rstrip('/')}:{port}"
@@ -196,7 +197,9 @@ class OtlpProvider(Object):
                 endpoint += f"/{self._path.rstrip('/')}"
             endpoints.append(
                 OtlpEndpoint(
-                    protocol=protocol, endpoint=endpoint, telemetries=self._supported_telemetries
+                    protocol=ProtocolType(protocol),
+                    endpoint=endpoint,
+                    telemetries=self._supported_telemetries,
                 )
             )
         return endpoints

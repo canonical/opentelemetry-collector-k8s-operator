@@ -9,18 +9,18 @@ import pytest
 from ops.testing import Relation, State
 from pydantic import ValidationError
 
-from src.otlp import OtlpEndpoint, OtlpProviderAppData
+from src.otlp import OtlpEndpoint, OtlpProviderAppData, ProtocolType, TelemetryType
 
 
 @pytest.mark.parametrize(
     "data, error_match",
     [
         (
-            [{"protocol": "invalid", "endpoint": "http://host:4317", "telemetries": ["logs"]}],
+            {"protocol": "invalid", "endpoint": "http://host:4317", "telemetries": ["logs"]},
             "Input should be 'grpc' or 'http'",
         ),
         (
-            [{"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["invalid"]}],
+            {"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["invalid"]},
             "Input should be 'logs', 'metrics' or 'traces'",
         ),
     ],
@@ -28,7 +28,7 @@ from src.otlp import OtlpEndpoint, OtlpProviderAppData
 def test_provider_app_data_raises_validation_error(data, error_match):
     """Test that OtlpProviderAppData validates protocols and telemetries."""
     with pytest.raises(ValidationError, match=error_match):
-        OtlpProviderAppData(data=data)
+        OtlpProviderAppData(data=[OtlpEndpoint(**data)])
 
 
 @pytest.mark.parametrize(
@@ -36,36 +36,50 @@ def test_provider_app_data_raises_validation_error(data, error_match):
     (
         (
             [
-                {"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["logs"]},
-                {"protocol": "http", "endpoint": "http://host:4318", "telemetries": ["metrics"]},
-            ],
-            OtlpEndpoint(protocol="grpc", endpoint="http://host:4317", telemetries=["logs"]),
-        ),
-        (
-            [
-                {"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["metrics"]},
-                {"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["traces"]},
-            ],
-            OtlpEndpoint(protocol="grpc", endpoint="http://host:4317", telemetries=["metrics"]),
-        ),
-        (
-            [{"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["traces"]}],
-            OtlpEndpoint(protocol="grpc", endpoint="http://host:4317", telemetries=["traces"]),
-        ),
-        (
-            [{"protocol": "http", "endpoint": "http://host:4318", "telemetries": ["logs"]}],
-            OtlpEndpoint(protocol="http", endpoint="http://host:4318", telemetries=["logs"]),
-        ),
-        (
-            [
-                {
-                    "protocol": "http",
-                    "endpoint": "http://host:4318",
-                    "telemetries": ["logs", "metrics"],
-                }
+                '{"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["logs"]}',
+                '{"protocol": "http", "endpoint": "http://host:4318", "telemetries": ["metrics"]}',
             ],
             OtlpEndpoint(
-                protocol="http", endpoint="http://host:4318", telemetries=["logs", "metrics"]
+                protocol=ProtocolType.grpc,
+                endpoint="http://host:4317",
+                telemetries=[TelemetryType.log],
+            ),
+        ),
+        (
+            [
+                '{"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["metrics"]}',
+                '{"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["traces"]}',
+            ],
+            OtlpEndpoint(
+                protocol=ProtocolType.grpc,
+                endpoint="http://host:4317",
+                telemetries=[TelemetryType.metric],
+            ),
+        ),
+        (
+            ['{"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["traces"]}'],
+            OtlpEndpoint(
+                protocol=ProtocolType.grpc,
+                endpoint="http://host:4317",
+                telemetries=[TelemetryType.trace],
+            ),
+        ),
+        (
+            ['{"protocol": "http", "endpoint": "http://host:4318", "telemetries": ["logs"]}'],
+            OtlpEndpoint(
+                protocol=ProtocolType.http,
+                endpoint="http://host:4318",
+                telemetries=[TelemetryType.log],
+            ),
+        ),
+        (
+            [
+                '{"protocol": "http","endpoint": "http://host:4318","telemetries": ["logs", "metrics"]}'
+            ],
+            OtlpEndpoint(
+                protocol=ProtocolType.http,
+                endpoint="http://host:4318",
+                telemetries=[TelemetryType.log, TelemetryType.metric],
             ),
         ),
     ),
@@ -90,3 +104,5 @@ def test_send_otlp(ctx, otelcol_container, provides, otlp_endpoint):
         # THEN the returned endpoint (many-to-one) is correct
         result = mgr.charm.otlp_consumer.get_remote_otlp_endpoint()[123]
         assert result.model_dump_json() == otlp_endpoint.model_dump_json()
+
+# TODO: Test receive_otlp which ensures that otlp_endpoints is correct. The test above checks that the consumer is able to get the endpoints from provider
