@@ -248,8 +248,7 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
         peer_relation_name="peers",
     )
     charm.__setattr__("remote_write", remote_write)
-    # TODO: add alerts from remote write
-    # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
+    # TODO: Do we want to add alerts from OTLP since we are not supporting remote-write
     # TODO: Luca: probably don't need this anymore
     remote_write.reload_alerts()
     return remote_write.endpoints
@@ -481,7 +480,7 @@ def receive_otlp(charm: CharmBase, resolved_url: Callable[[], str]) -> None:
 def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     """Instantiate the OtlpConsumer.
 
-    The preferred protocol is gRPC over HTTP.
+    The gRPC protocol is preferred over HTTP.
     """
     otlp_consumer = OtlpConsumer(charm)
     charm.__setattr__("otlp_consumer", otlp_consumer)

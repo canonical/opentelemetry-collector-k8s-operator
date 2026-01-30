@@ -4,6 +4,7 @@
 """Feature: OTLP endpoint handling."""
 
 import json
+from unittest.mock import patch
 
 import pytest
 from ops.testing import Relation, State
@@ -105,4 +106,32 @@ def test_send_otlp(ctx, otelcol_container, provides, otlp_endpoint):
         result = mgr.charm.otlp_consumer.get_remote_otlp_endpoint()[123]
         assert result.model_dump_json() == otlp_endpoint.model_dump_json()
 
-# TODO: Test receive_otlp which ensures that otlp_endpoints is correct. The test above checks that the consumer is able to get the endpoints from provider
+
+@patch("socket.getfqdn", new=lambda *args: "fqdn")
+def test_receive_otlp(ctx, otelcol_container):
+    expected_endpoints = [
+        OtlpEndpoint(
+            protocol=ProtocolType.grpc,
+            endpoint="http://fqdn:4317",
+            telemetries=[TelemetryType.metric],
+        ),
+        OtlpEndpoint(
+            protocol=ProtocolType.http,
+            endpoint="http://fqdn:4318",
+            telemetries=[TelemetryType.metric],
+        ),
+    ]
+
+    # GIVEN no relations
+    state = State(
+        leader=True,
+        containers=otelcol_container,
+    )
+
+    # AND WHEN any event executes the reconciler
+    with ctx(ctx.on.update_status(), state=state) as mgr:
+        mgr.run()
+        # THEN the OtlpProvider is supplying a list of its otlp_endpoints
+        result = mgr.charm.otlp_provider.otlp_endpoints
+        for idx, endpoint in enumerate(result):
+            assert endpoint.model_dump_json() == expected_endpoints[idx].model_dump_json()

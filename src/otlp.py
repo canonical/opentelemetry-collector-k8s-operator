@@ -1,7 +1,8 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Prometheus Scrape Library.
+# TODO: Update once we have moved to a lib
+"""OpenTelemetry protocol (OTLP) Library.
 
 ## Overview
 
@@ -12,7 +13,6 @@ shared between Opentelemetry-collector charms and any other charm that intends t
 provide OTLP telemetry for Opentelemetry-collector.
 """
 
-# TODO: Move to a lib
 import json
 import logging
 import socket
@@ -182,11 +182,10 @@ class OtlpProvider(Object):
             return
 
         for relation in self.model.relations[self._relation_name]:
-            # TODO: pass the supported telemetries to requirer here
             relation.data[self._charm.app]["data"] = json.dumps(
                 [e.model_dump_json(exclude_none=True) for e in self.otlp_endpoints]
             )
-
+    OtlpEndpoint.model_validate
     @property
     def otlp_endpoints(self) -> List[OtlpEndpoint]:
         """List all available OTLP endpoints for this server."""

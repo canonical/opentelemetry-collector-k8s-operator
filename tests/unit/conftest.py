@@ -80,7 +80,6 @@ class MockCertificate:
     def __init__(self, server_cert, ca_cert):
         self.certificate = Certificate(server_cert)
         self.ca = Certificate(ca_cert)
-        # TODO: remove this comment certificates.certificate.raw, certificates.ca.raw
 
 
 @pytest.fixture

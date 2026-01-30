@@ -252,7 +252,7 @@ class ConfigManager:
         """Configure ingesting profiles."""
         self.config.add_component(
             Component.receiver,
-            # TODO: Rename receiver to something sensible, add unit ID
+            # TODO: Rename receiver to something sensible, add unit ID. Maybe not if we want parity to VM charm?
             "otlp",
             {
                 "protocols": {
@@ -265,7 +265,6 @@ class ConfigManager:
 
     def add_profile_forwarding(self, endpoints: List[ProfilingEndpoint]):
         """Configure forwarding profiles to a profiling backend (Pyroscope)."""
-        # TODO: I think this is incorrect since we always set a default
         # if we don't do this, and there is no relation on receive-profiles, otelcol will complain
         # that there are no receivers configured for this exporter.
         self.add_profile_ingestion()
@@ -371,6 +370,9 @@ class ConfigManager:
                 pipelines=[f"metrics/{self._unit_name}"],
             )
 
+    def otlp_exporter_tls_config():
+        return {"insecure": True, "insecure_skip_verify": False, "cert_file": 1, "key_file": 1, "ca_file": 1}
+
     def add_otlp_forwarding(self, relation_map: Dict[int, OtlpEndpoint]):
         """Configure sending OTLP telemetry to an OTLP endpoint.
 
@@ -382,6 +384,7 @@ class ConfigManager:
         """
         # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlpexporter
         # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlphttpexporter
+
         if not relation_map:
             return
 

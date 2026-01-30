@@ -57,6 +57,7 @@ def test_push_logs_through_ingress(juju: jubilant.Juju):
         error=jubilant.any_error,
     )
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
+
     # WHEN logs are sent through ingress
     push_api_url = f"{get_ingress_url(juju)}:{Port.loki_http.value}/loki/api/v1/push"
     data = {
@@ -76,6 +77,7 @@ def test_push_logs_through_ingress(juju: jubilant.Juju):
         headers={"Content-Type": "application/json"},
     )
     response = urlopen(req, timeout=2.0)
+
     # THEN the logs arrive in the otelcol pipeline
     assert response.getcode() == 204
 
@@ -116,6 +118,7 @@ def test_push_otlp_logs_through_ingress(juju: jubilant.Juju):
         headers={"Content-Type": "application/json"},
     )
     response = urlopen(req, timeout=2.0)
+
     # THEN the logs arrive in the otelcol pipeline
     assert response.getcode() == 200
     logs_pipeline = juju.ssh("otelcol/leader", command="pebble logs", container="otelcol")
