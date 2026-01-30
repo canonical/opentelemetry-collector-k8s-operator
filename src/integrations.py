@@ -462,16 +462,27 @@ def forward_dashboards(charm: CharmBase):
 
 
 def receive_otlp(charm: CharmBase, resolved_url: Callable[[], str]) -> None:
+    """Instantiate the OtlpProvider.
+
+    Supports:
+        protocols: gRPC, HTTP
+        telemetries: metrics
+    """
     otlp_provider = OtlpProvider(
         charm,
         # TODO: We should read the config file for the configured receiver
         {"grpc": Port.otlp_grpc.value, "http": Port.otlp_http.value},
+        supported_telemetries=["metrics"],  # TODO: Add more telemetries here once tested/supported
         server_host_func=resolved_url,
     )
     charm.__setattr__("otlp_provider", otlp_provider)
 
 
 def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
+    """Instantiate the OtlpConsumer.
+
+    The preferred protocol is gRPC over HTTP.
+    """
     otlp_consumer = OtlpConsumer(charm)
     charm.__setattr__("otlp_consumer", otlp_consumer)
     return otlp_consumer.get_remote_otlp_endpoint()

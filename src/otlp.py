@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 @unique
-class OtlpProtocols(str, Enum):
+class ProtocolType(str, Enum):
     """OTLP protocols used by the OpenTelemetry Collector."""
 
     grpc = "grpc"
@@ -42,8 +42,21 @@ class OtlpProtocols(str, Enum):
     """HTTP protocol for sending/receiving OTLP data."""
 
 
-# TODO: This fails if a Provider does not provide all protocols!
-class ProtocolPorts(BaseModel):
+@unique
+class TelemetryType(str, Enum):
+    """OTLP telemetries used by the OpenTelemetry Collector."""
+
+    log = "logs"
+    """OTLP logs data."""
+    metric = "metrics"
+    """OTLP metrics data."""
+    trace = "traces"
+    """OTLP traces data."""
+    profile = "profiles"
+    """OTLP traces data."""
+
+
+class ProtocolPort(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     grpc: Optional[int] = None
@@ -53,20 +66,18 @@ class ProtocolPorts(BaseModel):
 class OtlpEndpoint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    protocol: str  # TODO: Should be from an Enum type
+    protocol: ProtocolType
     endpoint: str
-    telemetries: List[str]  # TODO: Should be from an Enum type
+    telemetries: List[TelemetryType]
 
 
 class OtlpProviderAppData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     data: List[OtlpEndpoint]
-    # TODO: Add field_validator for:
-    #       1. protocols are all supported
-    #       2. telemetries are all supported
 
 
+# TODO: Are these events needed?
 class OtlpEndpointsChangedEvent(EventBase):
     """Event emitted when OTLP endpoints change."""
 
@@ -75,6 +86,7 @@ class OtlpEndpointsChangedEvent(EventBase):
         self.relation_id = relation_id
 
 
+# TODO: Are these events needed?
 class OtlpConsumerEvents(ObjectEvents):
     """Event descriptor for events raised by `OTLPConsumer`."""
 
@@ -82,16 +94,13 @@ class OtlpConsumerEvents(ObjectEvents):
 
 
 class OtlpConsumer(Object):
-    # TODO: update
-    """docstring."""
-
     on = OtlpConsumerEvents()  # pyright: ignore
 
     def __init__(
         self,
         charm: CharmBase,
         relation_name: str = DEFAULT_CONSUMER_RELATION_NAME,
-        protocol: str = OtlpProtocols.grpc.value,
+        protocol: str = ProtocolType.grpc.value,
     ):
         super().__init__(charm, relation_name)
         self._charm = charm
@@ -119,7 +128,7 @@ class OtlpConsumer(Object):
                 continue
 
             data = json.loads(app_databag["data"])
-            otlp_endpoints = [OtlpEndpoint(**endpoint) for endpoint in data]
+            otlp_endpoints = [OtlpEndpoint(**json.loads(endpoint)) for endpoint in data]
 
             if preferred_endpoint := next(
                 (e for e in otlp_endpoints if self._protocol == e.protocol), None
@@ -161,7 +170,7 @@ class OtlpProvider(Object):
         super().__init__(charm, relation_name)
         self._charm = charm
         self._relation_name = relation_name
-        self._protocol_ports = ProtocolPorts(**protocol_ports)
+        self._protocol_ports = ProtocolPort(**protocol_ports)
         self._path = path
         self._supported_telemetries = supported_telemetries
         self._get_server_host = server_host_func

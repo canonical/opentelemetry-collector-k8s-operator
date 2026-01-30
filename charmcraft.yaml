@@ -84,7 +84,8 @@ provides:
   receive-otlp:
     interface: otlp
     optional: true
-    description: Provide all OTLP endpoints for the supported protocols of this server.
+    description: |
+      Provide all OTLP endpoints for the supported protocols and telemetries of this server.
 
 requires:
   send-profiles:
@@ -159,7 +160,9 @@ requires:
   send-otlp:
     interface: otlp
     optional: true
-    description: Obtain the endpoint serving an OTLP receiver.
+    description: |
+      Obtain the endpoint serving an OTLP receiver for HTTP and gRPC protocols. The
+      preferred protocol, if multiple are provided, is gRPC.
 
 peers:
   peers:

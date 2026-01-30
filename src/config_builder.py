@@ -162,6 +162,11 @@ class ConfigBuilder:
                     "http": {"endpoint": f"0.0.0.0:{Port.otlp_http.value}"},
                     "grpc": {"endpoint": f"0.0.0.0:{Port.otlp_grpc.value}"},
                 },
+                # TOOD: Update this
+                "tls": {
+                    "insecure": True,
+                    "insecure_skip_verify": True,
+                },
             },
             pipelines=[
                 f"logs/{self._unit_name}",

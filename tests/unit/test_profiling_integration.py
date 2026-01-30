@@ -11,6 +11,8 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
 from src.constants import SERVICE_NAME, CONFIG_PATH
 from tests.unit.helpers import get_otelcol_file
 
+profile_pipeline = "profiles/opentelemetry-collector-k8s/0"
+
 
 @pytest.fixture
 def tls_mock(cert_obj, private_key):
@@ -121,8 +123,8 @@ def test_send_profiles_integration(ctx, execs, insecure_skip_verify, remote_inse
 
     # AND the profiling pipeline contains an exporter to the expected url
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
-    assert cfg["service"]["pipelines"]["profiles"]["exporters"][0] == "otlp/profiling/0"
-    assert cfg["service"]["pipelines"]["profiles"]["receivers"][0] == "otlp"
+    assert cfg["service"]["pipelines"][profile_pipeline]["exporters"][0] == "otlp/profiling/0"
+    assert cfg["service"]["pipelines"][profile_pipeline]["receivers"][0] == "otlp"
     assert cfg["exporters"]["otlp/profiling/0"]["endpoint"] == pyro_url
     assert cfg["exporters"]["otlp/profiling/0"]["tls"] == {
         "insecure": remote_insecure,
@@ -160,7 +162,7 @@ def test_receive_profiles_integration(sock_mock, ctx, execs, insecure_skip_verif
 
     # AND the profiling pipeline contains a profiling pipeline, but no exporters other than nop
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
-    assert cfg["service"]["pipelines"]["profiles"]["exporters"] == [
+    assert cfg["service"]["pipelines"][profile_pipeline]["exporters"] == [
         "nop/opentelemetry-collector-k8s/0"
     ]
 
@@ -208,7 +210,7 @@ def test_profiling_integration_tls(ctx, execs, insecure_skip_verify, tls_mock):
 
     # AND the profiling pipeline contains an exporter to the expected url
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
-    assert cfg["service"]["pipelines"]["profiles"]["exporters"][0] == "otlp/profiling/0"
+    assert cfg["service"]["pipelines"][profile_pipeline]["exporters"][0] == "otlp/profiling/0"
     assert cfg["exporters"]["otlp/profiling/0"]["endpoint"] == pyro_url
     assert cfg["exporters"]["otlp/profiling/0"]["tls"] == {
         "insecure": False,

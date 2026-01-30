@@ -198,7 +198,7 @@ def test_add_otlp_forwarding():
 
     # WHEN the OTLP providers for multiple relations have provided the preferred protocols
     config_manager.add_otlp_forwarding(
-        {
+        relation_map={
             0: OtlpEndpoint(
                 **{
                     "protocol": "grpc",

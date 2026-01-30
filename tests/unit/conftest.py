@@ -7,7 +7,7 @@ from ops import ActiveStatus
 from dataclasses import dataclass
 
 
-from charm import OpenTelemetryCollectorK8sCharm
+from src.charm import OpenTelemetryCollectorK8sCharm
 
 CHARM_ROOT = Path(__file__).parent.parent.parent
 

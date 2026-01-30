@@ -51,7 +51,11 @@ def test_push_logs_through_ingress(juju: jubilant.Juju):
         timeout=300,
         error=jubilant.any_error,
     )
-    juju.wait(lambda status: jubilant.all_blocked(status, 'otelcol'), timeout=300, error=jubilant.any_error)
+    juju.wait(
+        lambda status: jubilant.all_blocked(status, "otelcol"),
+        timeout=300,
+        error=jubilant.any_error,
+    )
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
     # WHEN logs are sent through ingress
     push_api_url = f"{get_ingress_url(juju)}:{Port.loki_http.value}/loki/api/v1/push"
@@ -75,4 +79,44 @@ def test_push_logs_through_ingress(juju: jubilant.Juju):
     # THEN the logs arrive in the otelcol pipeline
     assert response.getcode() == 204
 
-# TODO: Add a test for receiving OTLP through ingress
+
+def test_push_otlp_logs_through_ingress(juju: jubilant.Juju):
+    """Scenario: receive OTLP logs via the otlp_http receiver through ingress."""
+    # GIVEN a model with otel-collector and traefik
+    # WHEN OTLP logs are sent through ingress
+    juju.config("otelcol", {"debug_exporter_for_logs": True})
+    juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
+    otlp_http_url = f"{get_ingress_url(juju)}:{Port.otlp_http.value}/v1/logs"
+    identifier = "+++Testing OTLP ingress+++"
+    data = {
+        "resourceLogs": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "test-service"}}
+                    ]
+                },
+                "scopeLogs": [
+                    {
+                        "logRecords": [
+                            {
+                                "timeUnixNano": str(time.time_ns()),
+                                "body": {"stringValue": identifier},
+                                "severityText": "INFO",
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+    req = Request(
+        otlp_http_url,
+        data=json.dumps(data).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    response = urlopen(req, timeout=2.0)
+    # THEN the logs arrive in the otelcol pipeline
+    assert response.getcode() == 200
+    logs_pipeline = juju.ssh("otelcol/leader", command="pebble logs", container="otelcol")
+    assert identifier in logs_pipeline

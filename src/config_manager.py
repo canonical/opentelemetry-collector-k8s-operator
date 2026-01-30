@@ -252,6 +252,7 @@ class ConfigManager:
         """Configure ingesting profiles."""
         self.config.add_component(
             Component.receiver,
+            # TODO: Rename receiver to something sensible, add unit ID
             "otlp",
             {
                 "protocols": {
@@ -259,11 +260,12 @@ class ConfigManager:
                     "grpc": {"endpoint": f"0.0.0.0:{Port.otlp_grpc.value}"},
                 },
             },
-            pipelines=["profiles"],
+            pipelines=[f"profiles/{self._unit_name}"],
         )
 
     def add_profile_forwarding(self, endpoints: List[ProfilingEndpoint]):
         """Configure forwarding profiles to a profiling backend (Pyroscope)."""
+        # TODO: I think this is incorrect since we always set a default 
         # if we don't do this, and there is no relation on receive-profiles, otelcol will complain
         # that there are no receivers configured for this exporter.
         self.add_profile_ingestion()
@@ -272,6 +274,7 @@ class ConfigManager:
             self.config.add_component(
                 Component.exporter,
                 # first component of this ID is the exporter type
+                # TODO: Check namespacing with our exporter
                 f"otlp/profiling/{idx}",
                 {
                     "endpoint": endpoint.endpoint,
@@ -283,7 +286,7 @@ class ConfigManager:
                         "insecure_skip_verify": self._insecure_skip_verify,
                     },
                 },
-                pipelines=["profiles"],
+                pipelines=[f"profiles/{self._unit_name}"],
             )
 
     def add_self_scrape(self, identifier: str, labels: Dict) -> None:
@@ -385,6 +388,11 @@ class ConfigManager:
         if not relation_map:
             return
 
+        # Receiver config
+        # TODO: Add a way to configure the default OTLP receivers -> Better yet, create a new one with a good namespace for otlp
+        # TODO: Add a test for OTLP with TLS (integration?)
+
+        # Exporter config
         for rel_id, otlp_endpoint in relation_map.items():
             if otlp_endpoint.protocol == "grpc":
                 self.config.add_component(
@@ -392,10 +400,10 @@ class ConfigManager:
                     f"otlp/rel-{rel_id}",
                     {
                         "endpoint": otlp_endpoint.endpoint,
-                        "tls": {"insecure": True},  # TODO: TLS implementation
+                        "tls": {"insecure_skip_verify": self._insecure_skip_verify},
                     },
                     pipelines=[
-                        f"{_type}/{self._unit_name}" for _type in otlp_endpoint.telemetries
+                        f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
                     ],
                 )
             elif otlp_endpoint.protocol == "http":
@@ -404,10 +412,10 @@ class ConfigManager:
                     f"otlphttp/rel-{rel_id}",
                     {
                         "endpoint": otlp_endpoint.endpoint,
-                        "tls": {"insecure": True},  # TODO: TLS implementation
+                        "tls": {"insecure_skip_verify": self._insecure_skip_verify},
                     },
                     pipelines=[
-                        f"{_type}/{self._unit_name}" for _type in otlp_endpoint.telemetries
+                        f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
                     ],
                 )
 
