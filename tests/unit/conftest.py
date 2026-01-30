@@ -7,7 +7,7 @@ from ops import ActiveStatus
 from dataclasses import dataclass
 
 
-from charm import OpenTelemetryCollectorK8sCharm
+from src.charm import OpenTelemetryCollectorK8sCharm
 
 CHARM_ROOT = Path(__file__).parent.parent.parent
 
@@ -80,7 +80,6 @@ class MockCertificate:
     def __init__(self, server_cert, ca_cert):
         self.certificate = Certificate(server_cert)
         self.ca = Certificate(ca_cert)
-        # TODO: remove this comment certificates.certificate.raw, certificates.ca.raw
 
 
 @pytest.fixture

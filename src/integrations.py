@@ -9,7 +9,7 @@ import socket
 from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, cast, get_args
+from typing import Any, Callable, Dict, List, Optional, Set, cast, get_args
 
 import yaml
 from charmlibs.pathops import PathProtocol
@@ -64,6 +64,7 @@ from constants import (
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
+from otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider, TelemetryType
 
 logger = logging.getLogger(__name__)
 
@@ -247,8 +248,7 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
         peer_relation_name="peers",
     )
     charm.__setattr__("remote_write", remote_write)
-    # TODO: add alerts from remote write
-    # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
+    # TODO: Do we want to add alerts from OTLP since we are not supporting remote-write
     # TODO: Luca: probably don't need this anymore
     remote_write.reload_alerts()
     return remote_write.endpoints
@@ -458,6 +458,33 @@ def forward_dashboards(charm: CharmBase):
     # TODO: Do we need to implement dashboard status changed logic?
     #   This propagates Grafana's errors to the charm which provided the dashboard
     # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
+
+
+def receive_otlp(charm: CharmBase, resolved_url: Callable[[], str]) -> None:
+    """Instantiate the OtlpProvider.
+
+    Supports:
+        protocols: gRPC, HTTP
+        telemetries: metrics
+    """
+    otlp_provider = OtlpProvider(
+        charm,
+        # TODO: We should read the config file for the configured receiver
+        {"grpc": Port.otlp_grpc.value, "http": Port.otlp_http.value},
+        supported_telemetries=[TelemetryType.metric],  # TODO: Add more telemetries here once tested/supported
+        server_host_func=resolved_url,
+    )
+    charm.__setattr__("otlp_provider", otlp_provider)
+
+
+def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
+    """Instantiate the OtlpConsumer.
+
+    The gRPC protocol is preferred over HTTP.
+    """
+    otlp_consumer = OtlpConsumer(charm)
+    charm.__setattr__("otlp_consumer", otlp_consumer)
+    return otlp_consumer.get_remote_otlp_endpoint()
 
 
 # TODO: Luca: move this into the GrafanCloudIntegrator library

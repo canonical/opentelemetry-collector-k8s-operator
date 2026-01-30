@@ -81,6 +81,11 @@ provides:
     interface: profiling
     optional: true
     description: Receive profiles from other charms.
+  receive-otlp:
+    interface: otlp
+    optional: true
+    description: |
+      Provide all OTLP endpoints for the supported protocols and telemetries of this server.
 
 requires:
   send-profiles:
@@ -152,6 +157,12 @@ requires:
     description: |
       Ingress integration for the Otelcol server, so that cross-model workloads can send their data
       through the ingress. Uses `traefik_route` to open ports on Traefik host for tracing ingesters.
+  send-otlp:
+    interface: otlp
+    optional: true
+    description: |
+      Obtain the endpoint serving an OTLP receiver for HTTP and gRPC protocols. The
+      preferred protocol, if multiple are provided, is gRPC.
 
 peers:
   peers:

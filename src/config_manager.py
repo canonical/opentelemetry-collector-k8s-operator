@@ -8,6 +8,7 @@ import yaml
 from config_builder import Component, ConfigBuilder, Port
 from constants import FILE_STORAGE_DIRECTORY
 from integrations import ProfilingEndpoint
+from otlp import OtlpEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +252,7 @@ class ConfigManager:
         """Configure ingesting profiles."""
         self.config.add_component(
             Component.receiver,
+            # TODO: Rename receiver to something sensible, add unit ID. Maybe not if we want parity to VM charm?
             "otlp",
             {
                 "protocols": {
@@ -258,7 +260,7 @@ class ConfigManager:
                     "grpc": {"endpoint": f"0.0.0.0:{Port.otlp_grpc.value}"},
                 },
             },
-            pipelines=["profiles"],
+            pipelines=[f"profiles/{self._unit_name}"],
         )
 
     def add_profile_forwarding(self, endpoints: List[ProfilingEndpoint]):
@@ -271,6 +273,7 @@ class ConfigManager:
             self.config.add_component(
                 Component.exporter,
                 # first component of this ID is the exporter type
+                # TODO: Check namespacing with our exporter
                 f"otlp/profiling/{idx}",
                 {
                     "endpoint": endpoint.endpoint,
@@ -282,7 +285,7 @@ class ConfigManager:
                         "insecure_skip_verify": self._insecure_skip_verify,
                     },
                 },
-                pipelines=["profiles"],
+                pipelines=[f"profiles/{self._unit_name}"],
             )
 
     def add_self_scrape(self, identifier: str, labels: Dict) -> None:
@@ -367,8 +370,56 @@ class ConfigManager:
                 pipelines=[f"metrics/{self._unit_name}"],
             )
 
-        # TODO Receive alert rules via remote write
-        # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
+    def otlp_exporter_tls_config():
+        return {"insecure": True, "insecure_skip_verify": False, "cert_file": 1, "key_file": 1, "ca_file": 1}
+
+    def add_otlp_forwarding(self, relation_map: Dict[int, OtlpEndpoint]):
+        """Configure sending OTLP telemetry to an OTLP endpoint.
+
+        There are 2 different OTLP exporters for their respective protocols: gRPC and HTTP. If a
+        gRPC endpoint is provided, it is preferred over the HTTP equivalent.
+
+        Telemetry is sent to all pipelines since OTLP supports all and its computationally
+        inexpensive unless a receiver is connected and receiving telemetry.
+        """
+        # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlpexporter
+        # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlphttpexporter
+
+        if not relation_map:
+            return
+
+        # Exporter config
+        for rel_id, otlp_endpoint in relation_map.items():
+            if otlp_endpoint.protocol == "grpc":
+                self.config.add_component(
+                    Component.exporter,
+                    f"otlp/rel-{rel_id}",
+                    {
+                        "endpoint": otlp_endpoint.endpoint,
+                        "tls": {
+                            "insecure": True,  # TODO: use a variable
+                            "insecure_skip_verify": self._insecure_skip_verify,
+                        },
+                    },
+                    pipelines=[
+                        f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
+                    ],
+                )
+            elif otlp_endpoint.protocol == "http":
+                self.config.add_component(
+                    Component.exporter,
+                    f"otlphttp/rel-{rel_id}",
+                    {
+                        "endpoint": otlp_endpoint.endpoint,
+                        "tls": {
+                            "insecure": True,
+                            "insecure_skip_verify": self._insecure_skip_verify,
+                        },
+                    },
+                    pipelines=[
+                        f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
+                    ],
+                )
 
     def add_traces_ingestion(
         self,
