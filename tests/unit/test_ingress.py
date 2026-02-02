@@ -4,6 +4,7 @@
 """Feature: Otelcol server can operate behind an ingress."""
 
 import json
+from typing import Any, Dict
 from unittest.mock import patch
 
 import yaml
@@ -166,7 +167,7 @@ def test_loki_url_in_databag(ctx, otelcol_container):
 
 @patch("socket.getfqdn", new=lambda *args: "fqdn")
 def test_otlp_url_in_databag(ctx, otelcol_container):
-    def expected_data(ingress: bool) -> list[str]:
+    def expected_data(ingress: bool) -> Dict[str, list[dict[str, Any]]]:
         host = "1.2.3.4" if ingress else "fqdn"
         return {
             "data": [

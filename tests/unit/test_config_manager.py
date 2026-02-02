@@ -234,19 +234,19 @@ def test_add_otlp_forwarding():
     expected_exporters = {
         "otlp/rel-0": {
             "endpoint": "http://host-0:grpc-port",
-            "tls": {"insecure": True, "insecure_skip_verify": True},
+            "tls": {"insecure": False, "insecure_skip_verify": True},
         },
         "otlp/rel-1": {
             "endpoint": "http://host-1:grpc-port",
-            "tls": {"insecure": True, "insecure_skip_verify": True},
+            "tls": {"insecure": False, "insecure_skip_verify": True},
         },
         "otlphttp/rel-2": {
             "endpoint": "http://host-2:http-port",
-            "tls": {"insecure": True, "insecure_skip_verify": True},
+            "tls": {"insecure": False, "insecure_skip_verify": True},
         },
         "otlphttp/rel-3": {
             "endpoint": "http://host-3:http-port",
-            "tls": {"insecure": True, "insecure_skip_verify": True},
+            "tls": {"insecure": False, "insecure_skip_verify": True},
         },
     }
     # AND the exporters are added to the appropriate pipelines

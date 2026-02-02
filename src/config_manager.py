@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Set
 import yaml
 
 from config_builder import Component, ConfigBuilder, Port
-from constants import FILE_STORAGE_DIRECTORY, SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH
+from constants import FILE_STORAGE_DIRECTORY
 from integrations import ProfilingEndpoint
 from otlp import OtlpEndpoint
 
