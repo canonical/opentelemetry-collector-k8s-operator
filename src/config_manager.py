@@ -373,7 +373,6 @@ class ConfigManager:
     def add_otlp_forwarding(
         self,
         relation_map: Dict[int, OtlpEndpoint],
-        secure: bool = True,
     ):
         """Configure sending OTLP telemetry to an OTLP endpoint.
 
@@ -385,7 +384,6 @@ class ConfigManager:
 
         Args:
             relation_map: a mapping of relation ID to OTLP endpoints for each server
-            secure: whether to send OTLP data with mTLS
         """
         # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlpexporter
         # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlphttpexporter
@@ -394,16 +392,9 @@ class ConfigManager:
             return
 
         tls_config: Dict[str, Any] = {
-            "insecure": not secure,
+            "insecure": False,
             "insecure_skip_verify": self._insecure_skip_verify,
         }
-        if secure:
-            tls_config.update(
-                {
-                    "cert_file": SERVER_CERT_PATH,
-                    "key_file": SERVER_CERT_PRIVATE_KEY_PATH,
-                }
-            )
 
         # Exporter config
         for rel_id, otlp_endpoint in relation_map.items():

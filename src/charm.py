@@ -211,7 +211,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.unit.status = BlockedStatus("cyclic OTLP relations exist")
         integrations.receive_otlp(self, lambda: otelcol_address.resolved_url)
         otlp_endpoints = integrations.send_otlp(self)
-        config_manager.add_otlp_forwarding(otlp_endpoints, integrations.is_tls_ready(container))
+        config_manager.add_otlp_forwarding(otlp_endpoints)
 
         # Logs setup
         integrations.receive_loki_logs(self, otelcol_address)
