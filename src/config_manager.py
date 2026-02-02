@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Set
 import yaml
 
 from config_builder import Component, ConfigBuilder, Port
-from constants import FILE_STORAGE_DIRECTORY
+from constants import FILE_STORAGE_DIRECTORY, SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH
 from integrations import ProfilingEndpoint
 from otlp import OtlpEndpoint
 
@@ -370,10 +370,11 @@ class ConfigManager:
                 pipelines=[f"metrics/{self._unit_name}"],
             )
 
-    def otlp_exporter_tls_config():
-        return {"insecure": True, "insecure_skip_verify": False, "cert_file": 1, "key_file": 1, "ca_file": 1}
-
-    def add_otlp_forwarding(self, relation_map: Dict[int, OtlpEndpoint]):
+    def add_otlp_forwarding(
+        self,
+        relation_map: Dict[int, OtlpEndpoint],
+        secure: bool = True,
+    ):
         """Configure sending OTLP telemetry to an OTLP endpoint.
 
         There are 2 different OTLP exporters for their respective protocols: gRPC and HTTP. If a
@@ -381,6 +382,10 @@ class ConfigManager:
 
         Telemetry is sent to all pipelines since OTLP supports all and its computationally
         inexpensive unless a receiver is connected and receiving telemetry.
+
+        Args:
+            relation_map: a mapping of relation ID to OTLP endpoints for each server
+            secure: whether to send OTLP data with mTLS
         """
         # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlpexporter
         # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlphttpexporter
@@ -388,19 +393,25 @@ class ConfigManager:
         if not relation_map:
             return
 
+        tls_config: Dict[str, Any] = {
+            "insecure": not secure,
+            "insecure_skip_verify": self._insecure_skip_verify,
+        }
+        if secure:
+            tls_config.update(
+                {
+                    "cert_file": SERVER_CERT_PATH,
+                    "key_file": SERVER_CERT_PRIVATE_KEY_PATH,
+                }
+            )
+
         # Exporter config
         for rel_id, otlp_endpoint in relation_map.items():
             if otlp_endpoint.protocol == "grpc":
                 self.config.add_component(
                     Component.exporter,
                     f"otlp/rel-{rel_id}",
-                    {
-                        "endpoint": otlp_endpoint.endpoint,
-                        "tls": {
-                            "insecure": True,  # TODO: use a variable
-                            "insecure_skip_verify": self._insecure_skip_verify,
-                        },
-                    },
+                    {"endpoint": otlp_endpoint.endpoint, "tls": tls_config},
                     pipelines=[
                         f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
                     ],
@@ -409,13 +420,7 @@ class ConfigManager:
                 self.config.add_component(
                     Component.exporter,
                     f"otlphttp/rel-{rel_id}",
-                    {
-                        "endpoint": otlp_endpoint.endpoint,
-                        "tls": {
-                            "insecure": True,
-                            "insecure_skip_verify": self._insecure_skip_verify,
-                        },
-                    },
+                    {"endpoint": otlp_endpoint.endpoint, "tls": tls_config},
                     pipelines=[
                         f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
                     ],

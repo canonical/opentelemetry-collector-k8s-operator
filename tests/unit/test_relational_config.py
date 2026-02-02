@@ -1,4 +1,4 @@
-# Copyright 2025 Canonical Ltd.
+# Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 """Feature: Relation-dependant Opentelemetry-collector config."""
@@ -7,7 +7,7 @@ import json
 from helpers import get_otelcol_file
 from ops.testing import Container, Relation, State
 
-from constants import CONFIG_PATH
+from src.constants import CONFIG_PATH
 
 
 def check_valid_pipelines(cfg):

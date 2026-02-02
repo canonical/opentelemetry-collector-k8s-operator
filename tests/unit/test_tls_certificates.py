@@ -1,4 +1,4 @@
-# Copyright 2025 Canonical Ltd.
+# Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 """Feature: Otelcol server can run in HTTPS mode."""
@@ -122,7 +122,7 @@ def test_transitioned_from_http_to_https_to_http(
 
 
 @pytest.mark.skip(reason="https://github.com/canonical/operator/issues/1858")
-def test_https_endpoint_is_provided(ctx, execs, cert, cert_obj, private_key):
+def test_https_endpoint_is_provided(ctx, execs, cert_obj, private_key):
     """Scenario: Otelcol provides other charms its TLS endpoint."""
     # GIVEN otelcol is in TLS mode
     container = Container(name="otelcol", can_connect=True, execs=execs)

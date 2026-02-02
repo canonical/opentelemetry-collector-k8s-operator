@@ -36,7 +36,10 @@ from constants import (
 
 logger = logging.getLogger(__name__)
 
-def charm_address(container: Container, ingress: integrations.TraefikRouteRequirer) -> integrations.Address:
+
+def charm_address(
+    container: Container, ingress: integrations.TraefikRouteRequirer
+) -> integrations.Address:
     """Return the Address dataclass from charm context.
 
     Args:
@@ -50,7 +53,9 @@ def charm_address(container: Container, ingress: integrations.TraefikRouteRequir
     internal_scheme = "https" if tls else "http"
     internal_url = f"{internal_scheme}://{socket.getfqdn()}"
     external_url = (
-        f"{ingress.scheme}://{ingress.external_host}" if integrations.ingress_ready(ingress) else None
+        f"{ingress.scheme}://{ingress.external_host}"
+        if integrations.ingress_ready(ingress)
+        else None
     )
     resolved_url = external_url if external_url else internal_url
     resolved_scheme = urlparse(external_url).scheme if external_url else "https" if tls else "http"
@@ -61,6 +66,7 @@ def charm_address(container: Container, ingress: integrations.TraefikRouteRequir
         resolved_scheme,
         resolved_url,
     )
+
 
 def refresh_certs(container: Container):
     """Run `update-ca-certificates` to refresh the trusted system certs."""
@@ -201,9 +207,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         feature_gates: Optional[str] = None
 
         # OTLP setup
+        if integrations.cyclic_otlp_relations_exist(self):
+            self.unit.status = BlockedStatus("cyclic OTLP relations exist")
         integrations.receive_otlp(self, lambda: otelcol_address.resolved_url)
         otlp_endpoints = integrations.send_otlp(self)
-        config_manager.add_otlp_forwarding(otlp_endpoints)
+        config_manager.add_otlp_forwarding(otlp_endpoints, integrations.is_tls_ready(container))
 
         # Logs setup
         integrations.receive_loki_logs(self, otelcol_address)

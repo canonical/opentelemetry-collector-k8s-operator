@@ -28,6 +28,7 @@ def tls_mock(cert_obj, private_key):
         yield
 
 
+# TODO: Replace Container(name="otelcol", can_connect=True, execs=execs) with the otelcol_container fixture
 @pytest.mark.parametrize("relation_joined", (True, False))
 def test_waiting_for_send_profiles_endpoint(ctx, execs, relation_joined):
     """Scenario: a send_profiles relation joined, but we didn't get the grpc endpoint yet."""

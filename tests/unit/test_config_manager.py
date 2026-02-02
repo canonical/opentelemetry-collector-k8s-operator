@@ -1,4 +1,4 @@
-# Copyright 2025 Canonical Ltd.
+# Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 """Feature: Opentelemetry-collector config builder."""
@@ -227,7 +227,8 @@ def test_add_otlp_forwarding():
                     "telemetries": ["logs"],
                 }
             ),
-        }
+        },
+        secure=False
     )
 
     # THEN the exporter config contains appropriate "otlp" and "otlphttp" exporters

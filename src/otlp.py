@@ -17,12 +17,12 @@ import json
 import logging
 import socket
 from enum import Enum, unique
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence
 
 from cosl.juju_topology import JujuTopology
 from ops import CharmBase
-from ops.framework import EventBase, EventSource, Object, ObjectEvents
-from pydantic import BaseModel, ConfigDict
+from ops.framework import Object
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 DEFAULT_CONSUMER_RELATION_NAME = "send-otlp"
 DEFAULT_PROVIDER_RELATION_NAME = "receive-otlp"
@@ -55,6 +55,7 @@ class TelemetryType(str, Enum):
 
 class ProtocolPort(BaseModel):
     """A pydantic model for OTLP protocols and their associated port."""
+
     model_config = ConfigDict(extra="forbid")
 
     grpc: Optional[int] = None
@@ -63,6 +64,7 @@ class ProtocolPort(BaseModel):
 
 class OtlpEndpoint(BaseModel):
     """A pydantic model for a single OTLP endpoint."""
+
     model_config = ConfigDict(extra="forbid")
 
     protocol: ProtocolType
@@ -70,97 +72,85 @@ class OtlpEndpoint(BaseModel):
     telemetries: List[TelemetryType]
 
 
-class OtlpProviderAppData(BaseModel):
+class OtlpProviderUnitData(BaseModel):
     """A pydantic model for the OTLP provider's databag."""
+
     model_config = ConfigDict(extra="forbid")
 
     data: List[OtlpEndpoint]
 
 
-# TODO: Are these events needed?
-class OtlpEndpointsChangedEvent(EventBase):
-    """Event emitted when OTLP endpoints change."""
-
-    def __init__(self, handle, relation_id):
-        super().__init__(handle)
-        self.relation_id = relation_id
-
-
-# TODO: Are these events needed?
-class OtlpConsumerEvents(ObjectEvents):
-    """Event descriptor for events raised by `OTLPConsumer`."""
-
-    endpoints_changed = EventSource(OtlpEndpointsChangedEvent)
-
-
 class OtlpConsumer(Object):
     """A class for consuming OTLP endpoints."""
-
-    on = OtlpConsumerEvents()  # pyright: ignore
 
     def __init__(
         self,
         charm: CharmBase,
         relation_name: str = DEFAULT_CONSUMER_RELATION_NAME,
-        protocol: str = ProtocolType.grpc.value,
+        protocols: Optional[Sequence[ProtocolType]] = None,
     ):
         super().__init__(charm, relation_name)
         self._charm = charm
         self._relation_name = relation_name
-        self._protocol = protocol
+        self._protocols = list(protocols) if protocols is not None else []
 
         self.topology = JujuTopology.from_charm(charm)
 
-        # TODO: Use Pietro's new lib to listen to all events and execute the reconcile
-        self._reconcile()
-
-    def _reconcile(self):
-        # NOTE: The provider serves OTLP endpoints which are always listening, so we do nothing
-        pass
-
-    def get_remote_otlp_endpoint(self) -> Dict[int, OtlpEndpoint]:
-        """Return a mapping of relation ID to OtlpEndpoint.
+    def get_remote_otlp_endpoints(self) -> Dict[int, OtlpEndpoint]:
+        """Return a single OtlpEndpoint per relation.
 
         Attempt to find the endpoint for the consumer's desired protocol in the provider databag.
         If it is not found, return the next available endpoint.
         """
+        databags = self._get_remote_databags()
+
         aggregate = {}
-        for rel in self.model.relations[self._relation_name]:
-            if not (app_databag := rel.data[rel.app]):
-                continue
-
-            data = json.loads(app_databag["data"])
-            otlp_endpoints = [OtlpEndpoint(**json.loads(endpoint)) for endpoint in data]
-
+        for rel_id, databag in databags.items():
+            # An OTLP server can support multiple endpoints. Choose the first endpoint available.
             if preferred_endpoint := next(
-                (e for e in otlp_endpoints if self._protocol == e.protocol), None
+                (e for e in databag.data if e.protocol in self._protocols), None
             ):
-                aggregate[rel.id] = preferred_endpoint
-            else:
-                if endpoint := next((e for e in otlp_endpoints), None):
-                    aggregate[rel.id] = endpoint
+                aggregate[rel_id] = preferred_endpoint
 
         return aggregate
 
+    def _get_remote_databags(self) -> Dict[int, OtlpProviderUnitData]:
+        """Return a mapping of relation ID to OtlpProviderUnitData.
 
-class OtlpProviderConsumersChangedEvent(EventBase):
-    """Event emitted when Prometheus remote_write alerts change."""
+        Attempt to load the remote databag as a list of OtlpEndpoints. If a telemetry type is not
+        supported, then it is ignored.
+        """
+        aggregate = {}
+        otlp_endpoints = []
+        for rel in self.model.relations[self._relation_name]:
+            for unit in list(rel.units):
+                if not (data := rel.data[unit].get("data")):
+                    # TODO: Set status message?
+                    continue
+                for endpoint in json.loads(data):
+                    try:
+                        # TODO: Set status message?
+                        endpoint["telemetries"] = [
+                            e for e in endpoint["telemetries"] if e in set((TelemetryType))
+                        ]
+                        otlp_endpoints.append(OtlpEndpoint(**endpoint))
+                    except ValidationError as e:
+                        # TODO: Set status message?
+                        logger.error(f"OTLP endpoint failed validation for {rel}: {e}")
 
+                databag = OtlpProviderUnitData(data=otlp_endpoints)
+                aggregate[rel.id] = databag
 
-class OtlpProviderEvents(ObjectEvents):
-    """Event descriptor for events raised by `PrometheusRemoteWriteProvider`."""
-
-    consumers_changed = EventSource(OtlpProviderConsumersChangedEvent)
+        return aggregate
 
 
 class OtlpProvider(Object):
     """A class for publishing all supported OTLP endpoints."""
 
-    on = OtlpProviderEvents()  # pyright: ignore
-
     def __init__(
         self,
         charm: CharmBase,
+        # TODO: Should we accept a ProtocolType instead?
         protocol_ports: Dict[str, int],
         relation_name: str = DEFAULT_PROVIDER_RELATION_NAME,
         path: str = "",
@@ -178,14 +168,11 @@ class OtlpProvider(Object):
         self._reconcile()
 
     def _reconcile(self) -> None:
-        if not self._charm.unit.is_leader():
-            return
-
         for relation in self.model.relations[self._relation_name]:
-            relation.data[self._charm.app]["data"] = json.dumps(
-                [e.model_dump_json(exclude_none=True) for e in self.otlp_endpoints]
-            )
-    OtlpEndpoint.model_validate
+            relation.data[self._charm.unit]["data"] = OtlpProviderUnitData(
+                data=self.otlp_endpoints
+            ).model_dump_json(exclude_none=True)
+
     @property
     def otlp_endpoints(self) -> List[OtlpEndpoint]:
         """List all available OTLP endpoints for this server."""
