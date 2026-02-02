@@ -228,7 +228,6 @@ def test_add_otlp_forwarding():
                 }
             ),
         },
-        secure=False
     )
 
     # THEN the exporter config contains appropriate "otlp" and "otlphttp" exporters
