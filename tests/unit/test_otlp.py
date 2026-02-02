@@ -7,17 +7,23 @@ import json
 from unittest.mock import patch
 
 import pytest
+from charms.tls_certificates_interface.v4.tls_certificates import (
+    Certificate,
+    TLSCertificatesRequiresV4,
+)
+from helpers import get_otelcol_file
 from ops.testing import Relation, State
 from pydantic import ValidationError
 
+from src.constants import (
+    CONFIG_PATH,
+    SERVER_CERT_PATH,
+    SERVER_CERT_PRIVATE_KEY_PATH,
+)
 from src.integrations import cyclic_otlp_relations_exist
 from src.otlp import OtlpEndpoint, OtlpProviderUnitData, ProtocolType, TelemetryType
 
-UNITS_DATA = {
-    0: {
-        "data": '[{"protocol": "http", "endpoint": "http://host:4317", "telemetries": ["metrics"]}]'
-    }
-}
+UNITS_DATA = {0: {"data": '[{"protocol": "http", "endpoint": "http://host:4317", "telemetries": ["metrics"]}]'}}
 
 
 @pytest.mark.parametrize(
@@ -236,6 +242,58 @@ def test_receive_otlp(ctx, otelcol_container):
     # THEN the OtlpProvider is supplying a list of its supported (endpoints) protocols and telemetries
     for idx, endpoint in enumerate(result):
         assert endpoint.model_dump_json() == expected_endpoints[idx].model_dump_json()
+
+
+@patch("socket.getfqdn", new=lambda *args: "fqdn")
+def test_exporter_mtls(ctx, otelcol_container, cert_obj, private_key):
+    provides = [
+        {"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["logs"]},
+        {"protocol": "http", "endpoint": "http://host:4318", "telemetries": ["metrics"]},
+    ]
+    otlp = Relation(
+        "send-otlp",
+        id=123,
+        remote_units_data={0: {"data": json.dumps(provides)}},
+    )
+    ssc = Relation(
+        endpoint="receive-server-cert",
+        interface="tls-certificate",
+    )
+
+    # GIVEN the otelcol server is signed and communicating via OTLP
+    state = State(leader=True, relations=[ssc, otlp], containers=otelcol_container)
+
+    # AND WHEN any event executes the reconciler
+    # TODO: Make these patches re-usable, also used in test_tls_certificates
+    with (
+        patch.object(TLSCertificatesRequiresV4, "_find_available_certificates", return_value=None),
+        patch.object(
+            TLSCertificatesRequiresV4,
+            "get_assigned_certificate",
+            return_value=(cert_obj, private_key),
+        ),
+        patch.object(Certificate, "from_string", return_value=cert_obj),
+    ):
+        state_out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN the OTLP exporter config has TLS configured
+    cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
+    assert cfg["exporters"]["otlp/rel-123"]["tls"] == {
+        "cert_file": SERVER_CERT_PATH,
+        "insecure": False,
+        "insecure_skip_verify": False,
+        "key_file": SERVER_CERT_PRIVATE_KEY_PATH,
+    }
+
+    # AND WHEN the certificates relation departs
+    state_out = ctx.run(ctx.on.relation_broken(ssc), state)
+
+    # THEN the OTLP exporter config has no TLS configured
+    cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
+    assert cfg["exporters"]["otlp/rel-123"]["tls"] == {
+        "insecure": True,
+        "insecure_skip_verify": False,
+    }
 
 
 @pytest.mark.parametrize(
