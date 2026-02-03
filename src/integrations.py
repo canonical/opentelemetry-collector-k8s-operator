@@ -61,10 +61,10 @@ from constants import (
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
-    SERVER_CERT_PATH,
-    SERVER_CERT_PRIVATE_KEY_PATH,
     RECEIVE_OTLP_ENDPOINT,
     SEND_OTLP_ENDPOINT,
+    SERVER_CERT_PATH,
+    SERVER_CERT_PRIVATE_KEY_PATH,
 )
 from otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider, ProtocolType, TelemetryType
 
@@ -498,7 +498,7 @@ def receive_otlp(charm: CharmBase, resolved_url: Callable[[], str]) -> None:
     charm.__setattr__("otlp_provider", otlp_provider)
 
 
-def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
+def send_otlp(charm: CharmBase) -> Dict[int, Dict[str, OtlpEndpoint]]:
     """Instantiate the OtlpConsumer.
 
     The gRPC protocol is preferred over HTTP.

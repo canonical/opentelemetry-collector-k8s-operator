@@ -15,7 +15,7 @@ from src.otlp import OtlpEndpoint, OtlpProviderUnitData, ProtocolType, Telemetry
 
 UNITS_DATA = {
     0: {
-        "data": '[{"protocol": "http", "endpoint": "http://host:4317", "telemetries": ["metrics"]}]'
+        OtlpProviderUnitData.KEY: '{"endpoints": [{"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["logs"]}]}'
     }
 }
 
@@ -36,7 +36,7 @@ UNITS_DATA = {
 def test_provider_app_data_raises_validation_error(data, error_match):
     """Test that OtlpProviderAppData validates protocols and telemetries."""
     with pytest.raises(ValidationError, match=error_match):
-        OtlpProviderUnitData(data=[OtlpEndpoint(**data)])
+        OtlpProviderUnitData(endpoints=[OtlpEndpoint(**data)])
 
 
 # TODO: Add a test for more units and more relations
@@ -45,7 +45,7 @@ def test_provider_app_data_raises_validation_error(data, error_match):
     (
         (
             OtlpProviderUnitData(
-                data=[
+                endpoints=[
                     OtlpEndpoint(
                         protocol=ProtocolType.grpc,
                         endpoint="http://host:4317",
@@ -66,7 +66,7 @@ def test_provider_app_data_raises_validation_error(data, error_match):
         ),
         (
             OtlpProviderUnitData(
-                data=[
+                endpoints=[
                     OtlpEndpoint(
                         protocol=ProtocolType.grpc,
                         endpoint="http://host:4317",
@@ -87,7 +87,7 @@ def test_provider_app_data_raises_validation_error(data, error_match):
         ),
         (
             OtlpProviderUnitData(
-                data=[
+                endpoints=[
                     OtlpEndpoint(
                         protocol=ProtocolType.grpc,
                         endpoint="http://host:4317",
@@ -103,7 +103,7 @@ def test_provider_app_data_raises_validation_error(data, error_match):
         ),
         (
             OtlpProviderUnitData(
-                data=[
+                endpoints=[
                     OtlpEndpoint(
                         protocol=ProtocolType.http,
                         endpoint="http://host:4318",
@@ -119,7 +119,7 @@ def test_provider_app_data_raises_validation_error(data, error_match):
         ),
         (
             OtlpProviderUnitData(
-                data=[
+                endpoints=[
                     OtlpEndpoint(
                         protocol=ProtocolType.http,
                         endpoint="http://host:4318",
@@ -138,10 +138,11 @@ def test_provider_app_data_raises_validation_error(data, error_match):
 def test_send_otlp(ctx, otelcol_container, provides, otlp_endpoint):
     # GIVEN a remote app provides one (or multiple) OtlpEndpoint(s)
     # WHEN they are related over the "send-otlp" endpoint
+    input_databag = json.dumps(provides.model_dump())
     provider = Relation(
         "send-otlp",
         id=123,
-        remote_units_data={0: {"data": json.dumps(provides.model_dump()["data"])}},
+        remote_units_data={0: {OtlpProviderUnitData.KEY: input_databag}},
     )
     state = State(
         relations=[provider],
@@ -151,21 +152,37 @@ def test_send_otlp(ctx, otelcol_container, provides, otlp_endpoint):
 
     # AND WHEN any event executes the reconciler
     with ctx(ctx.on.update_status(), state=state) as mgr:
-        mgr.run()
-        # THEN the returned endpoint (many-to-one) is correct
+        state_out = mgr.run()
         result = mgr.charm.otlp_consumer.get_remote_otlp_endpoints()[123]
 
-    assert result.model_dump_json() == otlp_endpoint.model_dump_json()
+    # THEN the databag contains multiple provider endpoints
+    remote_unit_data = list(state_out.relations)[0].remote_units_data[0]
+    assert remote_unit_data[OtlpProviderUnitData.KEY] == input_databag
+
+    # AND the returned endpoint (many-to-one) is correct
+    returned_endpoint = list(result.values())[0]
+    assert returned_endpoint.model_dump_json() == otlp_endpoint.model_dump_json()
 
 
+# NOTE: we cannot use OtlpProviderUnitData for "provides" since it would raise validation errors
 @pytest.mark.parametrize(
     "provides, otlp_endpoint",
     (
         (
-            [
-                {"protocol": "http", "endpoint": "http://host:4317", "telemetries": ["metrics"]},
-                {"protocol": "fake", "endpoint": "http://host:0000", "telemetries": ["metrics"]},
-            ],
+            {
+                "endpoints": [
+                    {
+                        "protocol": "http",
+                        "endpoint": "http://host:4317",
+                        "telemetries": ["metrics"],
+                    },
+                    {
+                        "protocol": "fake",
+                        "endpoint": "http://host:0000",
+                        "telemetries": ["metrics"],
+                    },
+                ]
+            },
             OtlpEndpoint(
                 protocol=ProtocolType.http,
                 endpoint="http://host:4317",
@@ -173,13 +190,15 @@ def test_send_otlp(ctx, otelcol_container, provides, otlp_endpoint):
             ),
         ),
         (
-            [
-                {
-                    "protocol": "http",
-                    "endpoint": "http://host:4317",
-                    "telemetries": ["logs", "fake", "traces"],
-                },
-            ],
+            {
+                "endpoints": [
+                    {
+                        "protocol": "http",
+                        "endpoint": "http://host:4317",
+                        "telemetries": ["logs", "fake", "traces"],
+                    },
+                ]
+            },
             OtlpEndpoint(
                 protocol=ProtocolType.http,
                 endpoint="http://host:4317",
@@ -194,7 +213,7 @@ def test_send_otlp_invalid(ctx, otelcol_container, provides, otlp_endpoint):
     provider = Relation(
         "send-otlp",
         id=123,
-        remote_units_data={0: {"data": json.dumps(provides)}},
+        remote_units_data={0: {OtlpProviderUnitData.KEY: json.dumps(provides)}},
     )
     state = State(
         relations=[provider],
@@ -207,35 +226,30 @@ def test_send_otlp_invalid(ctx, otelcol_container, provides, otlp_endpoint):
         mgr.run()
         # THEN the returned endpoint (many-to-one) is correct
         result = mgr.charm.otlp_consumer.get_remote_otlp_endpoints()[123]
-    assert result.model_dump_json() == otlp_endpoint.model_dump_json()
+
+    returned_endpoint = list(result.values())[0]
+    assert returned_endpoint.model_dump_json() == otlp_endpoint.model_dump_json()
 
 
 @patch("socket.getfqdn", new=lambda *args: "fqdn")
 def test_receive_otlp(ctx, otelcol_container):
-    expected_endpoints = [
-        OtlpEndpoint(
-            protocol=ProtocolType.grpc,
-            endpoint="http://fqdn:4317",
-            telemetries=[TelemetryType.metric],
-        ),
-        OtlpEndpoint(
-            protocol=ProtocolType.http,
-            endpoint="http://fqdn:4318",
-            telemetries=[TelemetryType.metric],
-        ),
-    ]
-
     # GIVEN a receive-otlp relation
-    state = State(leader=True, containers=otelcol_container, relations=[Relation("receive-otlp")])
+    state = State(
+        leader=True,
+        containers=otelcol_container,
+        relations=[Relation("receive-otlp")],
+    )
 
     # AND WHEN any event executes the reconciler
-    with ctx(ctx.on.update_status(), state=state) as mgr:
-        mgr.run()
-        result = mgr.charm.otlp_provider.otlp_endpoints
+    state_out = ctx.run(ctx.on.update_status(), state)
+    unit_data = list(state_out.relations)[0].local_unit_data
 
-    # THEN the OtlpProvider is supplying a list of its supported (endpoints) protocols and telemetries
-    for idx, endpoint in enumerate(result):
-        assert endpoint.model_dump_json() == expected_endpoints[idx].model_dump_json()
+    # THEN otelcol offers its supported OTLP endpoints in the databag
+    expected_endpoints = [
+        {"protocol": "grpc", "endpoint": "http://fqdn:4317", "telemetries": ["metrics"]},
+        {"protocol": "http", "endpoint": "http://fqdn:4318", "telemetries": ["metrics"]},
+    ]
+    assert json.loads(unit_data[OtlpProviderUnitData.KEY])["endpoints"] == expected_endpoints
 
 
 @pytest.mark.parametrize(

@@ -17,7 +17,7 @@ import json
 import logging
 import socket
 from enum import Enum, unique
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Sequence
 
 from cosl.juju_topology import JujuTopology
 from ops import CharmBase
@@ -73,11 +73,24 @@ class OtlpEndpoint(BaseModel):
 
 
 class OtlpProviderUnitData(BaseModel):
-    """A pydantic model for the OTLP provider's databag."""
+    """A pydantic model for the OTLP provider's data bag.
+
+    {
+        'egress-subnets': '192.0.2.0'
+        snip ...
+        'otlp': {
+            'secure': 'false',
+            'endpoints': '[{"protocol": "grpc", "endpoint": "foo"}]',
+        }
+    }
+    """
+
+    KEY: ClassVar[str] = "otlp"
 
     model_config = ConfigDict(extra="forbid")
 
-    data: List[OtlpEndpoint]
+    secure: bool = True
+    endpoints: List[OtlpEndpoint]
 
 
 class OtlpConsumer(Object):
@@ -96,50 +109,55 @@ class OtlpConsumer(Object):
 
         self.topology = JujuTopology.from_charm(charm)
 
-    def get_remote_otlp_endpoints(self) -> Dict[int, OtlpEndpoint]:
-        """Return a single OtlpEndpoint per relation.
-
-        Attempt to find the endpoint for the consumer's desired protocol in the provider databag.
-        If it is not found, return the next available endpoint.
-        """
-        databags = self._get_remote_databags()
-
-        aggregate = {}
-        for rel_id, databag in databags.items():
-            # An OTLP server can support multiple endpoints. Choose the first endpoint available.
-            if preferred_endpoint := next(
-                (e for e in databag.data if e.protocol in self._protocols), None
-            ):
-                aggregate[rel_id] = preferred_endpoint
-
-        return aggregate
-
-    def _get_remote_databags(self) -> Dict[int, OtlpProviderUnitData]:
-        """Return a mapping of relation ID to OtlpProviderUnitData.
-
-        Attempt to load the remote databag as a list of OtlpEndpoints. If a telemetry type is not
-        supported, then it is ignored.
-        """
-        aggregate = {}
+    def _get_unit_databag(self, endpoints: List[Dict[str, Any]]) -> Optional[OtlpProviderUnitData]:
+        # TODO: This can be a method of the OtlpProviderUnitData class
         otlp_endpoints = []
-        for rel in self.model.relations[self._relation_name]:
-            for unit in list(rel.units):
-                if not (data := rel.data[unit].get("data")):
-                    # TODO: Set status message?
-                    continue
-                for endpoint in json.loads(data):
-                    try:
-                        # TODO: Set status message?
-                        endpoint["telemetries"] = [
-                            e for e in endpoint["telemetries"] if e in set((TelemetryType))
-                        ]
-                        otlp_endpoints.append(OtlpEndpoint(**endpoint))
-                    except ValidationError as e:
-                        # TODO: Set status message?
-                        logger.error(f"OTLP endpoint failed validation for {rel}: {e}")
+        for endpoint in endpoints:
+            # Filter out any unsupported telemetry types before validation
+            endpoint["telemetries"] = [
+                t for t in endpoint.get("telemetries", []) if t in set(TelemetryType)
+            ]
+            try:
+                otlp_endpoints.append(OtlpEndpoint.model_validate(endpoint))
+            except ValidationError as e:
+                logger.error(f"OTLP endpoint failed validation: {e}")
 
-                databag = OtlpProviderUnitData(data=otlp_endpoints)
-                aggregate[rel.id] = databag
+        try:
+            databag = OtlpProviderUnitData(secure=False, endpoints=otlp_endpoints)
+        except ValidationError as e:
+            logger.error(f"OTLP endpoint failed validation: {e}")
+            return None
+
+        return databag
+
+    def get_remote_otlp_endpoints(self) -> Dict[int, Dict[str, OtlpEndpoint]]:
+        """Return a mapping of relation ID to a mapping of unit name to OtlpProviderUnitData.
+
+        For each remote unit's list of OtlpEndpoints:
+            - If a telemetry type is not supported, then the endpoint is accepted, but the
+              telemetry is ignored.
+            - If the endpoint contains an unsupported protocol it is ignored.
+            - The first available (and supported) endpoint is returned.
+
+        The returned structure is as follows:
+        {
+            rel-n: {
+                unit-n: OtlpProviderUnitData([OtlpEndpoint, ...])
+            },
+        }
+        """
+        aggregate = {}
+        for rel in self.model.relations[self._relation_name]:
+            unit_databags = {}
+            for remote_unit in list(rel.units):
+                otlp = json.loads(rel.data[remote_unit].get(OtlpProviderUnitData.KEY, "{}"))
+                if unit_databag := self._get_unit_databag(otlp.get("endpoints", [])):
+                    if endpoint_choice := next(
+                        (e for e in unit_databag.endpoints if e.protocol in self._protocols), None
+                    ):
+                        unit_databags[remote_unit.name] = endpoint_choice
+
+            aggregate[rel.id] = unit_databags
 
         return aggregate
 
@@ -169,9 +187,12 @@ class OtlpProvider(Object):
 
     def _reconcile(self) -> None:
         for relation in self.model.relations[self._relation_name]:
-            relation.data[self._charm.unit]["data"] = OtlpProviderUnitData(
-                data=self.otlp_endpoints
-            ).model_dump_json(exclude_none=True)
+            otlp = {
+                OtlpProviderUnitData.KEY: OtlpProviderUnitData(
+                    secure=False, endpoints=self.otlp_endpoints
+                ).model_dump(exclude_none=True)
+            }
+            relation.data[self._charm.unit].update({k: json.dumps(v) for k, v in otlp.items()})
 
     @property
     def otlp_endpoints(self) -> List[OtlpEndpoint]:

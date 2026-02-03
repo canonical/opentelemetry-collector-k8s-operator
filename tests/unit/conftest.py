@@ -145,3 +145,11 @@ def config_manager():
         global_scrape_timeout="",
         insecure_skip_verify=True,
     )
+
+
+@pytest.fixture
+def unit_0_mock():
+    """Create a mock unit for testing."""
+    unit = MagicMock()
+    unit.name = "remote-unit/0"
+    return unit

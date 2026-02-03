@@ -4,7 +4,7 @@
 """Feature: Otelcol server can operate behind an ingress."""
 
 import json
-from typing import Any, Dict
+from typing import Any, List
 from unittest.mock import patch
 
 import yaml
@@ -12,6 +12,7 @@ from ops.testing import Relation, State
 
 from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
+from src.otlp import OtlpProviderUnitData
 
 
 @patch("socket.getfqdn", lambda: "1.2.3.4")
@@ -167,22 +168,20 @@ def test_loki_url_in_databag(ctx, otelcol_container):
 
 @patch("socket.getfqdn", new=lambda *args: "fqdn")
 def test_otlp_url_in_databag(ctx, otelcol_container):
-    def expected_data(ingress: bool) -> Dict[str, list[dict[str, Any]]]:
+    def expected_endpoints(ingress: bool) -> List[dict[str, Any]]:
         host = "1.2.3.4" if ingress else "fqdn"
-        return {
-            "data": [
-                {
-                    "protocol": "grpc",
-                    "endpoint": f"http://{host}:{Port.otlp_grpc.value}",
-                    "telemetries": ["metrics"],
-                },
-                {
-                    "protocol": "http",
-                    "endpoint": f"http://{host}:{Port.otlp_http.value}",
-                    "telemetries": ["metrics"],
-                },
-            ]
-        }
+        return [
+            {
+                "protocol": "grpc",
+                "endpoint": f"http://{host}:{Port.otlp_grpc.value}",
+                "telemetries": ["metrics"],
+            },
+            {
+                "protocol": "http",
+                "endpoint": f"http://{host}:{Port.otlp_http.value}",
+                "telemetries": ["metrics"],
+            },
+        ]
 
     # WHEN traefik ingress is related to otelcol
     receive_otlp = Relation("receive-otlp")
@@ -194,17 +193,19 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
 
     # THEN ingress URL is present in receive-otlp relation databag
     receive_otlp_out = out_1.get_relations(receive_otlp.endpoint)[0]
-    assert json.loads(receive_otlp_out.local_unit_data["data"]) == expected_data(ingress=True)
+    assert json.loads(receive_otlp_out.local_unit_data[OtlpProviderUnitData.KEY])["endpoints"] == expected_endpoints(ingress=True)
 
     # AND WHEN the receive-otlp relation is created
     out_2 = ctx.run(ctx.on.relation_created(receive_otlp), state)
 
     # THEN ingress URL is present in receive-otlp relation databag
     receive_otlp_out = out_2.get_relations(receive_otlp.endpoint)[0]
-    assert json.loads(receive_otlp_out.local_unit_data["data"]) == expected_data(ingress=True)
+    assert json.loads(receive_otlp_out.local_unit_data[OtlpProviderUnitData.KEY])["endpoints"] == expected_endpoints(ingress=True)
 
     # AND WHEN ingress is removed
     out_3 = ctx.run(ctx.on.relation_broken(ingress), state)
     # THEN the internal URL is present in receive-otlp relation databag
     receive_otlp_out = out_3.get_relations(receive_otlp.endpoint)[0]
-    assert json.loads(receive_otlp_out.local_unit_data["data"]) == expected_data(ingress=False)
+    assert json.loads(receive_otlp_out.local_unit_data[OtlpProviderUnitData.KEY])["endpoints"] == expected_endpoints(
+        ingress=False
+    )

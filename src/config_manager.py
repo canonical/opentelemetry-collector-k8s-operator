@@ -372,7 +372,7 @@ class ConfigManager:
 
     def add_otlp_forwarding(
         self,
-        relation_map: Dict[int, OtlpEndpoint],
+        relation_map: Dict[int, Dict[str, OtlpEndpoint]],
     ):
         """Configure sending OTLP telemetry to an OTLP endpoint.
 
@@ -383,7 +383,7 @@ class ConfigManager:
         inexpensive unless a receiver is connected and receiving telemetry.
 
         Args:
-            relation_map: a mapping of relation ID to OTLP endpoints for each server
+            relation_map: a mapping of relation ID to a mapping of unit name to OtlpEndpoint
         """
         # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlpexporter
         # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlphttpexporter
@@ -397,25 +397,26 @@ class ConfigManager:
         }
 
         # Exporter config
-        for rel_id, otlp_endpoint in relation_map.items():
-            if otlp_endpoint.protocol == "grpc":
-                self.config.add_component(
-                    Component.exporter,
-                    f"otlp/rel-{rel_id}",
-                    {"endpoint": otlp_endpoint.endpoint, "tls": tls_config},
-                    pipelines=[
-                        f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
-                    ],
-                )
-            elif otlp_endpoint.protocol == "http":
-                self.config.add_component(
-                    Component.exporter,
-                    f"otlphttp/rel-{rel_id}",
-                    {"endpoint": otlp_endpoint.endpoint, "tls": tls_config},
-                    pipelines=[
-                        f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
-                    ],
-                )
+        for rel_id, unit_data in relation_map.items():
+            for unit, otlp_endpoint in unit_data.items():
+                if otlp_endpoint.protocol == "grpc":
+                    self.config.add_component(
+                        Component.exporter,
+                        f"otlp/rel-{rel_id}/{unit}",
+                        {"endpoint": otlp_endpoint.endpoint, "tls": tls_config},
+                        pipelines=[
+                            f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
+                        ],
+                    )
+                elif otlp_endpoint.protocol == "http":
+                    self.config.add_component(
+                        Component.exporter,
+                        f"otlphttp/rel-{rel_id}/{unit}",
+                        {"endpoint": otlp_endpoint.endpoint, "tls": tls_config},
+                        pipelines=[
+                            f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
+                        ],
+                    )
 
     def add_traces_ingestion(
         self,
