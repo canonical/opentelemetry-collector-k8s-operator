@@ -663,7 +663,7 @@ requires-dist = [
     { name = "charmed-service-mesh-helpers", specifier = ">=0.2.0" },
     { name = "charmlibs-pathops" },
     { name = "codespell", marker = "extra == 'dev'" },
-    { name = "cosl", git = "https://github.com/canonical/cos-lib.git?rev=temp%2Fotlp-lib" },
+    { name = "cosl" },
     { name = "coverage", extras = ["toml"], marker = "extra == 'dev'" },
     { name = "cryptography" },
     { name = "jsonschema" },

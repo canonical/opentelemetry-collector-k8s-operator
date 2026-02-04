@@ -11,12 +11,10 @@ from ops.testing import Relation, State
 from pydantic import ValidationError
 
 from src.integrations import cyclic_otlp_relations_exist
-from src.otlp import OtlpEndpoint, OtlpProviderUnitData, ProtocolType, TelemetryType
+from src.otlp import OtlpEndpoint, OtlpProviderAppData, ProtocolType, TelemetryType
 
-UNITS_DATA = {
-    0: {
-        OtlpProviderUnitData.KEY: '{"endpoints": [{"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["logs"]}]}'
-    }
+APP_DATA = {
+    OtlpProviderAppData.KEY: '{"endpoints": [{"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["logs"]}]}'
 }
 
 
@@ -36,60 +34,35 @@ UNITS_DATA = {
 def test_provider_app_data_raises_validation_error(data, error_match):
     """Test that OtlpProviderAppData validates protocols and telemetries."""
     with pytest.raises(ValidationError, match=error_match):
-        OtlpProviderUnitData(endpoints=[OtlpEndpoint(**data)])
+        OtlpProviderAppData(endpoints=[OtlpEndpoint(**data)])
 
 
-def test_send_otlp_one_relation(ctx, otelcol_container):
+def test_send_otlp_multiple_relations(ctx, otelcol_container):
     # GIVEN a remote app provides multiple OtlpEndpoint per unit
-    remote_units_data = {
-        0: {
-            OtlpProviderUnitData.KEY: json.dumps(
-                OtlpProviderUnitData(
-                    endpoints=[
-                        OtlpEndpoint(
-                            protocol=ProtocolType.grpc,
-                            endpoint="http://host:4317",
-                            telemetries=[TelemetryType.log],
-                        ),
-                        OtlpEndpoint(
-                            protocol=ProtocolType.http,
-                            endpoint="http://host:4318",
-                            telemetries=[TelemetryType.metric],
-                        ),
-                    ]
-                ).model_dump()
-            )
-        },
-        1: {
-            OtlpProviderUnitData.KEY: json.dumps(
-                OtlpProviderUnitData(
-                    endpoints=[
-                        OtlpEndpoint(
-                            protocol=ProtocolType.grpc,
-                            endpoint="http://host:4317",
-                            telemetries=[TelemetryType.trace],
-                        ),
-                        OtlpEndpoint(
-                            protocol=ProtocolType.http,
-                            endpoint="http://host:4318",
-                            telemetries=[TelemetryType.trace],
-                        ),
-                    ]
-                ).model_dump()
-            )
-        },
+    remote_app_data = {
+        OtlpProviderAppData.KEY: json.dumps(
+            OtlpProviderAppData(
+                endpoints=[
+                    OtlpEndpoint(
+                        protocol=ProtocolType.grpc,
+                        endpoint="http://host:4317",
+                        telemetries=[TelemetryType.log],
+                    ),
+                    OtlpEndpoint(
+                        protocol=ProtocolType.http,
+                        endpoint="http://host:4318",
+                        telemetries=[TelemetryType.metric],
+                    ),
+                ]
+            ).model_dump()
+        )
     }
 
     expected_consumed_endpoints = {
-        "remote/0": OtlpEndpoint(
+        "remote": OtlpEndpoint(
             protocol=ProtocolType.grpc,
             endpoint="http://host:4317",
             telemetries=[TelemetryType.log],
-        ),
-        "remote/1": OtlpEndpoint(
-            protocol=ProtocolType.grpc,
-            endpoint="http://host:4317",
-            telemetries=[TelemetryType.trace],
         ),
     }
 
@@ -97,12 +70,12 @@ def test_send_otlp_one_relation(ctx, otelcol_container):
     provider_0 = Relation(
         "send-otlp",
         id=123,
-        remote_units_data=remote_units_data,
+        remote_app_data=remote_app_data,
     )
     provider_1 = Relation(
         "send-otlp",
         id=321,
-        remote_units_data=remote_units_data,
+        remote_app_data=remote_app_data,
     )
     state = State(
         relations=[provider_0, provider_1],
@@ -117,7 +90,7 @@ def test_send_otlp_one_relation(ctx, otelcol_container):
 
     # THEN the databag contains multiple provider endpoints, per relation
     for rel in list(state_out.relations):
-        assert rel.remote_units_data == remote_units_data
+        assert rel.remote_app_data == remote_app_data
 
     # AND the returned endpoint (many-to-one) is correct
     expected = {k: v.model_dump() for k, v in expected_consumed_endpoints.items()}
@@ -125,7 +98,7 @@ def test_send_otlp_one_relation(ctx, otelcol_container):
     assert {k: v.model_dump() for k, v in remote_endpoints[321].items()} == expected
 
 
-# NOTE: we cannot use OtlpProviderUnitData for "provides" since it would raise validation errors
+# NOTE: we cannot use OtlpProviderAppData for "provides" since it would raise validation errors
 @pytest.mark.parametrize(
     "provides, otlp_endpoint",
     (
@@ -174,7 +147,7 @@ def test_send_otlp_invalid(ctx, otelcol_container, provides, otlp_endpoint):
     provider = Relation(
         "send-otlp",
         id=123,
-        remote_units_data={0: {OtlpProviderUnitData.KEY: json.dumps(provides)}},
+        remote_app_data={OtlpProviderAppData.KEY: json.dumps(provides)},
     )
     state = State(
         relations=[provider],
@@ -203,14 +176,13 @@ def test_receive_otlp(ctx, otelcol_container):
 
     # AND WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state)
-    unit_data = list(state_out.relations)[0].local_unit_data
+    app_data = list(state_out.relations)[0].local_app_data
 
     # THEN otelcol offers its supported OTLP endpoints in the databag
     expected_endpoints = [
-        {"protocol": "grpc", "endpoint": "http://fqdn:4317", "telemetries": ["metrics"]},
         {"protocol": "http", "endpoint": "http://fqdn:4318", "telemetries": ["metrics"]},
     ]
-    assert json.loads(unit_data[OtlpProviderUnitData.KEY])["endpoints"] == expected_endpoints
+    assert json.loads(app_data[OtlpProviderAppData.KEY])["endpoints"] == expected_endpoints
 
 
 @pytest.mark.parametrize(
@@ -218,30 +190,30 @@ def test_receive_otlp(ctx, otelcol_container):
     (
         (
             [
-                Relation("send-otlp", remote_app_name="a", remote_units_data=UNITS_DATA),
-                Relation("receive-otlp", remote_app_name="b", remote_units_data=UNITS_DATA),
+                Relation("send-otlp", remote_app_name="a", remote_app_data=APP_DATA),
+                Relation("receive-otlp", remote_app_name="b", remote_app_data=APP_DATA),
             ],
             False,
         ),
         (
             [
-                Relation("send-otlp", remote_app_name="b", remote_units_data=UNITS_DATA),
-                Relation("receive-otlp", remote_app_name="a", remote_units_data=UNITS_DATA),
+                Relation("send-otlp", remote_app_name="b", remote_app_data=APP_DATA),
+                Relation("receive-otlp", remote_app_name="a", remote_app_data=APP_DATA),
             ],
             False,
         ),
         (
             [
-                Relation("send-otlp", remote_app_name="a", remote_units_data=UNITS_DATA),
-                Relation("receive-otlp", remote_app_name="a", remote_units_data=UNITS_DATA),
+                Relation("send-otlp", remote_app_name="a", remote_app_data=APP_DATA),
+                Relation("receive-otlp", remote_app_name="a", remote_app_data=APP_DATA),
             ],
             True,
         ),
         (
             [
-                Relation("send-otlp", remote_app_name="a", remote_units_data=UNITS_DATA),
-                Relation("send-otlp", remote_app_name="b", remote_units_data=UNITS_DATA),
-                Relation("receive-otlp", remote_app_name="b", remote_units_data=UNITS_DATA),
+                Relation("send-otlp", remote_app_name="a", remote_app_data=APP_DATA),
+                Relation("send-otlp", remote_app_name="b", remote_app_data=APP_DATA),
+                Relation("receive-otlp", remote_app_name="b", remote_app_data=APP_DATA),
             ],
             True,
         ),

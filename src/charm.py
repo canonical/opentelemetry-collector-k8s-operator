@@ -51,7 +51,7 @@ def charm_address(
     """
     tls = integrations.is_tls_ready(container)
     internal_scheme = "https" if tls else "http"
-    internal_url = f"{internal_scheme}://{socket.getfqdn()}"
+    internal_url = f"{internal_scheme}://{socket.getfqdn().split(".", 1)[-1]}"
     external_url = (
         f"{ingress.scheme}://{ingress.external_host}"
         if integrations.ingress_ready(ingress)

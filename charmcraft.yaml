@@ -182,7 +182,7 @@ requires:
       Obtain all OTLP endpoints offered by an OTLP server. If the server provides multiple
       endpoints (e.g. different protocols), then the first, supported one is chosen. If the server
       offers unsupported telemetries, then those will be ignored.
-      
+
 peers:
   peers:
     interface: otelcol_replica

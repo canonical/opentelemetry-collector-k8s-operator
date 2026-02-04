@@ -489,7 +489,8 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     """
     otlp_provider = OtlpProvider(
         charm,
-        protocol_ports={"grpc": Port.otlp_grpc.value, "http": Port.otlp_http.value},
+        # NOTE: gRPC is not supported because Traefik does not support it yet
+        protocol_ports={"http": Port.otlp_http.value},
         relation_name=RECEIVE_OTLP_ENDPOINT,
         # TODO: Add more telemetries here once tested/supported
         supported_telemetries=[TelemetryType.metric],

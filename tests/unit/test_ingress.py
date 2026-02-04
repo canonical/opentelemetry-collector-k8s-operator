@@ -12,7 +12,7 @@ from ops.testing import Relation, State
 
 from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
-from src.otlp import OtlpProviderUnitData
+from src.otlp import OtlpProviderAppData
 
 
 @patch("socket.getfqdn", lambda: "1.2.3.4")
@@ -172,11 +172,6 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
         host = "1.2.3.4" if ingress else "fqdn"
         return [
             {
-                "protocol": "grpc",
-                "endpoint": f"http://{host}:{Port.otlp_grpc.value}",
-                "telemetries": ["metrics"],
-            },
-            {
                 "protocol": "http",
                 "endpoint": f"http://{host}:{Port.otlp_http.value}",
                 "telemetries": ["metrics"],
@@ -193,19 +188,23 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
 
     # THEN ingress URL is present in receive-otlp relation databag
     receive_otlp_out = out_1.get_relations(receive_otlp.endpoint)[0]
-    assert json.loads(receive_otlp_out.local_unit_data[OtlpProviderUnitData.KEY])["endpoints"] == expected_endpoints(ingress=True)
+    assert json.loads(receive_otlp_out.local_app_data[OtlpProviderAppData.KEY])[
+        "endpoints"
+    ] == expected_endpoints(ingress=True)
 
     # AND WHEN the receive-otlp relation is created
     out_2 = ctx.run(ctx.on.relation_created(receive_otlp), state)
 
     # THEN ingress URL is present in receive-otlp relation databag
     receive_otlp_out = out_2.get_relations(receive_otlp.endpoint)[0]
-    assert json.loads(receive_otlp_out.local_unit_data[OtlpProviderUnitData.KEY])["endpoints"] == expected_endpoints(ingress=True)
+    assert json.loads(receive_otlp_out.local_app_data[OtlpProviderAppData.KEY])[
+        "endpoints"
+    ] == expected_endpoints(ingress=True)
 
     # AND WHEN ingress is removed
     out_3 = ctx.run(ctx.on.relation_broken(ingress), state)
     # THEN the internal URL is present in receive-otlp relation databag
     receive_otlp_out = out_3.get_relations(receive_otlp.endpoint)[0]
-    assert json.loads(receive_otlp_out.local_unit_data[OtlpProviderUnitData.KEY])["endpoints"] == expected_endpoints(
-        ingress=False
-    )
+    assert json.loads(receive_otlp_out.local_app_data[OtlpProviderAppData.KEY])[
+        "endpoints"
+    ] == expected_endpoints(ingress=False)
