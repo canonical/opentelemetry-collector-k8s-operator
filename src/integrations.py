@@ -9,7 +9,7 @@ import socket
 from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, cast, get_args
+from typing import Any, Dict, List, Optional, Set, cast, get_args
 
 import yaml
 from charmlibs.pathops import PathProtocol
@@ -480,7 +480,7 @@ def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
     return not receive_apps.isdisjoint(send_apps)
 
 
-def receive_otlp(charm: CharmBase, resolved_url: Callable[[], str]) -> None:
+def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     """Instantiate the OtlpProvider.
 
     Supports:
@@ -493,9 +493,9 @@ def receive_otlp(charm: CharmBase, resolved_url: Callable[[], str]) -> None:
         relation_name=RECEIVE_OTLP_ENDPOINT,
         # TODO: Add more telemetries here once tested/supported
         supported_telemetries=[TelemetryType.metric],
-        server_host_func=resolved_url,
     )
     charm.__setattr__("otlp_provider", otlp_provider)
+    otlp_provider.update_endpoints(url=resolved_url)
 
 
 def send_otlp(charm: CharmBase) -> Dict[int, Dict[str, OtlpEndpoint]]:

@@ -209,7 +209,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # OTLP setup
         if integrations.cyclic_otlp_relations_exist(self):
             self.unit.status = BlockedStatus("cyclic OTLP relations exist")
-        integrations.receive_otlp(self, lambda: otelcol_address.resolved_url)
+        integrations.receive_otlp(self, otelcol_address.resolved_url)
         otlp_endpoints = integrations.send_otlp(self)
         config_manager.add_otlp_forwarding(otlp_endpoints)
 

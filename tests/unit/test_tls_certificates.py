@@ -102,7 +102,8 @@ def test_transitioned_from_http_to_https_to_http(
     assert ca_cert == get_otelcol_file(state_out, ctx, SERVER_CA_CERT_PATH)
     otelcol_config = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     # AND config file includes "key_file" and "cert_file" for receivers with a "protocols" section
-    protocols = otelcol_config["receivers"]["otlp"]["protocols"]
+    unit_name = "opentelemetry-collector-k8s/0"
+    protocols = otelcol_config["receivers"][f"otlp/{unit_name}"]["protocols"]
     for protocol in protocols:
         assert protocols[protocol]["tls"]["cert_file"] == SERVER_CERT_PATH
         assert protocols[protocol]["tls"]["key_file"] == SERVER_CERT_PRIVATE_KEY_PATH

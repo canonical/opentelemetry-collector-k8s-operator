@@ -123,9 +123,10 @@ def test_send_profiles_integration(ctx, execs, insecure_skip_verify, remote_inse
     )
 
     # AND the profiling pipeline contains an exporter to the expected url
+    unit_name = "opentelemetry-collector-k8s/0"
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     assert cfg["service"]["pipelines"][profile_pipeline]["exporters"][0] == "otlp/profiling/0"
-    assert cfg["service"]["pipelines"][profile_pipeline]["receivers"][0] == "otlp"
+    assert cfg["service"]["pipelines"][profile_pipeline]["receivers"][0] == f"otlp/{unit_name}"
     assert cfg["exporters"]["otlp/profiling/0"]["endpoint"] == pyro_url
     assert cfg["exporters"]["otlp/profiling/0"]["tls"] == {
         "insecure": remote_insecure,

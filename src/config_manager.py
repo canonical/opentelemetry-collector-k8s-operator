@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any, Dict, List, Literal, Optional, Set
+from urllib.parse import urlparse
 
 import yaml
 
@@ -252,8 +253,7 @@ class ConfigManager:
         """Configure ingesting profiles."""
         self.config.add_component(
             Component.receiver,
-            # TODO: Rename receiver to something sensible, add unit ID. Maybe not if we want parity to VM charm?
-            "otlp",
+            f"otlp/{self._unit_name}",
             {
                 "protocols": {
                     "http": {"endpoint": f"0.0.0.0:{Port.otlp_http.value}"},
@@ -273,7 +273,6 @@ class ConfigManager:
             self.config.add_component(
                 Component.exporter,
                 # first component of this ID is the exporter type
-                # TODO: Check namespacing with our exporter
                 f"otlp/profiling/{idx}",
                 {
                     "endpoint": endpoint.endpoint,
@@ -391,14 +390,14 @@ class ConfigManager:
         if not relation_map:
             return
 
-        tls_config: Dict[str, Any] = {
-            "insecure": False,
-            "insecure_skip_verify": self._insecure_skip_verify,
-        }
-
         # Exporter config
         for rel_id, unit_data in relation_map.items():
             for unit, otlp_endpoint in unit_data.items():
+                insecure = urlparse(otlp_endpoint.endpoint).scheme == "http"
+                tls_config: Dict[str, Any] = {
+                    "insecure": insecure,
+                    "insecure_skip_verify": self._insecure_skip_verify,
+                }
                 if otlp_endpoint.protocol == "grpc":
                     self.config.add_component(
                         Component.exporter,

@@ -17,10 +17,10 @@ import json
 import logging
 import socket
 from enum import Enum, unique
-from typing import Any, Callable, ClassVar, Dict, List, Optional, Sequence
+from typing import Any, ClassVar, Dict, List, Optional, Sequence
 
 from cosl.juju_topology import JujuTopology
-from ops import CharmBase
+from ops import CharmBase, Relation
 from ops.framework import Object
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -73,23 +73,12 @@ class OtlpEndpoint(BaseModel):
 
 
 class OtlpProviderUnitData(BaseModel):
-    """A pydantic model for the OTLP provider's data bag.
-
-    {
-        'egress-subnets': '192.0.2.0'
-        snip ...
-        'otlp': {
-            'secure': 'false',
-            'endpoints': '[{"protocol": "grpc", "endpoint": "foo"}]',
-        }
-    }
-    """
+    """A pydantic model for the OTLP provider's unit databag."""
 
     KEY: ClassVar[str] = "otlp"
 
     model_config = ConfigDict(extra="forbid")
 
-    secure: bool = True
     endpoints: List[OtlpEndpoint]
 
 
@@ -123,7 +112,7 @@ class OtlpConsumer(Object):
                 logger.error(f"OTLP endpoint failed validation: {e}")
 
         try:
-            databag = OtlpProviderUnitData(secure=False, endpoints=otlp_endpoints)
+            databag = OtlpProviderUnitData(endpoints=otlp_endpoints)
         except ValidationError as e:
             logger.error(f"OTLP endpoint failed validation: {e}")
             return None
@@ -173,7 +162,6 @@ class OtlpProvider(Object):
         relation_name: str = DEFAULT_PROVIDER_RELATION_NAME,
         path: str = "",
         supported_telemetries: List[TelemetryType] = list(TelemetryType),
-        server_host_func: Callable[[], str] = lambda: f"http://{socket.getfqdn()}",
     ):
         super().__init__(charm, relation_name)
         self._charm = charm
@@ -181,25 +169,23 @@ class OtlpProvider(Object):
         self._protocol_ports = ProtocolPort(**protocol_ports)
         self._path = path
         self._supported_telemetries = supported_telemetries
-        self._get_server_host = server_host_func
 
         self._reconcile()
 
     def _reconcile(self) -> None:
-        for relation in self.model.relations[self._relation_name]:
-            otlp = {
-                OtlpProviderUnitData.KEY: OtlpProviderUnitData(
-                    secure=False, endpoints=self.otlp_endpoints
-                ).model_dump(exclude_none=True)
-            }
-            relation.data[self._charm.unit].update({k: json.dumps(v) for k, v in otlp.items()})
+        self.update_endpoints()
 
     @property
-    def otlp_endpoints(self) -> List[OtlpEndpoint]:
+    def internal_url(self) -> str:
+        """Return the internal URL for the OTLP provider."""
+        return f"http://{socket.getfqdn()}"
+
+    def _get_otlp_endpoints(self, url: str = "") -> List[OtlpEndpoint]:
         """List all available OTLP endpoints for this server."""
         endpoints = []
+        new_url = url if url else self.internal_url
         for protocol, port in self._protocol_ports.model_dump(exclude_none=True).items():
-            endpoint = f"{self._get_server_host().rstrip('/')}:{port}"
+            endpoint = f"{new_url.rstrip('/')}:{port}"
             if self._path:
                 endpoint += f"/{self._path.rstrip('/')}"
             endpoints.append(
@@ -210,3 +196,28 @@ class OtlpProvider(Object):
                 )
             )
         return endpoints
+
+    def update_endpoints(self, url: str = "", relation: Optional[Relation] = None) -> None:
+        """Triggers programmatically the update of the relation data.
+
+        This method should be used when the charm relying on this library needs to update the
+        relation data in response to something occurring outside the `otlp` relation lifecycle,
+        e.g., in case of a host address change because the charmed operator becomes connected to
+        an Ingress after the `otlp` relation is established.
+
+        Args:
+            url: An optional URL to use instead of the internal URL.
+            relation: An optional instance of `class:ops.model.Relation` to update.
+                If not provided, all instances of the `otlp`
+                relation are updated.
+        """
+        relations = [relation] if relation else self.model.relations[self._relation_name]
+
+        for relation in relations:
+            otlp = {
+                OtlpProviderUnitData.KEY: OtlpProviderUnitData(
+                    endpoints=self._get_otlp_endpoints(url)
+                ).model_dump(exclude_none=True)
+            }
+            relation.data[self._charm.unit].update({k: json.dumps(v) for k, v in otlp.items()})
+

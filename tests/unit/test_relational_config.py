@@ -164,7 +164,8 @@ def test_traces_receivers(ctx, execs):
     # THEN the config file exists and the pebble service is running
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
     # AND the receivers for tracing exists in the config
-    expected_receivers = {"otlp", "jaeger/receive-traces/opentelemetry-collector-k8s/0"}
+    unit_name = "opentelemetry-collector-k8s/0"
+    expected_receivers = {f"otlp/{unit_name}", f"jaeger/receive-traces/{unit_name}"}
     assert expected_receivers.issubset(set(cfg["receivers"].keys()))
     # AND the pipelines are valid
     check_valid_pipelines(cfg)

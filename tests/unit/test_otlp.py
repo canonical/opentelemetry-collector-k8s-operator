@@ -39,113 +39,73 @@ def test_provider_app_data_raises_validation_error(data, error_match):
         OtlpProviderUnitData(endpoints=[OtlpEndpoint(**data)])
 
 
-# TODO: Add a test for more units and more relations
-@pytest.mark.parametrize(
-    "provides, otlp_endpoint",
-    (
-        (
-            OtlpProviderUnitData(
-                endpoints=[
-                    OtlpEndpoint(
-                        protocol=ProtocolType.grpc,
-                        endpoint="http://host:4317",
-                        telemetries=[TelemetryType.log],
-                    ),
-                    OtlpEndpoint(
-                        protocol=ProtocolType.http,
-                        endpoint="http://host:4318",
-                        telemetries=[TelemetryType.metric],
-                    ),
-                ]
-            ),
-            OtlpEndpoint(
-                protocol=ProtocolType.grpc,
-                endpoint="http://host:4317",
-                telemetries=[TelemetryType.log],
-            ),
+def test_send_otlp_one_relation(ctx, otelcol_container):
+    # GIVEN a remote app provides multiple OtlpEndpoint per unit
+    remote_units_data = {
+        0: {
+            OtlpProviderUnitData.KEY: json.dumps(
+                OtlpProviderUnitData(
+                    endpoints=[
+                        OtlpEndpoint(
+                            protocol=ProtocolType.grpc,
+                            endpoint="http://host:4317",
+                            telemetries=[TelemetryType.log],
+                        ),
+                        OtlpEndpoint(
+                            protocol=ProtocolType.http,
+                            endpoint="http://host:4318",
+                            telemetries=[TelemetryType.metric],
+                        ),
+                    ]
+                ).model_dump()
+            )
+        },
+        1: {
+            OtlpProviderUnitData.KEY: json.dumps(
+                OtlpProviderUnitData(
+                    endpoints=[
+                        OtlpEndpoint(
+                            protocol=ProtocolType.grpc,
+                            endpoint="http://host:4317",
+                            telemetries=[TelemetryType.trace],
+                        ),
+                        OtlpEndpoint(
+                            protocol=ProtocolType.http,
+                            endpoint="http://host:4318",
+                            telemetries=[TelemetryType.trace],
+                        ),
+                    ]
+                ).model_dump()
+            )
+        },
+    }
+
+    expected_consumed_endpoints = {
+        "remote/0": OtlpEndpoint(
+            protocol=ProtocolType.grpc,
+            endpoint="http://host:4317",
+            telemetries=[TelemetryType.log],
         ),
-        (
-            OtlpProviderUnitData(
-                endpoints=[
-                    OtlpEndpoint(
-                        protocol=ProtocolType.grpc,
-                        endpoint="http://host:4317",
-                        telemetries=[TelemetryType.metric],
-                    ),
-                    OtlpEndpoint(
-                        protocol=ProtocolType.grpc,
-                        endpoint="http://host:4317",
-                        telemetries=[TelemetryType.trace],
-                    ),
-                ]
-            ),
-            OtlpEndpoint(
-                protocol=ProtocolType.grpc,
-                endpoint="http://host:4317",
-                telemetries=[TelemetryType.metric],
-            ),
+        "remote/1": OtlpEndpoint(
+            protocol=ProtocolType.grpc,
+            endpoint="http://host:4317",
+            telemetries=[TelemetryType.trace],
         ),
-        (
-            OtlpProviderUnitData(
-                endpoints=[
-                    OtlpEndpoint(
-                        protocol=ProtocolType.grpc,
-                        endpoint="http://host:4317",
-                        telemetries=[TelemetryType.trace],
-                    ),
-                ]
-            ),
-            OtlpEndpoint(
-                protocol=ProtocolType.grpc,
-                endpoint="http://host:4317",
-                telemetries=[TelemetryType.trace],
-            ),
-        ),
-        (
-            OtlpProviderUnitData(
-                endpoints=[
-                    OtlpEndpoint(
-                        protocol=ProtocolType.http,
-                        endpoint="http://host:4318",
-                        telemetries=[TelemetryType.log],
-                    ),
-                ]
-            ),
-            OtlpEndpoint(
-                protocol=ProtocolType.http,
-                endpoint="http://host:4318",
-                telemetries=[TelemetryType.log],
-            ),
-        ),
-        (
-            OtlpProviderUnitData(
-                endpoints=[
-                    OtlpEndpoint(
-                        protocol=ProtocolType.http,
-                        endpoint="http://host:4318",
-                        telemetries=[TelemetryType.log, TelemetryType.metric],
-                    ),
-                ]
-            ),
-            OtlpEndpoint(
-                protocol=ProtocolType.http,
-                endpoint="http://host:4318",
-                telemetries=[TelemetryType.log, TelemetryType.metric],
-            ),
-        ),
-    ),
-)
-def test_send_otlp(ctx, otelcol_container, provides, otlp_endpoint):
-    # GIVEN a remote app provides one (or multiple) OtlpEndpoint(s)
+    }
+
     # WHEN they are related over the "send-otlp" endpoint
-    input_databag = json.dumps(provides.model_dump())
-    provider = Relation(
+    provider_0 = Relation(
         "send-otlp",
         id=123,
-        remote_units_data={0: {OtlpProviderUnitData.KEY: input_databag}},
+        remote_units_data=remote_units_data,
+    )
+    provider_1 = Relation(
+        "send-otlp",
+        id=321,
+        remote_units_data=remote_units_data,
     )
     state = State(
-        relations=[provider],
+        relations=[provider_0, provider_1],
         leader=True,
         containers=otelcol_container,
     )
@@ -153,15 +113,16 @@ def test_send_otlp(ctx, otelcol_container, provides, otlp_endpoint):
     # AND WHEN any event executes the reconciler
     with ctx(ctx.on.update_status(), state=state) as mgr:
         state_out = mgr.run()
-        result = mgr.charm.otlp_consumer.get_remote_otlp_endpoints()[123]
+        remote_endpoints = mgr.charm.otlp_consumer.get_remote_otlp_endpoints()
 
-    # THEN the databag contains multiple provider endpoints
-    remote_unit_data = list(state_out.relations)[0].remote_units_data[0]
-    assert remote_unit_data[OtlpProviderUnitData.KEY] == input_databag
+    # THEN the databag contains multiple provider endpoints, per relation
+    for rel in list(state_out.relations):
+        assert rel.remote_units_data == remote_units_data
 
     # AND the returned endpoint (many-to-one) is correct
-    returned_endpoint = list(result.values())[0]
-    assert returned_endpoint.model_dump_json() == otlp_endpoint.model_dump_json()
+    expected = {k: v.model_dump() for k, v in expected_consumed_endpoints.items()}
+    assert {k: v.model_dump() for k, v in remote_endpoints[123].items()} == expected
+    assert {k: v.model_dump() for k, v in remote_endpoints[321].items()} == expected
 
 
 # NOTE: we cannot use OtlpProviderUnitData for "provides" since it would raise validation errors
@@ -172,13 +133,13 @@ def test_send_otlp(ctx, otelcol_container, provides, otlp_endpoint):
             {
                 "endpoints": [
                     {
-                        "protocol": "http",
-                        "endpoint": "http://host:4317",
+                        "protocol": "fake",
+                        "endpoint": "http://host:0000",
                         "telemetries": ["metrics"],
                     },
                     {
-                        "protocol": "fake",
-                        "endpoint": "http://host:0000",
+                        "protocol": "http",
+                        "endpoint": "http://host:4317",
                         "telemetries": ["metrics"],
                     },
                 ]

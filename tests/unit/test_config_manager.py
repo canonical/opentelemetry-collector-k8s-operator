@@ -13,7 +13,7 @@ import pytest
 def test_add_prometheus_scrape():
     # GIVEN an empty config
     config_manager = ConfigManager(
-        unit_name="fake/0",
+        unit_name="otelcol/0",
         global_scrape_interval="15s",
         global_scrape_timeout="",
         insecure_skip_verify=True,
@@ -46,7 +46,7 @@ def test_add_prometheus_scrape():
     # THEN it exists in the prometheus receiver config
     # AND insecure_skip_verify is injected into the config
     assert (
-        config_manager.config._config["receivers"]["prometheus/metrics-endpoint/fake/0"]
+        config_manager.config._config["receivers"]["prometheus/metrics-endpoint/otelcol/0"]
         == expected_prom_recv_cfg
     )
 
@@ -66,7 +66,7 @@ def test_add_prometheus_scrape():
     job_names = [
         job["job_name"]
         for job in config_manager.config._config["receivers"][
-            "prometheus/metrics-endpoint/fake/0"
+            "prometheus/metrics-endpoint/otelcol/0"
         ]["config"]["scrape_configs"]
     ]
     assert job_names == ["second_job", "third_job"]
@@ -75,7 +75,7 @@ def test_add_prometheus_scrape():
 def test_add_log_ingestion():
     # GIVEN an empty config
     config_manager = ConfigManager(
-        unit_name="fake/0",
+        unit_name="otelcol/0",
         global_scrape_interval="",
         global_scrape_timeout="",
     )
@@ -87,7 +87,7 @@ def test_add_log_ingestion():
     config_manager.add_log_ingestion()
     # THEN it exists in the loki receiver config
     config = dict(
-        sorted(config_manager.config._config["receivers"]["loki/receive-loki-logs/fake/0"].items())
+        sorted(config_manager.config._config["receivers"]["loki/receive-loki-logs/otelcol/0"].items())
     )
     expected_config = dict(sorted(expected_loki_ingestion_cfg.items()))
     assert config == expected_config
@@ -96,7 +96,7 @@ def test_add_log_ingestion():
 def test_add_log_forwarding():
     # GIVEN an empty config
     config_manager = ConfigManager(
-        unit_name="fake/0",
+        unit_name="otelcol/0",
         global_scrape_interval="",
         global_scrape_timeout="",
         insecure_skip_verify=True,
@@ -131,7 +131,7 @@ def test_add_log_forwarding():
 def test_add_traces_forwarding():
     # GIVEN an empty config
     config_manager = ConfigManager(
-        unit_name="fake/0",
+        unit_name="otelcol/0",
         global_scrape_interval="",
         global_scrape_timeout="",
         insecure_skip_verify=True,
@@ -159,7 +159,7 @@ def test_add_traces_forwarding():
 def test_add_remote_write():
     # GIVEN an empty config
     config_manager = ConfigManager(
-        unit_name="fake/0",
+        unit_name="otelcol/0",
         global_scrape_interval="",
         global_scrape_timeout="",
         insecure_skip_verify=True,
@@ -187,52 +187,51 @@ def test_add_remote_write():
     assert config == expected_config
 
 
-def test_add_otlp_forwarding(unit_0_mock):
+def test_add_otlp_forwarding():
     # GIVEN an empty config
     config_manager = ConfigManager(
-        unit_name="fake/0",
+        unit_name="otelcol/0",
         global_scrape_interval="",
         global_scrape_timeout="",
         insecure_skip_verify=True,
     )
 
     # WHEN the OTLP providers for multiple relations have provided the preferred protocols
-    remote_unit = unit_0_mock.name
+    remote_0 = "remote-unit/0"
+    remote_1 = "remote-unit/1"
     config_manager.add_otlp_forwarding(
         relation_map={
             0: {
-                remote_unit: OtlpEndpoint(
+                remote_0: OtlpEndpoint(
                     **{
                         "protocol": "grpc",
-                        "endpoint": "http://host-0:grpc-port",
-                        "telemetries": ["logs"],
+                        "endpoint": "https://1.2.3.4:grpc-port",
+                        "telemetries": ["metrics", "traces"],
                     }
                 )
             },
             1: {
-                remote_unit: OtlpEndpoint(
+                remote_0: OtlpEndpoint(
                     **{
                         "protocol": "grpc",
                         "endpoint": "http://host-1:grpc-port",
-                        "telemetries": ["metrics", "traces"],
+                        "telemetries": ["logs"],
+                    }
+                ),
+                remote_1: OtlpEndpoint(
+                    **{
+                        "protocol": "http",
+                        "endpoint": "http://host-1:http-port",
+                        "telemetries": ["metrics"],
                     }
                 )
             },
             2: {
-                remote_unit: OtlpEndpoint(
+                remote_0: OtlpEndpoint(
                     **{
-                        "protocol": "http",
-                        "endpoint": "http://host-2:http-port",
-                        "telemetries": ["metrics", "traces"],
-                    }
-                )
-            },
-            3: {
-                remote_unit: OtlpEndpoint(
-                    **{
-                        "protocol": "http",
-                        "endpoint": "http://host-3:http-port",
-                        "telemetries": ["logs"],
+                        "protocol": "grpc",
+                        "endpoint": "https://host-2:grpc-port",
+                        "telemetries": ["logs", "traces"],
                     }
                 )
             },
@@ -241,36 +240,36 @@ def test_add_otlp_forwarding(unit_0_mock):
 
     # THEN the exporter config contains appropriate "otlp" and "otlphttp" exporters
     expected_exporters = {
-        f"otlp/rel-0/{remote_unit}": {
-            "endpoint": "http://host-0:grpc-port",
+        f"otlp/rel-0/{remote_0}": {
+            "endpoint": "https://1.2.3.4:grpc-port",
             "tls": {"insecure": False, "insecure_skip_verify": True},
         },
-        f"otlp/rel-1/{remote_unit}": {
+        f"otlp/rel-1/{remote_0}": {
             "endpoint": "http://host-1:grpc-port",
-            "tls": {"insecure": False, "insecure_skip_verify": True},
+            "tls": {"insecure": True, "insecure_skip_verify": True},
         },
-        f"otlphttp/rel-2/{remote_unit}": {
-            "endpoint": "http://host-2:http-port",
-            "tls": {"insecure": False, "insecure_skip_verify": True},
+        f"otlphttp/rel-1/{remote_1}": {
+            "endpoint": "http://host-1:http-port",
+            "tls": {"insecure": True, "insecure_skip_verify": True},
         },
-        f"otlphttp/rel-3/{remote_unit}": {
-            "endpoint": "http://host-3:http-port",
+        f"otlp/rel-2/{remote_0}": {
+            "endpoint": "https://host-2:grpc-port",
             "tls": {"insecure": False, "insecure_skip_verify": True},
         },
     }
     # AND the exporters are added to the appropriate pipelines
     expected_pipelines = {
-        "logs/fake/0": {
-            "receivers": ["otlp"],
-            "exporters": [f"otlp/rel-0/{remote_unit}", f"otlphttp/rel-3/{remote_unit}"],
+        "logs/otelcol/0": {
+            "receivers": ["otlp/otelcol/0"],
+            "exporters": [f"otlp/rel-1/{remote_0}", f"otlp/rel-2/{remote_0}"],
         },
-        "metrics/fake/0": {
-            "receivers": ["otlp"],
-            "exporters": [f"otlp/rel-1/{remote_unit}", f"otlphttp/rel-2/{remote_unit}"],
+        "metrics/otelcol/0": {
+            "receivers": ["otlp/otelcol/0"],
+            "exporters": [f"otlp/rel-0/{remote_0}", f"otlphttp/rel-1/{remote_1}"],
         },
-        "traces/fake/0": {
-            "receivers": ["otlp"],
-            "exporters": [f"otlp/rel-1/{remote_unit}", f"otlphttp/rel-2/{remote_unit}"],
+        "traces/otelcol/0": {
+            "receivers": ["otlp/otelcol/0"],
+            "exporters": [f"otlp/rel-0/{remote_0}", f"otlp/rel-2/{remote_0}"],
         },
     }
     assert config_manager.config._config["exporters"] == expected_exporters
@@ -283,24 +282,24 @@ def test_add_otlp_forwarding(unit_0_mock):
         (
             {"logs": False, "metrics": False, "traces": False},
             {
-                "logs/otelcol/0": {"receivers": ["otlp"], "exporters": []},
-                "metrics/otelcol/0": {"receivers": ["otlp"], "exporters": []},
-                "traces/otelcol/0": {"receivers": ["otlp"], "exporters": []},
+                "logs/otelcol/0": {"receivers": ["otlp/otelcol/0"], "exporters": []},
+                "metrics/otelcol/0": {"receivers": ["otlp/otelcol/0"], "exporters": []},
+                "traces/otelcol/0": {"receivers": ["otlp/otelcol/0"], "exporters": []},
             },
         ),
         (
             {"logs": True, "metrics": True, "traces": True},
             {
                 "logs/otelcol/0": {
-                    "receivers": ["otlp"],
+                    "receivers": ["otlp/otelcol/0"],
                     "exporters": ["debug/juju-config-enabled"],
                 },
                 "metrics/otelcol/0": {
-                    "receivers": ["otlp"],
+                    "receivers": ["otlp/otelcol/0"],
                     "exporters": ["debug/juju-config-enabled"],
                 },
                 "traces/otelcol/0": {
-                    "receivers": ["otlp"],
+                    "receivers": ["otlp/otelcol/0"],
                     "exporters": ["debug/juju-config-enabled"],
                 },
             },
@@ -309,12 +308,12 @@ def test_add_otlp_forwarding(unit_0_mock):
             {"logs": True, "metrics": False, "traces": True},
             {
                 "logs/otelcol/0": {
-                    "receivers": ["otlp"],
+                    "receivers": ["otlp/otelcol/0"],
                     "exporters": ["debug/juju-config-enabled"],
                 },
-                "metrics/otelcol/0": {"receivers": ["otlp"]},
+                "metrics/otelcol/0": {"receivers": ["otlp/otelcol/0"]},
                 "traces/otelcol/0": {
-                    "receivers": ["otlp"],
+                    "receivers": ["otlp/otelcol/0"],
                     "exporters": ["debug/juju-config-enabled"],
                 },
             },
