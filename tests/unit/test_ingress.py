@@ -14,8 +14,11 @@ from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
 from src.otlp import OtlpProviderAppData
 
+FQDN = "otelcol-0.otelcol-endpoints.otel.svc.cluster.local"
+SERVER_URL = "otelcol-endpoints.otel.svc.cluster.local"
 
-@patch("socket.getfqdn", lambda: "1.2.3.4")
+
+@patch("socket.getfqdn", lambda: FQDN)
 def test_traefik_sent_config(ctx, otelcol_container):
     """Scenario: Otelcol deployed without tls-certificates relation."""
     # GIVEN otelcol deployed in isolation
@@ -69,28 +72,28 @@ def test_traefik_sent_config(ctx, otelcol_container):
             },
             "services": {
                 f"juju-{state.model.name}-{charm_name}-service-health": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:13133"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:13133"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-jaeger-grpc": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:14250"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:14250"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-jaeger-thrift-http": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:14268"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:14268"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-loki-http": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:3500"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:3500"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-metrics": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:8888"}]},
+                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:8888"}]},
                 },
                 f"juju-{state.model.name}-{charm_name}-service-otlp-grpc": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:4317"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:4317"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-otlp-http": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:4318"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:4318"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-zipkin": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:9411"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:9411"}]}
                 },
             },
         },
@@ -133,7 +136,7 @@ def test_ingress_config_middleware_tls(ctx, otelcol_container):
         }
 
 
-@patch("socket.getfqdn", new=lambda *args: "fqdn")
+@patch("socket.getfqdn", lambda: "fqdn")
 def test_loki_url_in_databag(ctx, otelcol_container):
     # WHEN traefik ingress is related to otelcol
     receive_logs_endpoint = Relation("receive-loki-logs")

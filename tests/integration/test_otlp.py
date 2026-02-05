@@ -29,10 +29,10 @@ def test_otlp_forwarding_insecure(
     # TODO: Add a test: one packed and one from charmhub to test different versions of the OTLP lib
     juju.deploy(charm, "otelcol-one", resources=charm_resources, trust=True)
     juju.deploy(charm, "otelcol-two", resources=charm_resources, trust=True)
+    juju.config("otelcol-two", {"debug_exporter_for_metrics": True})
 
     # WHEN "one" is related to "two" over the OTLP endpoints
     juju.integrate("otelcol-one:send-otlp", "otelcol-two:receive-otlp")
-    juju.config("otelcol-two", {"debug_exporter_for_metrics": True})
     juju.wait(jubilant.all_active, timeout=450, error=jubilant.any_error)
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
 
@@ -69,10 +69,11 @@ def test_otlp_forwarding_secure(juju: jubilant.Juju, charm: str, charm_resources
     otelcol_two_logs = sh.kubectl.logs(
         "otelcol-two-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
     )
-    assert "authentication handshake failed: tls" in otelcol_one_logs
+    assert "tls: failed to verify certificate" in otelcol_one_logs
     assert "juju_application=otelcol-one" not in otelcol_two_logs
 
-    juju.integrate("otelcol-one:receive-server-cert", "ssc:certificates")
+    # AND WHEN otelcol-one is related to the certificate authority
+    juju.integrate("otelcol-one:receive-ca-cert", "ssc:send-ca-cert")
     juju.wait(jubilant.all_active, timeout=450, error=jubilant.any_error)
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
 
@@ -81,12 +82,12 @@ def test_otlp_forwarding_secure(juju: jubilant.Juju, charm: str, charm_resources
     lookback_window = scrape_interval + 10  # seconds!
     time.sleep(lookback_window)
 
-    # THEN OTLP forwarding fails since otelcol-one does not trust otelcol-two's cert
+    # THEN OTLP forwarding succeeds since otelcol-one trusts otelcol-two's cert
     otelcol_one_logs = sh.kubectl.logs(
         "otelcol-one-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
     )
     otelcol_two_logs = sh.kubectl.logs(
         "otelcol-two-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
     )
-    assert "authentication handshake failed: tls" not in otelcol_one_logs
+    assert "tls: failed to verify certificate" not in otelcol_one_logs
     assert "juju_application=otelcol-one" in otelcol_two_logs

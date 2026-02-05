@@ -484,12 +484,13 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     """Instantiate the OtlpProvider.
 
     Supports:
-        protocols: gRPC, HTTP
+        protocols: HTTP
         telemetries: metrics
+
+    The gRPC protocol is not supported because Traefik does not support it.
     """
     otlp_provider = OtlpProvider(
         charm,
-        # NOTE: gRPC is not supported because Traefik does not support it yet
         protocol_ports={"http": Port.otlp_http.value},
         relation_name=RECEIVE_OTLP_ENDPOINT,
         # TODO: Add more telemetries here once tested/supported
@@ -502,7 +503,11 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
 def send_otlp(charm: CharmBase) -> Dict[int, Dict[str, OtlpEndpoint]]:
     """Instantiate the OtlpConsumer.
 
-    The gRPC protocol is preferred over HTTP.
+    Supports:
+        protocols: gRPC, HTTP
+        telemetries: logs, metrics, traces
+
+    This provides otelcol with the remote's OTLP endpoint for each relation.
     """
     otlp_consumer = OtlpConsumer(
         charm, relation_name=SEND_OTLP_ENDPOINT, protocols=list(ProtocolType)
@@ -561,7 +566,7 @@ def receive_server_cert(
     """
     # Common name length must be >= 1 and <= 64, so fqdn is too long.
     common_name = charm.unit.name.replace("/", "-")
-    domain = socket.getfqdn()
+    domain = get_k8s_service_host()
     csr_attrs = CertificateRequestAttributes(common_name=common_name, sans_dns=frozenset({domain}))
     certificates = TLSCertificatesRequiresV4(
         charm=charm,
@@ -681,8 +686,11 @@ def _static_ingress_config() -> dict:
 
 
 def _build_lb_server_config(scheme: str, port: int) -> List[Dict[str, str]]:
-    """Build the server portion of the loadbalancer config of Traefik ingress."""
-    return [{"url": f"{scheme}://{socket.getfqdn()}:{port}"}]
+    """Build the server portion of the loadbalancer config of Traefik ingress.
+
+    The leader provides the kubernetes service address to Traefik to serve as ingress.
+    """
+    return [{"url": f"{scheme}://{get_k8s_service_host()}:{port}"}]
 
 
 def is_tls_ready(container: Container) -> bool:
@@ -690,6 +698,11 @@ def is_tls_ready(container: Container) -> bool:
     return container.exists(path=SERVER_CERT_PATH) and container.exists(
         path=SERVER_CERT_PRIVATE_KEY_PATH
     )
+
+
+def get_k8s_service_host() -> str:
+    """Return the k8s service host for the otel-collector service."""
+    return socket.getfqdn().split(".", 1)[-1]
 
 
 @dataclass
