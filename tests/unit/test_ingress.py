@@ -15,7 +15,6 @@ from src.constants import INGRESS_IP_MATCHER
 from src.otlp import OtlpProviderAppData
 
 FQDN = "otelcol-0.otelcol-endpoints.otel.svc.cluster.local"
-SERVER_URL = "otelcol-endpoints.otel.svc.cluster.local"
 
 
 @patch("socket.getfqdn", lambda: FQDN)
@@ -72,28 +71,28 @@ def test_traefik_sent_config(ctx, otelcol_container):
             },
             "services": {
                 f"juju-{state.model.name}-{charm_name}-service-health": {
-                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:13133"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:13133"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-jaeger-grpc": {
-                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:14250"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:14250"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-jaeger-thrift-http": {
-                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:14268"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:14268"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-loki-http": {
-                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:3500"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:3500"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-metrics": {
-                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:8888"}]},
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:8888"}]},
                 },
                 f"juju-{state.model.name}-{charm_name}-service-otlp-grpc": {
-                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:4317"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:4317"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-otlp-http": {
-                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:4318"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:4318"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-zipkin": {
-                    "loadBalancer": {"servers": [{"url": f"http://{SERVER_URL}:9411"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:9411"}]}
                 },
             },
         },
@@ -211,3 +210,36 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
     assert json.loads(receive_otlp_out.local_app_data[OtlpProviderAppData.KEY])[
         "endpoints"
     ] == expected_endpoints(ingress=False)
+
+
+def test_blocked_status_when_scaled_without_ingress(ctx, otelcol_container):
+    # GIVEN otelcol is not scaled and has no ingress relation
+    state = State(planned_units=1, containers=otelcol_container, leader=True)
+
+    # WHEN any event executes the reconciler
+    out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN the charm is Active
+    assert out.app_status.name != "blocked"
+
+    # AND WHEN otelcol is scaled to 2 units
+    state = State(planned_units=2, containers=otelcol_container, leader=True)
+    out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN the charm is Blocked
+    assert out.app_status.name == "blocked"
+    assert "Enable ingress" in out.app_status.message
+
+    # AND WHEN otelcol is scaled to 2 units with ingress relation
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
+    state = State(
+        planned_units=2,
+        relations=[ingress],
+        containers=otelcol_container,
+        leader=True,
+    )
+    out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN the charm is Active
+    assert out.app_status.name != "blocked"
+    assert not out.app_status.message

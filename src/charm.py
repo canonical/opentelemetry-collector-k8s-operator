@@ -51,7 +51,7 @@ def charm_address(
     """
     tls = integrations.is_tls_ready(container)
     internal_scheme = "https" if tls else "http"
-    internal_url = f"{internal_scheme}://{socket.getfqdn().split(".", 1)[-1]}"
+    internal_url = f"{internal_scheme}://{socket.getfqdn()}"
     external_url = (
         f"{ingress.scheme}://{ingress.external_host}"
         if integrations.ingress_ready(ingress)
@@ -61,6 +61,7 @@ def charm_address(
     resolved_scheme = urlparse(external_url).scheme if external_url else "https" if tls else "http"
 
     return integrations.Address(
+        integrations.ingress_ready(ingress),
         internal_scheme,
         internal_url,
         resolved_scheme,
@@ -89,6 +90,7 @@ def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
         pairs={
             "metrics-endpoint": [  # must be paired with:
                 {"send-remote-write"},  # or
+                {"send-otlp"},
                 {"cloud-config"},
             ],
             "receive-loki-logs": [  # must be paired with:
@@ -101,6 +103,13 @@ def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
             ],
             "grafana-dashboards-consumer": [  # must be paired with:
                 {"grafana-dashboards-provider"},  # or
+                {"cloud-config"},
+            ],
+            "receive-otlp": [  # must be paired with:
+                {"send-otlp"},  # or
+                {"send-traces"},
+                {"send-loki-logs"},
+                {"send-remote-write"},
                 {"cloud-config"},
             ],
         }
@@ -175,6 +184,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Address manager
         # NOTE: executed after ingress and TLS events
         otelcol_address = charm_address(container, ingress)
+
+        if self.model.unit.is_leader():
+            if self.app.planned_units() > 1 and not otelcol_address.ingress:
+                self.app.status = BlockedStatus("Enable ingress before scaling up")
+            else:
+                self.app.status = ActiveStatus()
 
         # Global scrape configs
         global_configs = {

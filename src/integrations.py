@@ -250,7 +250,6 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
         peer_relation_name="peers",
     )
     charm.__setattr__("remote_write", remote_write)
-    # TODO: Do we want to add alerts from OTLP since we are not supporting remote-write
     # TODO: Luca: probably don't need this anymore
     remote_write.reload_alerts()
     return remote_write.endpoints
@@ -566,7 +565,7 @@ def receive_server_cert(
     """
     # Common name length must be >= 1 and <= 64, so fqdn is too long.
     common_name = charm.unit.name.replace("/", "-")
-    domain = get_k8s_service_host()
+    domain = socket.getfqdn()
     csr_attrs = CertificateRequestAttributes(common_name=common_name, sans_dns=frozenset({domain}))
     certificates = TLSCertificatesRequiresV4(
         charm=charm,
@@ -690,7 +689,7 @@ def _build_lb_server_config(scheme: str, port: int) -> List[Dict[str, str]]:
 
     The leader provides the kubernetes service address to Traefik to serve as ingress.
     """
-    return [{"url": f"{scheme}://{get_k8s_service_host()}:{port}"}]
+    return [{"url": f"{scheme}://{socket.getfqdn()}:{port}"}]
 
 
 def is_tls_ready(container: Container) -> bool:
@@ -698,11 +697,6 @@ def is_tls_ready(container: Container) -> bool:
     return container.exists(path=SERVER_CERT_PATH) and container.exists(
         path=SERVER_CERT_PRIVATE_KEY_PATH
     )
-
-
-def get_k8s_service_host() -> str:
-    """Return the k8s service host for the otel-collector service."""
-    return socket.getfqdn().split(".", 1)[-1]
 
 
 @dataclass
@@ -714,6 +708,7 @@ class Address:
         - tls events
     """
 
+    ingress: bool
     internal_scheme: str  # Only TLS context
     internal_url: str  # Only TLS context
     resolved_scheme: str  # TLS & ingress context
