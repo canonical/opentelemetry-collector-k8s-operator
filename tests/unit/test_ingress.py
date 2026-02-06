@@ -220,15 +220,15 @@ def test_blocked_status_when_scaled_without_ingress(ctx, otelcol_container):
     out = ctx.run(ctx.on.update_status(), state)
 
     # THEN the charm is Active
-    assert out.app_status.name != "blocked"
+    assert out.unit_status.name != "blocked"
 
     # AND WHEN otelcol is scaled to 2 units
     state = State(planned_units=2, containers=otelcol_container, leader=True)
     out = ctx.run(ctx.on.update_status(), state)
 
     # THEN the charm is Blocked
-    assert out.app_status.name == "blocked"
-    assert "Enable ingress" in out.app_status.message
+    assert out.unit_status.name == "blocked"
+    assert "Enable ingress" in out.unit_status.message
 
     # AND WHEN otelcol is scaled to 2 units with ingress relation
     ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
@@ -241,5 +241,5 @@ def test_blocked_status_when_scaled_without_ingress(ctx, otelcol_container):
     out = ctx.run(ctx.on.update_status(), state)
 
     # THEN the charm is Active
-    assert out.app_status.name != "blocked"
-    assert not out.app_status.message
+    assert out.unit_status.name != "blocked"
+    assert not out.unit_status.message

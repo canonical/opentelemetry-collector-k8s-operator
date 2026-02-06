@@ -185,12 +185,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # NOTE: executed after ingress and TLS events
         otelcol_address = charm_address(container, ingress)
 
-        if self.model.unit.is_leader():
-            if self.app.planned_units() > 1 and not otelcol_address.ingress:
-                self.app.status = BlockedStatus("Enable ingress before scaling up")
-            else:
-                self.app.status = ActiveStatus()
-
         # Global scrape configs
         global_configs = {
             "global_scrape_interval": cast(str, self.config.get("global_scrape_interval")),
@@ -346,6 +340,14 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         missing_relations = _get_missing_mandatory_relations(self)
         if missing_relations:
             self.unit.status = BlockedStatus(missing_relations)
+
+        # Ingress and scaling status
+        if self.model.unit.is_leader():
+            if self.app.planned_units() > 1 and not otelcol_address.ingress:
+                self.unit.status = BlockedStatus("Enable ingress before scaling up")
+                logger.warning(
+                    "without ingress and planned_units > 1, all data is forwarded to the leader unit."
+                )
 
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")

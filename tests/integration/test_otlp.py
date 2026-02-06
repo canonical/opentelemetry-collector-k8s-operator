@@ -33,7 +33,16 @@ def test_otlp_forwarding_insecure(
 
     # WHEN "one" is related to "two" over the OTLP endpoints
     juju.integrate("otelcol-one:send-otlp", "otelcol-two:receive-otlp")
-    juju.wait(jubilant.all_active, timeout=450, error=jubilant.any_error)
+    juju.wait(
+        lambda status: jubilant.all_active(status, "otelcol-one"),
+        timeout=300,
+        error=jubilant.any_error,
+    )
+    juju.wait(
+        lambda status: jubilant.all_blocked(status, "otelcol-two"),
+        timeout=300,
+        error=jubilant.any_error,
+    )
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
 
     logger.info("Waiting for scrape interval (1 minute) to elapse...")
@@ -54,7 +63,16 @@ def test_otlp_forwarding_secure(juju: jubilant.Juju, charm: str, charm_resources
     # WHEN "one" is related to "two" over the OTLP endpoints
     juju.deploy("self-signed-certificates", "ssc")
     juju.integrate("otelcol-two:receive-server-cert", "ssc:certificates")
-    juju.wait(jubilant.all_active, timeout=450, error=jubilant.any_error)
+    juju.wait(
+        lambda status: jubilant.all_active(status, "ssc", "otelcol-one"),
+        timeout=300,
+        error=jubilant.any_error,
+    )
+    juju.wait(
+        lambda status: jubilant.all_blocked(status, "otelcol-two"),
+        timeout=300,
+        error=jubilant.any_error,
+    )
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
 
     logger.info("Waiting for scrape interval (1 minute) to elapse...")
@@ -74,7 +92,16 @@ def test_otlp_forwarding_secure(juju: jubilant.Juju, charm: str, charm_resources
 
     # AND WHEN otelcol-one is related to the certificate authority
     juju.integrate("otelcol-one:receive-ca-cert", "ssc:send-ca-cert")
-    juju.wait(jubilant.all_active, timeout=450, error=jubilant.any_error)
+    juju.wait(
+        lambda status: jubilant.all_active(status, "ssc", "otelcol-one"),
+        timeout=300,
+        error=jubilant.any_error,
+    )
+    juju.wait(
+        lambda status: jubilant.all_blocked(status, "otelcol-two"),
+        timeout=300,
+        error=jubilant.any_error,
+    )
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
 
     logger.info("Waiting for scrape interval (1 minute) to elapse...")
