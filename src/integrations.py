@@ -66,7 +66,7 @@ from constants import (
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
-from otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider, ProtocolType, TelemetryType
+from otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider, ProtocolType
 
 logger = logging.getLogger(__name__)
 
@@ -493,8 +493,9 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
         protocol_ports={"http": Port.otlp_http.value},
         relation_name=RECEIVE_OTLP_ENDPOINT,
         # TODO: Add more telemetries here once tested/supported
-        supported_telemetries=[TelemetryType.metric],
+        supported_telemetries=["metrics"],
     )
+    # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_provider", otlp_provider)
     otlp_provider.update_endpoints(url=resolved_url)
 
@@ -511,6 +512,7 @@ def send_otlp(charm: CharmBase) -> Dict[int, Dict[str, OtlpEndpoint]]:
     otlp_consumer = OtlpConsumer(
         charm, relation_name=SEND_OTLP_ENDPOINT, protocols=list(ProtocolType)
     )
+    # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_consumer", otlp_consumer)
     return otlp_consumer.get_remote_otlp_endpoints()
 
@@ -699,7 +701,7 @@ def is_tls_ready(container: Container) -> bool:
     )
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Address:
     """Provide address information for the charm.
 

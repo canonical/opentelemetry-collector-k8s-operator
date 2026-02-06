@@ -61,11 +61,11 @@ def charm_address(
     resolved_scheme = urlparse(external_url).scheme if external_url else "https" if tls else "http"
 
     return integrations.Address(
-        integrations.ingress_ready(ingress),
-        internal_scheme,
-        internal_url,
-        resolved_scheme,
-        resolved_url,
+        ingress=integrations.ingress_ready(ingress),
+        internal_scheme=internal_scheme,
+        internal_url=internal_url,
+        resolved_scheme=resolved_scheme,
+        resolved_url=resolved_url,
     )
 
 
@@ -107,6 +107,8 @@ def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
             ],
             "receive-otlp": [  # must be paired with:
                 {"send-otlp"},  # or
+                # Technically, this would depend on databag contents for enabled pipelines,
+                # but we keep it simple for now.
                 {"send-traces"},
                 {"send-loki-logs"},
                 {"send-remote-write"},
@@ -216,8 +218,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         feature_gates: Optional[str] = None
 
         # OTLP setup
-        if integrations.cyclic_otlp_relations_exist(self):
-            self.unit.status = BlockedStatus("cyclic OTLP relations exist")
         integrations.receive_otlp(self, otelcol_address.resolved_url)
         otlp_endpoints = integrations.send_otlp(self)
         config_manager.add_otlp_forwarding(otlp_endpoints)
@@ -341,12 +341,19 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if missing_relations:
             self.unit.status = BlockedStatus(missing_relations)
 
+        # Cyclic OTLP relations
+        if integrations.cyclic_otlp_relations_exist(self):
+            self.unit.status = BlockedStatus("cyclic OTLP relations exist")
+
         # Ingress and scaling status
         if self.model.unit.is_leader():
             if self.app.planned_units() > 1 and not otelcol_address.ingress:
-                self.unit.status = BlockedStatus("Enable ingress before scaling up")
+                self.unit.status = BlockedStatus(
+                    "Ingress missing - routing only to leader; see debug-log"
+                )
                 logger.warning(
-                    "without ingress and planned_units > 1, all data is forwarded to the leader unit."
+                    "without ingress and planned_units > 1, all data is forwarded to the leader "
+                    "unit, with nothing sent to non-leader units."
                 )
 
         # Workload version

@@ -46,12 +46,12 @@ def test_send_otlp_multiple_relations(ctx, otelcol_container):
                     OtlpEndpoint(
                         protocol=ProtocolType.grpc,
                         endpoint="http://host:4317",
-                        telemetries=[TelemetryType.log],
+                        telemetries=[TelemetryType.logs],
                     ),
                     OtlpEndpoint(
                         protocol=ProtocolType.http,
                         endpoint="http://host:4318",
-                        telemetries=[TelemetryType.metric],
+                        telemetries=[TelemetryType.metrics],
                     ),
                 ]
             ).model_dump()
@@ -62,7 +62,7 @@ def test_send_otlp_multiple_relations(ctx, otelcol_container):
         "remote": OtlpEndpoint(
             protocol=ProtocolType.grpc,
             endpoint="http://host:4317",
-            telemetries=[TelemetryType.log],
+            telemetries=[TelemetryType.logs],
         ),
     }
 
@@ -120,7 +120,7 @@ def test_send_otlp_multiple_relations(ctx, otelcol_container):
             OtlpEndpoint(
                 protocol=ProtocolType.http,
                 endpoint="http://host:4317",
-                telemetries=[TelemetryType.metric],
+                telemetries=[TelemetryType.metrics],
             ),
         ),
         (
@@ -136,7 +136,7 @@ def test_send_otlp_multiple_relations(ctx, otelcol_container):
             OtlpEndpoint(
                 protocol=ProtocolType.http,
                 endpoint="http://host:4317",
-                telemetries=[TelemetryType.log, TelemetryType.trace],
+                telemetries=[TelemetryType.logs, TelemetryType.traces],
             ),
         ),
     ),

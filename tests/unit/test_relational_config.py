@@ -5,7 +5,7 @@
 
 import json
 from helpers import get_otelcol_file
-from ops.testing import Container, Relation, State
+from ops.testing import Relation, State
 
 from src.constants import CONFIG_PATH
 
@@ -17,10 +17,10 @@ def check_valid_pipelines(cfg):
     assert all(all(condition for condition in pair) for pair in pairs)
 
 
-def test_no_relations(ctx, execs):
+def test_no_relations(ctx, otelcol_container):
     """Scenario: Direct signals to debug if no data sink exists."""
     # GIVEN no relations
-    state_in = State(containers=[Container(name="otelcol", can_connect=True, execs=execs)])
+    state_in = State(containers=otelcol_container)
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state_in)
     # THEN the config file exists and the pebble service is running
@@ -29,7 +29,7 @@ def test_no_relations(ctx, execs):
     check_valid_pipelines(cfg)
 
 
-def test_loki_exporter(ctx, execs):
+def test_loki_exporter(ctx, otelcol_container):
     """Scenario: Fan-out logging architecture."""
     # GIVEN a relation to multiple Loki units
     remote_units_data = {
@@ -39,10 +39,9 @@ def test_loki_exporter(ctx, execs):
     data_sink = Relation(
         endpoint="send-loki-logs", interface="loki_push_api", remote_units_data=remote_units_data
     )
-    container = Container(name="otelcol", can_connect=True, execs=execs)
     state_in = State(
         relations=[data_sink],
-        containers=[container],
+        containers=otelcol_container,
     )
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state_in)
@@ -55,7 +54,7 @@ def test_loki_exporter(ctx, execs):
     check_valid_pipelines(cfg)
 
 
-def test_prometheus_exporter(ctx, execs):
+def test_prometheus_exporter(ctx, otelcol_container):
     """Scenario: Fan-out remote writing architecture."""
     # GIVEN a relation to multiple Prometheus units
     remote_units_data = {
@@ -67,10 +66,9 @@ def test_prometheus_exporter(ctx, execs):
         interface="prometheus_remote_write",
         remote_units_data=remote_units_data,
     )
-    container = Container(name="otelcol", can_connect=True, execs=execs)
     state_in = State(
         relations=[data_sink],
-        containers=[container],
+        containers=otelcol_container,
     )
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state_in)
@@ -85,7 +83,7 @@ def test_prometheus_exporter(ctx, execs):
     check_valid_pipelines(cfg)
 
 
-def test_cloud_integrator(ctx, execs):
+def test_cloud_integrator(ctx, otelcol_container):
     """Scenario: Fan-out remote writing architecture."""
     # GIVEN a relation to a Grafana Cloud Integrator unit
     remote_app_data = {
@@ -99,10 +97,9 @@ def test_cloud_integrator(ctx, execs):
         interface="grafana_cloud_config",
         remote_app_data=remote_app_data,
     )
-    container = Container(name="otelcol", can_connect=True, execs=execs)
     state_in = State(
         relations=[data_sink],
-        containers=[container],
+        containers=otelcol_container,
     )
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state_in)
@@ -126,7 +123,7 @@ def test_cloud_integrator(ctx, execs):
     check_valid_pipelines(cfg)
 
 
-def test_traces_receivers(ctx, execs):
+def test_traces_receivers(ctx, otelcol_container):
     """Scenario: Fan-out tracing architecture."""
     # GIVEN a relation to a charm that sends traces
     local_app_data = {
@@ -154,10 +151,9 @@ def test_traces_receivers(ctx, execs):
         remote_app_data=remote_app_data,
         local_app_data=local_app_data,
     )
-    container = Container(name="otelcol", can_connect=True, execs=execs)
     state_in = State(
         relations=[data_sink],
-        containers=[container],
+        containers=otelcol_container,
     )
     # WHEN any event executes the reconciler
     state_out: State = ctx.run(ctx.on.update_status(), state_in)
@@ -171,7 +167,7 @@ def test_traces_receivers(ctx, execs):
     check_valid_pipelines(cfg)
 
 
-def test_traces_exporters(ctx, execs):
+def test_traces_exporters(ctx, otelcol_container):
     """Scenario: Fan-out tracing architecture to Tempo."""
     # GIVEN a relation to a Tempo charm
     remote_app_data = {
@@ -199,10 +195,9 @@ def test_traces_exporters(ctx, execs):
         remote_app_data=remote_app_data,
         local_app_data=local_app_data,
     )
-    container = Container(name="otelcol", can_connect=True, execs=execs)
     state_in = State(
         relations=[data_sink],
-        containers=[container],
+        containers=otelcol_container,
     )
     # WHEN any event executes the reconciler
     state_out: State = ctx.run(ctx.on.update_status(), state_in)

@@ -12,7 +12,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     TLSCertificatesRequiresV4,
 )
 from helpers import get_otelcol_file
-from ops.testing import Container, Relation, State
+from ops.testing import Relation, State
 
 from constants import (
     CONFIG_PATH,
@@ -30,11 +30,10 @@ def no_certs_in_receivers(otelcol_config: dict):
     )
 
 
-def test_no_tls_certificates_relation(ctx, execs):
+def test_no_tls_certificates_relation(ctx, otelcol_container):
     """Scenario: Otelcol deployed without tls-certificates relation."""
     # GIVEN otelcol deployed in isolation
-    container = Container(name="otelcol", can_connect=True, execs=execs)
-    state_out = ctx.run(ctx.on.update_status(), State(containers=[container]))
+    state_out = ctx.run(ctx.on.update_status(), State(containers=otelcol_container))
     # THEN the config file doesn't include "key_file" nor "cert_file"
     assert no_certs_in_receivers(get_otelcol_file(state_out, ctx, CONFIG_PATH))
     # AND WHEN telemetry sources (e.g. flog) join to create a receiver
@@ -44,34 +43,32 @@ def test_no_tls_certificates_relation(ctx, execs):
     )
     state_in = State(
         relations=[data_source],
-        containers=[container],
+        containers=otelcol_container,
     )
     state_out = ctx.run(ctx.on.update_status(), state_in)
     # THEN receivers in the config file don't include "key_file" nor "cert_file"
     assert no_certs_in_receivers(get_otelcol_file(state_out, ctx, CONFIG_PATH))
 
 
-def test_waiting_for_cert(ctx, execs):
+def test_waiting_for_cert(ctx, otelcol_container):
     """Scenario: a tls-certificates relation joined, but we didn't get the cert yet."""
     # GIVEN otelcol deployed in isolation
-    container = Container(name="otelcol", can_connect=True, execs=execs)
     # WHEN a tls-certificates relation joins but the CA didn't reply with a cert yet
     ssc = Relation(
         endpoint="receive-server-cert",
         interface="tls-certificate",
     )
-    state_in = State(relations=[ssc], containers=[container])
+    state_in = State(relations=[ssc], containers=otelcol_container)
     state_out = ctx.run(ctx.on.update_status(), state=state_in)
     # THEN the otelcol pebble service is stopped
     assert not state_out.get_container("otelcol").services["otelcol"].is_running()
 
 
 def test_transitioned_from_http_to_https_to_http(
-    ctx, execs, cert_obj, private_key, server_cert, ca_cert
+    ctx, otelcol_container, cert_obj, private_key, server_cert, ca_cert
 ):
     """Scenario: a tls-certificates relation joins and is later removed."""
     # GIVEN otelcol has received a cert
-    container = Container(name="otelcol", can_connect=True, execs=execs)
     ssc = Relation(
         endpoint="receive-server-cert",
         interface="tls-certificate",
@@ -83,7 +80,7 @@ def test_transitioned_from_http_to_https_to_http(
             0: {"endpoint": '{"url": "http://fqdn-0:3100/loki/api/v1/push"}'},
         },
     )
-    state_in = State(relations=[ssc, data_sink], containers=[container])
+    state_in = State(relations=[ssc, data_sink], containers=otelcol_container)
     # Note: We patch the cert creation process on disk since it requires a dynamic cert, CSR, CA,
     # and cert chain in the remote app databag
     with (
@@ -108,7 +105,7 @@ def test_transitioned_from_http_to_https_to_http(
         assert protocols[protocol]["tls"]["cert_file"] == SERVER_CERT_PATH
         assert protocols[protocol]["tls"]["key_file"] == SERVER_CERT_PRIVATE_KEY_PATH
     # WHEN the tls-certificates relation is removed
-    state_in = State(relations=[data_sink], containers=[container])
+    state_in = State(relations=[data_sink], containers=otelcol_container)
     state_out = ctx.run(ctx.on.update_status(), state=state_in)
     # THEN the config file doesn't include "key_file" nor "cert_file" for all receivers
     otelcol_config = get_otelcol_file(state_out, ctx, CONFIG_PATH)
@@ -123,10 +120,9 @@ def test_transitioned_from_http_to_https_to_http(
 
 
 @pytest.mark.skip(reason="https://github.com/canonical/operator/issues/1858")
-def test_https_endpoint_is_provided(ctx, execs, cert_obj, private_key):
+def test_https_endpoint_is_provided(ctx, otelcol_container, cert_obj, private_key):
     """Scenario: Otelcol provides other charms its TLS endpoint."""
     # GIVEN otelcol is in TLS mode
-    container = Container(name="otelcol", can_connect=True, execs=execs)
     ssc = Relation(
         endpoint="receive-server-cert",
         interface="tls-certificate",
@@ -135,7 +131,7 @@ def test_https_endpoint_is_provided(ctx, execs, cert_obj, private_key):
         endpoint="receive-loki-logs",
         interface="loki_push_api",
     )
-    state_in = State(relations=[ssc, data_source], containers=[container])
+    state_in = State(relations=[ssc, data_source], containers=otelcol_container)
     # WHEN a relation_changed event on the "receive-loki-logs" endpoint fires
     with (
         patch.object(TLSCertificatesRequiresV4, "_find_available_certificates", return_value=None),

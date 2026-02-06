@@ -228,7 +228,7 @@ def test_blocked_status_when_scaled_without_ingress(ctx, otelcol_container):
 
     # THEN the charm is Blocked
     assert out.unit_status.name == "blocked"
-    assert "Enable ingress" in out.unit_status.message
+    assert "Ingress missing" in out.unit_status.message
 
     # AND WHEN otelcol is scaled to 2 units with ingress relation
     ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})

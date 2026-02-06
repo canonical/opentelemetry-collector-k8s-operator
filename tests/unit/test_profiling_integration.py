@@ -2,7 +2,7 @@ import json
 from unittest.mock import patch
 
 import pytest
-from ops.testing import Container, Relation, State
+from ops.testing import Relation, State
 
 from charms.tls_certificates_interface.v4.tls_certificates import (
     TLSCertificatesRequiresV4,
@@ -28,13 +28,10 @@ def tls_mock(cert_obj, private_key):
         yield
 
 
-# TODO: Replace Container(name="otelcol", can_connect=True, execs=execs) with the otelcol_container fixture
 @pytest.mark.parametrize("relation_joined", (True, False))
-def test_waiting_for_send_profiles_endpoint(ctx, execs, relation_joined):
+def test_waiting_for_send_profiles_endpoint(ctx, otelcol_container, relation_joined):
     """Scenario: a send_profiles relation joined, but we didn't get the grpc endpoint yet."""
     # GIVEN otelcol deployed in isolation
-    container = Container(name="otelcol", can_connect=True, execs=execs)
-
     # WHEN a send_profiles relation joins but pyroscope didn't reply with an endpoint yet,
     # or the relation didn't join yet at all
     relations = (
@@ -47,7 +44,7 @@ def test_waiting_for_send_profiles_endpoint(ctx, execs, relation_joined):
         else {}
     )
 
-    state_in = State(relations=relations, containers=[container])
+    state_in = State(relations=relations, containers=otelcol_container)
     state_out = ctx.run(ctx.on.update_status(), state=state_in)
 
     # THEN the pebble layer command and check contain no feature gate
@@ -60,11 +57,9 @@ def test_waiting_for_send_profiles_endpoint(ctx, execs, relation_joined):
 
 
 @pytest.mark.parametrize("relation_joined", (True, False))
-def test_waiting_for_receive_profiles_endpoint(ctx, execs, relation_joined):
+def test_waiting_for_receive_profiles_endpoint(ctx, otelcol_container, relation_joined):
     """Scenario: a receive_profiles relation joined."""
     # GIVEN otelcol deployed in isolation
-    container = Container(name="otelcol", can_connect=True, execs=execs)
-
     # WHEN a receive_profiles relation joins
     state_in = State(
         relations={
@@ -72,7 +67,7 @@ def test_waiting_for_receive_profiles_endpoint(ctx, execs, relation_joined):
                 endpoint="receive-profiles",
             )
         },
-        containers=[container],
+        containers=otelcol_container,
     )
     state_out = ctx.run(ctx.on.update_status(), state=state_in)
 
@@ -90,11 +85,9 @@ def test_waiting_for_receive_profiles_endpoint(ctx, execs, relation_joined):
 
 @pytest.mark.parametrize("insecure_skip_verify", (True, False))
 @pytest.mark.parametrize("remote_insecure", (True, False))
-def test_send_profiles_integration(ctx, execs, insecure_skip_verify, remote_insecure):
+def test_send_profiles_integration(ctx, otelcol_container, insecure_skip_verify, remote_insecure):
     """Scenario: a profiling relation joined and sent us a grpc endpoint."""
     # GIVEN otelcol deployed in isolation
-    container = Container(name="otelcol", can_connect=True, execs=execs)
-
     pyro_url = "my.fqdn.cluster.local:12345"
     # WHEN a profiling relation joins and pyroscope sent an endpoint
     send_profiles = Relation(
@@ -106,7 +99,7 @@ def test_send_profiles_integration(ctx, execs, insecure_skip_verify, remote_inse
     )
     state_in = State(
         relations=[send_profiles],
-        containers=[container],
+        containers=otelcol_container,
         config={"tls_insecure_skip_verify": insecure_skip_verify},
     )
     state_out = ctx.run(ctx.on.update_status(), state=state_in)
@@ -136,16 +129,14 @@ def test_send_profiles_integration(ctx, execs, insecure_skip_verify, remote_inse
 
 @patch("socket.getfqdn", return_value="localhost")
 @pytest.mark.parametrize("insecure_skip_verify", (True, False))
-def test_receive_profiles_integration(sock_mock, ctx, execs, insecure_skip_verify):
+def test_receive_profiles_integration(sock_mock, ctx, otelcol_container, insecure_skip_verify):
     """Scenario: a receive-profiles relation joined."""
     # GIVEN otelcol deployed in isolation
-    container = Container(name="otelcol", can_connect=True, execs=execs)
-
     # WHEN a receive-profiles relation joins and pyroscope sent an endpoint
     receive_profiles = Relation(endpoint="receive-profiles")
     state_in = State(
         relations=[receive_profiles],
-        containers=[container],
+        containers=otelcol_container,
         config={"tls_insecure_skip_verify": insecure_skip_verify},
         leader=True,
     )
@@ -174,11 +165,9 @@ def test_receive_profiles_integration(sock_mock, ctx, execs, insecure_skip_verif
 
 
 @pytest.mark.parametrize("insecure_skip_verify", (True, False))
-def test_profiling_integration_tls(ctx, execs, insecure_skip_verify, tls_mock):
+def test_profiling_integration_tls(ctx, otelcol_container, insecure_skip_verify, tls_mock):
     """Scenario: a profiling relation joined and sent us a grpc endpoint."""
     # GIVEN otelcol deployed with self-signed-certs
-    container = Container(name="otelcol", can_connect=True, execs=execs)
-
     ssc = Relation(
         endpoint="receive-server-cert",
         interface="tls-certificate",
@@ -194,7 +183,7 @@ def test_profiling_integration_tls(ctx, execs, insecure_skip_verify, tls_mock):
     )
     state_in = State(
         relations=[profiling, ssc],
-        containers=[container],
+        containers=otelcol_container,
         config={"tls_insecure_skip_verify": insecure_skip_verify},
     )
     state_out = ctx.run(ctx.on.update_status(), state=state_in)
