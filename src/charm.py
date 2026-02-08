@@ -37,6 +37,21 @@ from constants import (
 logger = logging.getLogger(__name__)
 
 
+def _resolve_scheme(external_url: Optional[str], tls: bool) -> str:
+    """Determine the final scheme based on availability.
+
+    Args:
+        external_url: The external URL if ingress is available
+        tls: Whether TLS is enabled internally
+
+    Returns:
+        The resolved URL scheme ('http' or 'https')
+    """
+    if external_url:
+        return urlparse(external_url).scheme
+    return "https" if tls else "http"
+
+
 def charm_address(
     container: Container, ingress: integrations.TraefikRouteRequirer
 ) -> integrations.Address:
@@ -58,7 +73,7 @@ def charm_address(
         else None
     )
     resolved_url = external_url if external_url else internal_url
-    resolved_scheme = urlparse(external_url).scheme if external_url else "https" if tls else "http"
+    resolved_scheme = _resolve_scheme(external_url, tls)
 
     return integrations.Address(
         ingress=integrations.ingress_ready(ingress),
@@ -192,14 +207,16 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             "global_scrape_interval": cast(str, self.config.get("global_scrape_interval")),
             "global_scrape_timeout": cast(str, self.config.get("global_scrape_timeout")),
         }
-        for name, global_config in global_configs.items():
-            pattern = r"^\d+[ywdhms]$"
-            match = re.fullmatch(pattern, global_config)
-            if not match:
-                self.unit.status = BlockedStatus(
-                    f"The {name} config requires format: '\\d+[ywdhms]'."
-                )
-                return
+        pattern = r"^\d+[ywdhms]$"
+        invalid_config = next(
+            (name for name, cfg in global_configs.items() if not re.fullmatch(pattern, cfg)),
+            None,
+        )
+        if invalid_config:
+            self.unit.status = BlockedStatus(
+                f"The {invalid_config} config requires format: '\\d+[ywdhms]'."
+            )
+            return
 
         # Create the config manager
         config_manager = ConfigManager(

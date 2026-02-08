@@ -66,11 +66,35 @@ from constants import (
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
-from otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider, ProtocolType
+from otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider, ProtocolType, TelemetryType
 
 logger = logging.getLogger(__name__)
 
 ProfilingEndpoint = namedtuple("ProfilingEndpoint", "endpoint, insecure")
+
+# OTLP configuration constants
+RECEIVE_OTLP_SUPPORTED_TELEMETRIES = [TelemetryType.metrics]
+SEND_OTLP_SUPPORTED_PROTOCOLS = list(ProtocolType)
+
+
+def _write_cert_file(path: PathProtocol, content: str) -> None:
+    """Write certificate file with parent directory creation.
+
+    Args:
+        path: The path where the certificate file should be written
+        content: The certificate content to write
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+
+
+def _cleanup_cert_file(path: PathProtocol) -> None:
+    """Remove certificate file if it exists.
+
+    Args:
+        path: The path of the certificate file to remove
+    """
+    path.unlink(missing_ok=True)
 
 
 def cleanup():
@@ -492,8 +516,7 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
         charm,
         protocol_ports={"http": Port.otlp_http.value},
         relation_name=RECEIVE_OTLP_ENDPOINT,
-        # TODO: Add more telemetries here once tested/supported
-        supported_telemetries=["metrics"],
+        supported_telemetries=[t.value for t in RECEIVE_OTLP_SUPPORTED_TELEMETRIES],
     )
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_provider", otlp_provider)
@@ -510,7 +533,7 @@ def send_otlp(charm: CharmBase) -> Dict[int, Dict[str, OtlpEndpoint]]:
     This provides otelcol with the remote's OTLP endpoint for each relation.
     """
     otlp_consumer = OtlpConsumer(
-        charm, relation_name=SEND_OTLP_ENDPOINT, protocols=list(ProtocolType)
+        charm, relation_name=SEND_OTLP_ENDPOINT, protocols=[p.value for p in SEND_OTLP_SUPPORTED_PROTOCOLS]
     )
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_consumer", otlp_consumer)
@@ -593,18 +616,15 @@ def receive_server_cert(
         if not private_key:
             logger.debug("TLS disabled: Private key is not available")
 
-        server_cert_path.unlink() if server_cert_path.exists() else None
-        private_key_path.unlink() if private_key_path.exists() else None
-        root_ca_cert_path.unlink() if root_ca_cert_path.exists() else None
+        _cleanup_cert_file(server_cert_path)
+        _cleanup_cert_file(private_key_path)
+        _cleanup_cert_file(root_ca_cert_path)
         return sha256("")
 
     # Push the certificate and key to disk
-    private_key_path.parent.mkdir(parents=True, exist_ok=True)
-    private_key_path.write_text(str(private_key))
-    server_cert_path.parent.mkdir(parents=True, exist_ok=True)
-    server_cert_path.write_text(str(provider_certificate.certificate.raw))
-    root_ca_cert_path.parent.mkdir(parents=True, exist_ok=True)
-    root_ca_cert_path.write_text(str(provider_certificate.ca.raw))
+    _write_cert_file(private_key_path, str(private_key))
+    _write_cert_file(server_cert_path, str(provider_certificate.certificate.raw))
+    _write_cert_file(root_ca_cert_path, str(provider_certificate.ca.raw))
 
     logger.info("Certificates and private key have been pushed to disk")
 

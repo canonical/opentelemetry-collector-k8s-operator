@@ -53,6 +53,10 @@ class TelemetryType(str, Enum):
     """OTLP traces data."""
 
 
+# Cached set of telemetry types for efficient validation
+_TELEMETRY_TYPES = {t.value for t in TelemetryType}
+
+
 class ProtocolPort(BaseModel):
     """A pydantic model for OTLP protocols and their associated port."""
 
@@ -103,7 +107,7 @@ class OtlpConsumer(Object):
         for endpoint in endpoints:
             # Filter out any unsupported telemetry types before validation
             endpoint["telemetries"] = [
-                t for t in endpoint.get("telemetries", []) if t in set(TelemetryType)
+                t for t in endpoint.get("telemetries", []) if t in _TELEMETRY_TYPES
             ]
             try:
                 otlp_endpoints.append(OtlpEndpoint.model_validate(endpoint))
@@ -119,7 +123,7 @@ class OtlpConsumer(Object):
         return databag
 
     def get_remote_otlp_endpoints(self) -> Dict[int, Dict[str, OtlpEndpoint]]:
-        """Return a mapping of relation ID to a mapping of unit name to OtlpProviderAppData.
+        """Return a mapping of relation ID to app name to OTLP endpoint.
 
         For each remote unit's list of OtlpEndpoints:
             - If a telemetry type is not supported, then the endpoint is accepted, but the
@@ -127,8 +131,8 @@ class OtlpConsumer(Object):
             - If the endpoint contains an unsupported protocol it is ignored.
             - The first available (and supported) endpoint is returned.
 
-        The returned structure is as follows:
-        {rel-n: OtlpProviderAppData([OtlpEndpoint, ...]), ...}
+        Returns:
+            Dict mapping relation ID -> {app_name -> OtlpEndpoint}
         """
         aggregate = {}
         for rel in self.model.relations[self._relation_name]:

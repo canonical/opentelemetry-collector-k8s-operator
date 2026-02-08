@@ -398,24 +398,16 @@ class ConfigManager:
                     "insecure": insecure,
                     "insecure_skip_verify": self._insecure_skip_verify,
                 }
-                if otlp_endpoint.protocol == "grpc":
-                    self.config.add_component(
-                        Component.exporter,
-                        f"otlp/rel-{rel_id}/{unit}",
-                        {"endpoint": otlp_endpoint.endpoint, "tls": tls_config},
-                        pipelines=[
-                            f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
-                        ],
-                    )
-                elif otlp_endpoint.protocol == "http":
-                    self.config.add_component(
-                        Component.exporter,
-                        f"otlphttp/rel-{rel_id}/{unit}",
-                        {"endpoint": otlp_endpoint.endpoint, "tls": tls_config},
-                        pipelines=[
-                            f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
-                        ],
-                    )
+                exporter_type = "otlp" if otlp_endpoint.protocol == "grpc" else "otlphttp"
+                pipelines = [
+                    f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
+                ]
+                self.config.add_component(
+                    Component.exporter,
+                    f"{exporter_type}/rel-{rel_id}/{unit}",
+                    {"endpoint": otlp_endpoint.endpoint, "tls": tls_config},
+                    pipelines=pipelines,
+                )
 
     def add_traces_ingestion(
         self,
@@ -602,7 +594,17 @@ class ConfigManager:
         This method parses the 'processors' configuration option and adds it to
         the OpenTelemetry Collector configuration.
         """
-        for processor_name, processor_config in yaml.safe_load(processors_raw).items():
+        try:
+            processors = yaml.safe_load(processors_raw)
+        except yaml.YAMLError as e:
+            logger.error(f"Failed to parse processors YAML: {e}")
+            return
+
+        if not isinstance(processors, dict):
+            logger.error(f"processors config must be a YAML dict, got {type(processors).__name__}")
+            return
+
+        for processor_name, processor_config in processors.items():
             self.config.add_component(
                 Component.processor,
                 f"{processor_name}/{self._unit_name}/_custom",
