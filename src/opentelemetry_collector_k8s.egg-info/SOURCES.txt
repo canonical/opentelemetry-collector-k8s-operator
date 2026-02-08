@@ -1,0 +1,14 @@
+LICENSE
+README.md
+pyproject.toml
+src/charm.py
+src/config_builder.py
+src/config_manager.py
+src/constants.py
+src/integrations.py
+src/otlp.py
+src/opentelemetry_collector_k8s.egg-info/PKG-INFO
+src/opentelemetry_collector_k8s.egg-info/SOURCES.txt
+src/opentelemetry_collector_k8s.egg-info/dependency_links.txt
+src/opentelemetry_collector_k8s.egg-info/requires.txt
+src/opentelemetry_collector_k8s.egg-info/top_level.txt

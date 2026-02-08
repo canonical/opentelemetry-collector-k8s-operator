@@ -601,7 +601,7 @@ class ConfigManager:
             return
 
         if not isinstance(processors, dict):
-            logger.error(f"processors config must be a YAML dict, got {type(processors).__name__}")
+            logger.error(f"processors config must be a dictionary, got {type(processors).__name__}")
             return
 
         for processor_name, processor_config in processors.items():

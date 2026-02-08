@@ -1,0 +1,31 @@
+Metadata-Version: 2.4
+Name: opentelemetry-collector-k8s
+Version: 0.0
+Requires-Python: ~=3.12.0
+License-File: LICENSE
+Requires-Dist: ops[tracing]>=3.1
+Requires-Dist: pyyaml
+Requires-Dist: urllib3
+Requires-Dist: jsonschema
+Requires-Dist: cryptography
+Requires-Dist: lightkube>=0.11
+Requires-Dist: cosl
+Requires-Dist: pydantic
+Requires-Dist: charmlibs-pathops
+Requires-Dist: charmed-service-mesh-helpers>=0.2.0
+Requires-Dist: lightkube-extensions
+Provides-Extra: dev
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: codespell; extra == "dev"
+Requires-Dist: pyright; extra == "dev"
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: coverage[toml]; extra == "dev"
+Requires-Dist: juju<=3.3.0,>=3.0; extra == "dev"
+Requires-Dist: websockets<14.0; extra == "dev"
+Requires-Dist: minio; extra == "dev"
+Requires-Dist: ops[testing]; extra == "dev"
+Requires-Dist: sh; extra == "dev"
+Requires-Dist: jubilant; extra == "dev"
+Requires-Dist: tenacity; extra == "dev"
+Requires-Dist: pytest-asyncio; extra == "dev"
+Dynamic: license-file
