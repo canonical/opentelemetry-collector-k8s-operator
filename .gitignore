@@ -13,3 +13,4 @@ sqlite-static
 # Charm-specific
 requirements*.txt
 version
+*.egg-info/
