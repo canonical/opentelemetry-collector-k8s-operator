@@ -66,9 +66,11 @@ from constants import (
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
-from otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider, ProtocolType
+from otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider, ProtocolType, TelemetryType
 
 logger = logging.getLogger(__name__)
+RECEIVE_OTLP_SUPPORTED_TELEMETRIES = [TelemetryType.metrics.value]
+SEND_OTLP_SUPPORTED_PROTOCOLS = [p.value for p in ProtocolType]
 
 ProfilingEndpoint = namedtuple("ProfilingEndpoint", "endpoint, insecure")
 
@@ -493,7 +495,7 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
         protocol_ports={"http": Port.otlp_http.value},
         relation_name=RECEIVE_OTLP_ENDPOINT,
         # TODO: Add more telemetries here once tested/supported
-        supported_telemetries=["metrics"],
+        supported_telemetries=RECEIVE_OTLP_SUPPORTED_TELEMETRIES,
     )
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_provider", otlp_provider)
@@ -510,7 +512,7 @@ def send_otlp(charm: CharmBase) -> Dict[int, Dict[str, OtlpEndpoint]]:
     This provides otelcol with the remote's OTLP endpoint for each relation.
     """
     otlp_consumer = OtlpConsumer(
-        charm, relation_name=SEND_OTLP_ENDPOINT, protocols=list(ProtocolType)
+        charm, relation_name=SEND_OTLP_ENDPOINT, protocols=SEND_OTLP_SUPPORTED_PROTOCOLS
     )
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_consumer", otlp_consumer)
