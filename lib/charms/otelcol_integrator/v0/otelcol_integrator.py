@@ -14,7 +14,7 @@ between charms.
 
 This library provides three main components:
 
-- **OtelcolIntegratorRelationData**: Data model for validation
+- **OtelcolIntegratorProviderAppData**: Data model for validation
 - **OtelcolIntegratorProviderRelationUpdater**: Provider-side relation updates
 - **OtelcolIntegratorRequirer**: Requirer-side configuration retrieval
 
@@ -27,12 +27,12 @@ to other charms.
 
 ```python
 from charms.otelcol_integrator.v0.otelcol_integrator import (
-    OtelcolIntegratorRelationData,
+    OtelcolIntegratorProviderAppData,
     OtelcolIntegratorProviderRelationUpdater,
 )
 
 # 1. Create and validate your configuration data
-config_data = OtelcolIntegratorRelationData(
+config_data = OtelcolIntegratorProviderAppData(
     config_yaml='''
 exporters:
   splunk_hec:
@@ -94,7 +94,7 @@ configs = self.requirer.retrieve_external_configs()
 
 ## Data Validation
 
-The `OtelcolIntegratorRelationData` model automatically validates:
+The `OtelcolIntegratorProviderAppData` model automatically validates:
 
 - **config_yaml**: Must be valid YAML
 - **Secret URIs**: Must follow format `secret://<model-uuid>/<secret-id>/<key>?render=<inline|file>`
@@ -108,7 +108,7 @@ Invalid data will raise a `ValidationError` with a descriptive message.
 
 ```python
 # The secret token will be fetched and embedded directly in the config
-config_data = OtelcolIntegratorRelationData(
+config_data = OtelcolIntegratorProviderAppData(
     config_yaml='''
 receivers:
   prometheus:
@@ -124,7 +124,7 @@ receivers:
 
 ```python
 # The secret will be written to a file, path replaces the URI
-config_data = OtelcolIntegratorRelationData(
+config_data = OtelcolIntegratorProviderAppData(
     config_yaml='''
 exporters:
   otlp:
@@ -161,12 +161,12 @@ import logging
 import re
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Set, Literal, Any
+from typing import Dict, List, Set, Literal, Any, Optional
 from urllib.parse import urlparse, parse_qs
 
 import yaml
 from pydantic import BaseModel, field_validator
-from ops import Application, Model, Relation, SecretNotFoundError
+from ops import Application, Model, ModelError, Relation, SecretNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +318,7 @@ class SecretURI(BaseModel):
         return f"secret://{self.model_uuid}/{self.secret_id}/{self.key}?render={self.render}"
 
 
-class OtelcolIntegratorRelationData(BaseModel):
+class OtelcolIntegratorProviderAppData(BaseModel):
     """Model representing data shared through external-config relation.
 
     Attributes:
@@ -391,7 +391,7 @@ class OtelcolIntegratorProviderRelationUpdater:
     def update_relations_data(
         application: Application,
         relations: List[Relation],
-        data: OtelcolIntegratorRelationData,
+        data: OtelcolIntegratorProviderAppData,
     ) -> None:
         """Update relation data with validated configuration.
 
@@ -436,6 +436,64 @@ class OtelcolIntegratorRequirer:
         """Get mapping of file paths to secret content for file-based secrets."""
         return self._file_manager.tracked_files
 
+    def _validate_and_parse_relation_data(
+        self, relation: Relation
+    ) -> Optional["OtelcolIntegratorProviderAppData"]:
+        """Validate and parse relation data from a single relation.
+
+        Args:
+            relation: The relation to validate and parse data from.
+
+        Returns:
+            Validated OtelcolIntegratorProviderAppData if successful, None otherwise.
+        """
+        if not (app_data := relation.data.get(relation.app)):
+            return None
+
+        try:
+            pipelines_json = app_data.get("pipelines", "[]")
+            pipelines = json.loads(pipelines_json)
+        except json.JSONDecodeError as e:
+            logger.warning("Skipping relation %d: invalid pipelines - %s", relation.id, e)
+            return None
+
+        try:
+            relation_data = OtelcolIntegratorProviderAppData(
+                config_yaml=app_data.get("config_yaml", ""),
+                pipelines=pipelines
+            )
+        except ValueError as e:
+            logger.warning("Skipping relation %d: invalid data - %s", relation.id, e)
+            return None
+
+        return relation_data
+
+    def _process_relation(self, relation: Relation) -> Optional[Dict[str, Any]]:
+        """Process a single relation: validate data and resolve secrets.
+
+        Args:
+            relation: The relation to process.
+
+        Returns:
+            Dictionary with config_yaml and pipelines if successful, None otherwise.
+        """
+        if not (relation_data := self._validate_and_parse_relation_data(relation)):
+            return None
+
+        try:
+            config_yaml = self._secret_resolver.resolve(
+                relation_data.config_yaml,
+                self._file_manager
+            )
+        except ValueError as e:
+            logger.warning("Skipping relation %d: secret resolution failed - %s", relation.id, e)
+            return None
+
+        return {
+            "config_yaml": config_yaml,
+            "pipelines": relation_data.pipelines
+        }
+
     def retrieve_external_configs(
         self,
     ) -> List[Dict[str, Any]]:
@@ -456,39 +514,8 @@ class OtelcolIntegratorRequirer:
             return config
 
         for relation in relations:
-            if not (app_data := relation.data.get(relation.app)):
-                continue
-
-            try:
-                # Parse JSON and validate
-                pipelines_json = app_data.get("pipelines", "[]")
-                pipelines = json.loads(pipelines_json)
-            except json.JSONDecodeError as e:
-                logger.warning("Skipping relation %d: invalid pipelines - %s", relation.id, e)
-                continue
-
-            try:
-                relation_data = OtelcolIntegratorRelationData(
-                    config_yaml=app_data.get("config_yaml", ""),
-                    pipelines=pipelines
-                )
-            except ValueError as e:
-                logger.warning("Skipping relation %d: invalid data - %s", relation.id, e)
-                continue
-
-            try:
-                config_yaml = self._secret_resolver.resolve(
-                    relation_data.config_yaml,
-                    self._file_manager
-                )
-            except ValueError as e:
-                logger.warning("Skipping relation %d: secret resolution failed - %s", relation.id, e)
-                continue
-
-            config.append({
-                "config_yaml": config_yaml,
-                "pipelines": relation_data.pipelines
-            })
+            if config_dict := self._process_relation(relation):
+                config.append(config_dict)
 
         return config
 
@@ -638,7 +665,7 @@ class _SecretResolver:
             except SecretNotFoundError:
                 logger.error("Secret not found: %s", secret_id)
                 secrets_cache[secret_id] = {}
-            except Exception as e:
+            except ModelError as e:
                 logger.error("Failed to fetch secret %s: %s", secret_id, e)
                 secrets_cache[secret_id] = {}
 
@@ -661,7 +688,11 @@ def extract_secret_uris(config_yaml: str) -> Set[str]:
         Set of unique base secret URIs (secret://model-uuid/secret-id)
     """
     secret_pattern = SECRET_URI_PATTERN_COMP
-    return set(secret_pattern.findall(config_yaml))
+
+    if secret_ids := set(secret_pattern.findall(config_yaml)):
+        logger.debug("Found %d secret URI(s) in configuration", len(secret_ids))
+
+    return secret_ids
 
 
 def _extract_secret_references(config_yaml: str) -> Set[str]:
