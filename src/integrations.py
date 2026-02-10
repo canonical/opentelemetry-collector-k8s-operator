@@ -61,16 +61,20 @@ from constants import (
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
-    RECEIVE_OTLP_ENDPOINT,
-    SEND_OTLP_ENDPOINT,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
-from otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider, ProtocolType, TelemetryType
+from otlp import (
+    OtlpConsumer,
+    OtlpEndpoint,
+    OtlpProvider,
+    ProtocolType,
+    TelemetryType,
+    DEFAULT_PROVIDER_RELATION_NAME,
+    DEFAULT_CONSUMER_RELATION_NAME,
+)
 
 logger = logging.getLogger(__name__)
-RECEIVE_OTLP_SUPPORTED_TELEMETRIES = [TelemetryType.metrics.value]
-SEND_OTLP_SUPPORTED_PROTOCOLS = [p.value for p in ProtocolType]
 
 ProfilingEndpoint = namedtuple("ProfilingEndpoint", "endpoint, insecure")
 
@@ -469,8 +473,8 @@ def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
     This function only checks relations for the current charm, i.e. one level deep. If there is
     another charm in between these applications, but is still cyclic, then it will not be caught.
     """
-    receive_relations = charm.model.relations.get(RECEIVE_OTLP_ENDPOINT, [])
-    send_relations = charm.model.relations.get(SEND_OTLP_ENDPOINT, [])
+    receive_relations = charm.model.relations.get(DEFAULT_PROVIDER_RELATION_NAME, [])
+    send_relations = charm.model.relations.get(DEFAULT_CONSUMER_RELATION_NAME, [])
 
     if not receive_relations or not send_relations:
         return False
@@ -493,16 +497,15 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     otlp_provider = OtlpProvider(
         charm,
         protocol_ports={"http": Port.otlp_http.value},
-        relation_name=RECEIVE_OTLP_ENDPOINT,
         # TODO: Add more telemetries here once tested/supported
-        supported_telemetries=RECEIVE_OTLP_SUPPORTED_TELEMETRIES,
+        telemetries=[TelemetryType.metrics.value],
     )
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_provider", otlp_provider)
     otlp_provider.update_endpoints(url=resolved_url)
 
 
-def send_otlp(charm: CharmBase) -> Dict[int, Dict[str, OtlpEndpoint]]:
+def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     """Instantiate the OtlpConsumer.
 
     Supports:
@@ -512,7 +515,9 @@ def send_otlp(charm: CharmBase) -> Dict[int, Dict[str, OtlpEndpoint]]:
     This provides otelcol with the remote's OTLP endpoint for each relation.
     """
     otlp_consumer = OtlpConsumer(
-        charm, relation_name=SEND_OTLP_ENDPOINT, protocols=SEND_OTLP_SUPPORTED_PROTOCOLS
+        charm,
+        protocols=[p.value for p in ProtocolType],
+        telemetries=[TelemetryType.metrics.value],
     )
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_consumer", otlp_consumer)

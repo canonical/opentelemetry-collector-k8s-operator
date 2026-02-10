@@ -87,7 +87,9 @@ def test_add_log_ingestion():
     config_manager.add_log_ingestion()
     # THEN it exists in the loki receiver config
     config = dict(
-        sorted(config_manager.config._config["receivers"]["loki/receive-loki-logs/otelcol/0"].items())
+        sorted(
+            config_manager.config._config["receivers"]["loki/receive-loki-logs/otelcol/0"].items()
+        )
     )
     expected_config = dict(sorted(expected_loki_ingestion_cfg.items()))
     assert config == expected_config
@@ -197,62 +199,44 @@ def test_add_otlp_forwarding():
     )
 
     # WHEN the OTLP providers for multiple relations have provided the preferred protocols
-    remote_0 = "remote-unit/0"
-    remote_1 = "remote-unit/1"
+    unit_name = "otelcol/0"
     config_manager.add_otlp_forwarding(
         relation_map={
-            0: {
-                remote_0: OtlpEndpoint(
-                    **{
-                        "protocol": "grpc",
-                        "endpoint": "https://1.2.3.4:grpc-port",
-                        "telemetries": ["metrics", "traces"],
-                    }
-                )
-            },
-            1: {
-                remote_0: OtlpEndpoint(
-                    **{
-                        "protocol": "grpc",
-                        "endpoint": "http://host-1:grpc-port",
-                        "telemetries": ["logs"],
-                    }
-                ),
-                remote_1: OtlpEndpoint(
-                    **{
-                        "protocol": "http",
-                        "endpoint": "http://host-1:http-port",
-                        "telemetries": ["metrics"],
-                    }
-                )
-            },
-            2: {
-                remote_0: OtlpEndpoint(
-                    **{
-                        "protocol": "grpc",
-                        "endpoint": "https://host-2:grpc-port",
-                        "telemetries": ["logs", "traces"],
-                    }
-                )
-            },
+            0: OtlpEndpoint(
+                **{
+                    "protocol": "grpc",
+                    "endpoint": "https://1.2.3.4:grpc-port",
+                    "telemetries": ["metrics", "traces"],
+                }
+            ),
+            1: OtlpEndpoint(
+                **{
+                    "protocol": "http",
+                    "endpoint": "http://host-1:http-port",
+                    "telemetries": ["logs"],
+                }
+            ),
+            2: OtlpEndpoint(
+                **{
+                    "protocol": "grpc",
+                    "endpoint": "https://host-2:grpc-port",
+                    "telemetries": ["logs", "traces"],
+                }
+            ),
         }
     )
 
     # THEN the exporter config contains appropriate "otlp" and "otlphttp" exporters
     expected_exporters = {
-        f"otlp/rel-0/{remote_0}": {
+        f"otlp/rel-0/{unit_name}": {
             "endpoint": "https://1.2.3.4:grpc-port",
             "tls": {"insecure": False, "insecure_skip_verify": True},
         },
-        f"otlp/rel-1/{remote_0}": {
-            "endpoint": "http://host-1:grpc-port",
-            "tls": {"insecure": True, "insecure_skip_verify": True},
-        },
-        f"otlphttp/rel-1/{remote_1}": {
+        f"otlphttp/rel-1/{unit_name}": {
             "endpoint": "http://host-1:http-port",
             "tls": {"insecure": True, "insecure_skip_verify": True},
         },
-        f"otlp/rel-2/{remote_0}": {
+        f"otlp/rel-2/{unit_name}": {
             "endpoint": "https://host-2:grpc-port",
             "tls": {"insecure": False, "insecure_skip_verify": True},
         },
@@ -261,15 +245,15 @@ def test_add_otlp_forwarding():
     expected_pipelines = {
         "logs/otelcol/0": {
             "receivers": ["otlp/otelcol/0"],
-            "exporters": [f"otlp/rel-1/{remote_0}", f"otlp/rel-2/{remote_0}"],
+            "exporters": [f"otlphttp/rel-1/{unit_name}", f"otlp/rel-2/{unit_name}"],
         },
         "metrics/otelcol/0": {
             "receivers": ["otlp/otelcol/0"],
-            "exporters": [f"otlp/rel-0/{remote_0}", f"otlphttp/rel-1/{remote_1}"],
+            "exporters": [f"otlp/rel-0/{unit_name}"],
         },
         "traces/otelcol/0": {
             "receivers": ["otlp/otelcol/0"],
-            "exporters": [f"otlp/rel-0/{remote_0}", f"otlp/rel-2/{remote_0}"],
+            "exporters": [f"otlp/rel-0/{unit_name}", f"otlp/rel-2/{unit_name}"],
         },
     }
     assert config_manager.config._config["exporters"] == expected_exporters
