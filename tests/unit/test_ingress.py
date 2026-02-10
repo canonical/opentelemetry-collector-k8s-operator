@@ -13,22 +13,6 @@ from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
 
 
-def test_external_url_in_databag(ctx, otelcol_container):
-    # WHEN traefik ingress is related to otelcol
-    receive_logs_endpoint = Relation("receive-loki-logs")
-    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
-    state = State(
-        relations=[ingress, receive_logs_endpoint], containers=otelcol_container, leader=True
-    )
-
-    out = ctx.run(ctx.on.relation_created(receive_logs_endpoint), state)
-
-    # THEN external_url is present in receive-loki-logs relation databag
-    receive_logs_out = out.get_relations(receive_logs_endpoint.endpoint)[0]
-    expected_data = {"url": f"http://1.2.3.4:{Port.loki_http.value}/loki/api/v1/push"}
-    assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data
-
-
 @patch("socket.getfqdn", lambda: "1.2.3.4")
 def test_traefik_sent_config(ctx, otelcol_container):
     """Scenario: Otelcol deployed without tls-certificates relation."""
@@ -145,3 +129,36 @@ def test_ingress_config_middleware_tls(ctx, otelcol_container):
                 "scheme": "https",
             }
         }
+
+
+@patch("socket.getfqdn", new=lambda *args: "fqdn")
+def test_loki_url_in_databag(ctx, otelcol_container):
+    # WHEN traefik ingress is related to otelcol
+    receive_logs_endpoint = Relation("receive-loki-logs")
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
+    state = State(
+        relations=[ingress, receive_logs_endpoint], containers=otelcol_container, leader=True
+    )
+
+    # AND WHEN the ingress relation is created
+    out_1 = ctx.run(ctx.on.relation_created(ingress), state)
+
+    # THEN ingress URL is present in receive-loki-logs relation databag
+    receive_logs_out = out_1.get_relations(receive_logs_endpoint.endpoint)[0]
+    expected_data = {"url": f"http://1.2.3.4:{Port.loki_http.value}/loki/api/v1/push"}
+    assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data
+
+    # AND WHEN the receive-loki-logs relation is created
+    out_2 = ctx.run(ctx.on.relation_created(receive_logs_endpoint), state)
+
+    # THEN ingress URL is present in receive-loki-logs relation databag
+    receive_logs_out = out_2.get_relations(receive_logs_endpoint.endpoint)[0]
+    expected_data = {"url": f"http://1.2.3.4:{Port.loki_http.value}/loki/api/v1/push"}
+    assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data
+
+    # AND WHEN ingress is removed
+    out_3 = ctx.run(ctx.on.relation_broken(ingress), state)
+    # THEN the internal URL is present in receive-loki-logs relation databag
+    receive_logs_out = out_3.get_relations(receive_logs_endpoint.endpoint)[0]
+    expected_data = {"url": f"http://fqdn:{Port.loki_http.value}/loki/api/v1/push"}
+    assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data

@@ -7,14 +7,15 @@ import logging
 import os
 import re
 import socket
+
 from typing import Any, Dict, List, Optional, cast
+from urllib.parse import urlparse
 
 from charmlibs.pathops import ContainerPath
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     KubernetesComputeResourcesPatch,
     adjust_resource_requirements,
 )
-from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl import JujuTopology, MandatoryRelationPairs
 from lightkube.models.core_v1 import ResourceRequirements
 from ops import BlockedStatus, CharmBase, Container, StatusBase, main
@@ -37,32 +38,31 @@ from constants import (
 
 logger = logging.getLogger(__name__)
 
+def charm_address(container: Container, ingress: integrations.TraefikRouteRequirer) -> integrations.Address:
+    """Return the Address dataclass from charm context.
 
-def is_tls_ready(container: Container) -> bool:
-    """Return True if the server cert and private key are present on disk."""
-    return container.exists(path=SERVER_CERT_PATH) and container.exists(
-        path=SERVER_CERT_PRIVATE_KEY_PATH
+    Args:
+        container: An ops.Container where the TLS certificates exist
+        ingress: A TraefikRouteRequirer containing ingress context
+
+    Returns:
+        the Address dataclass summarizing the charm's networking context
+    """
+    tls = integrations.is_tls_ready(container)
+    internal_scheme = "https" if tls else "http"
+    internal_url = f"{internal_scheme}://{socket.getfqdn()}"
+    external_url = (
+        f"{ingress.scheme}://{ingress.external_host}" if integrations.ingress_ready(ingress) else None
     )
+    resolved_url = external_url if external_url else internal_url
+    resolved_scheme = urlparse(external_url).scheme if external_url else "https" if tls else "http"
 
-
-def scheme(container: Container) -> str:
-    """Return the URI scheme that should be used when communicating with this unit."""
-    return "https" if is_tls_ready(container) else "http"
-
-
-def external_url(ingress: TraefikRouteRequirer) -> Optional[str]:
-    """Return the external URL for the ingress, if configured."""
-    return (
-        f"{ingress.scheme}://{ingress.external_host}"
-        if integrations.ingress_ready(ingress)
-        else None
+    return integrations.Address(
+        internal_scheme,
+        internal_url,
+        resolved_scheme,
+        resolved_url,
     )
-
-
-def internal_url(container: Container) -> str:
-    """Return the locally addressable, FQDN based service address."""
-    return f"{scheme(container)}://{socket.getfqdn()}"
-
 
 def refresh_certs(container: Container):
     """Run `update-ca-certificates` to refresh the trusted system certs."""
@@ -152,7 +152,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         integrations.setup_service_mesh(self)
 
         # Ingress integration
-        ingress = integrations.setup_ingress(self, tls=is_tls_ready(container))
+        ingress = integrations.setup_ingress(self, integrations.is_tls_ready(container))
 
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
@@ -169,6 +169,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # This must be run after receive_ca_cert and/or receive_server_cert because they update
         # certs in the /usr/local/share/ca-certificates directory
         refresh_certs(container)
+
+        # Address manager
+        # NOTE: executed after ingress and TLS events
+        otelcol_address = charm_address(container, ingress)
 
         # Global scrape configs
         global_configs = {
@@ -188,7 +192,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         config_manager = ConfigManager(
             global_scrape_interval=global_configs["global_scrape_interval"],
             global_scrape_timeout=global_configs["global_scrape_timeout"],
-            receiver_tls=is_tls_ready(container),
+            receiver_tls=integrations.is_tls_ready(container),
             insecure_skip_verify=cast(bool, self.config.get("tls_insecure_skip_verify")),
             queue_size=cast(int, self.config.get("queue_size")),
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
@@ -201,7 +205,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         feature_gates: Optional[str] = None
 
         # Logs setup
-        integrations.receive_loki_logs(self, is_tls_ready(container), external_url(ingress))
+        integrations.receive_loki_logs(self, otelcol_address)
         loki_endpoints = integrations.send_loki_logs(self)
         if self._incoming_logs:
             config_manager.add_log_ingestion()
@@ -242,7 +246,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Profiling setup
         if self._incoming_profiles:
             config_manager.add_profile_ingestion()
-            integrations.receive_profiles(self, tls=is_tls_ready(container))
+            integrations.receive_profiles(self, integrations.is_tls_ready(container))
         if profiling_endpoints := integrations.send_profiles(self):
             config_manager.add_profile_forwarding(profiling_endpoints)
         if self._incoming_profiles or integrations.send_profiles(self):
@@ -250,7 +254,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Tracing setup
         requested_tracing_protocols = integrations.receive_traces(
-            self, tls=is_tls_ready(container)
+            self, integrations.is_tls_ready(container)
         )
         if self._incoming_traces:
             config_manager.add_traces_ingestion(requested_tracing_protocols)
@@ -313,7 +317,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # TODO: Conditionally open ports based on the otelcol config file rather than opening all ports
         self.unit.set_ports(*[port.value for port in Port])
 
-        if self._has_server_cert_relation and not is_tls_ready(container):
+        if self._has_server_cert_relation and not integrations.is_tls_ready(container):
             # A tls relation to a CA was formed, but we didn't get the cert yet.
             container.stop(SERVICE_NAME)
             self.unit.status = WaitingStatus("CSR sent; otelcol down while waiting for a cert")

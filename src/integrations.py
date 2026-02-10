@@ -10,7 +10,6 @@ from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast, get_args
-from urllib.parse import urlparse
 
 import yaml
 from charmlibs.pathops import PathProtocol
@@ -51,7 +50,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
 )
 from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl import LZMABase64
-from ops import CharmBase, tracing
+from ops import CharmBase, Container, tracing
 from ops.model import Relation
 
 from config_builder import Port, sha256
@@ -64,6 +63,8 @@ from constants import (
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
+    SERVER_CERT_PATH,
+    SERVER_CERT_PRIVATE_KEY_PATH,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,7 +107,7 @@ def receive_external_configs(charm: CharmBase):
     charm.__setattr__("external_secret_files", external_secret_files)
 
 
-def receive_loki_logs(charm: CharmBase, tls: bool, ingress_address: Optional[str]) -> None:
+def receive_loki_logs(charm: CharmBase, address: "Address") -> None:
     """Integrate with other charms via the receive-loki-logs relation endpoint.
 
     This function must be called before `send_loki_logs`, so that the charm
@@ -116,7 +117,7 @@ def receive_loki_logs(charm: CharmBase, tls: bool, ingress_address: Optional[str
     Args:
         charm: the otel-collector charm object
         tls: whether TLS is enabled
-        ingress_address: the ingress address which will provide the push API endpoint
+        address: a dataclass for determining network addressing
     """
     forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
     charm_root = charm.charm_dir.absolute()
@@ -124,11 +125,10 @@ def receive_loki_logs(charm: CharmBase, tls: bool, ingress_address: Optional[str
         charm,
         relation_name="receive-loki-logs",
         port=Port.loki_http.value,
-        scheme=urlparse(ingress_address).scheme if ingress_address else "https" if tls else "http",
+        scheme=address.resolved_scheme,
     )
 
-    if ingress_address:
-        loki_provider.update_endpoint(f"{ingress_address}:{Port.loki_http.value}")
+    loki_provider.update_endpoint(f"{address.resolved_url}:{Port.loki_http.value}")
 
     charm.__setattr__("loki_provider", loki_provider)
     shutil.copytree(
@@ -643,6 +643,28 @@ def _static_ingress_config() -> dict:
 def _build_lb_server_config(scheme: str, port: int) -> List[Dict[str, str]]:
     """Build the server portion of the loadbalancer config of Traefik ingress."""
     return [{"url": f"{scheme}://{socket.getfqdn()}:{port}"}]
+
+
+def is_tls_ready(container: Container) -> bool:
+    """Return True if the server cert and private key are present on disk."""
+    return container.exists(path=SERVER_CERT_PATH) and container.exists(
+        path=SERVER_CERT_PRIVATE_KEY_PATH
+    )
+
+
+@dataclass
+class Address:
+    """Provide address information for the charm.
+
+    This class must be instantiated after all networking-related events have occurred. For example:
+        - ingress events
+        - tls events
+    """
+
+    internal_scheme: str  # Only TLS context
+    internal_url: str  # Only TLS context
+    resolved_scheme: str  # TLS & ingress context
+    resolved_url: str  # TLS & ingress context
 
 
 def _ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> dict:
