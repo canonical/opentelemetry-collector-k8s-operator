@@ -318,7 +318,7 @@ def test_receive_otlp(ctx, otelcol_container):
             {
                 "protocol": "http",
                 "endpoint": "http://fqdn:4318",
-                "telemetries": ["logs", "metrics"],
+                "telemetries": ["metrics"],
             }
         ],
     }

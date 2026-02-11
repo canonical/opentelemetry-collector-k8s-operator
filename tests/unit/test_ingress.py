@@ -176,7 +176,7 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
             {
                 "protocol": "http",
                 "endpoint": f"http://{host}:{Port.otlp_http.value}",
-                "telemetries": ["logs", "metrics"],
+                "telemetries": ["metrics"],
             },
         ]
 

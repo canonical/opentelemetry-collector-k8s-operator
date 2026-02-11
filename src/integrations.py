@@ -491,7 +491,7 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     otlp_provider = OtlpProvider(charm)
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_provider", otlp_provider)
-    otlp_provider.add_endpoint("http", f"{resolved_url}:4318", ["logs", "metrics"])
+    otlp_provider.add_endpoint("http", f"{resolved_url}:4318", ["metrics"])
     otlp_provider.publish()
 
 

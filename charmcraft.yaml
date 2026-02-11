@@ -91,7 +91,7 @@ provides:
       `receive-loki-logs` and/or `receive-remote-write`.
 
       This endpoint currently supports:
-        - HTTP for ["logs", "metrics"]
+        - HTTP for ["metrics"]
 
 requires:
   send-profiles:
