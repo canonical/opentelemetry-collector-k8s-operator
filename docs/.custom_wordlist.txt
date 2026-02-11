@@ -19,6 +19,7 @@ lang
 LaTeX
 latexmk
 Multipass
+otelcol
 otf
 plantuml
 PNG
