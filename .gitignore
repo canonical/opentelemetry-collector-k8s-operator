@@ -11,4 +11,4 @@ cos-tool*
 sqlite-static
 
 # Charm-specific
-version
+./version
