@@ -32,6 +32,7 @@ help:
 	@echo "* clean full environment:                    make clean"
 	@echo "* check links:                               make linkcheck"
 	@echo "* check markdown:                            make lint-md"
+	@echo "* fix markdown:                              make fmt-md"
 	@echo "* check spelling:                            make spelling"
 	@echo "* check spelling (without building again):   make spellcheck"
 	@echo "* check inclusive language:                  make woke"
@@ -109,6 +110,9 @@ pa11y: pa11y-install html
 
 lint-md: pymarkdownlnt-install
 	@. $(VENV); pymarkdownlnt --config $(SPHINXDIR)/.pymarkdown.json scan --recurse --exclude=$(SPHINXDIR)/** $(SOURCEDIR)
+
+fmt-md: pymarkdownlnt-install
+	@. $(VENV); pymarkdownlnt --config $(SPHINXDIR)/.pymarkdown.json fix --recurse --exclude=$(SPHINXDIR)/** $(SOURCEDIR)
 
 vale-install: install
 	@. $(VENV); test -f $(VALE_CONFIG) || python3 $(SPHINXDIR)/get_vale_conf.py

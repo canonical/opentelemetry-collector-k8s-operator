@@ -57,6 +57,7 @@ juju ssh --container otelcol opentelemetry-collector/0 "curl http://localhost:88
 By default, otelcol self-scrapes its metrics and sends it into the configured pipeline, which is useful for operational diagnostics. In some use cases, this self-scraping telemetry is not desired and can be dropped.
 
 A metric signal flowing through the pipeline will look similar to:
+
 ```shell
 ResourceMetrics #0 service.name=otelcol server.address=how-to_7b30903e_otelcol_otelcol/0 service.instance.id=299818a5-2dab-43e2-a6a5-015bab12cc75 server.port= url.scheme=http juju_application=otelcol juju_charm=opentelemetry-collector-k8s juju_model=how-to juju_model_uuid=7b30903e-8941-4a40-864c-0cbbf277c57f juju_unit=otelcol/0 service.version=0.130.1
 ScopeMetrics #0 github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver@0.130.1
@@ -72,7 +73,9 @@ processors:
           metric_names:
             - "scrape_samples_.+"
 ```
+
 Alternatively, you can use an OTTL expression for the entire `otelcol` service:
+
 ```yaml
 processors:
   filter/exclude:
@@ -85,11 +88,13 @@ processors:
 The log bodies may contain successful (`2xx`) status codes. In some use cases, this telemetry is not desired and can be dropped using the filter processor.
 
 A log signal flowing through the pipeline will look similar to:
+
 ```shell
 ResourceLog #0 loki.format=raw
 ScopeLog #0
 {"level":"WARNING", "host":"161.168.71.228", "user-identifier":"-", "datetime":"19/Aug/2025:15:33:08 +0000", "method": "PATCH", "request": "/portals/utilize", "protocol":"HTTP/1.1", "status":205, "bytes":9281, "referer": "http://www.leadportals.info/extensible/world-class/supply-chains", "message": "molestias et impedit ... fugiat error di"} job=juju_test-1-1_5599bed2_flog juju_application=flog juju_charm=flog-k8s juju_model=test-1-1 juju_model_uuid=5599bed2-5711-4573-8dbd-95f76fa60f3e juju_unit=flog/0 container=workload filename=/bin/fake.log loki.attribute.labels=container, job, filename, juju_application, juju_charm, juju_model, juju_model_uuid, juju_unit, snap_name, path
 ```
+
 **Note**: the log body is enclosed in curly braces.
 
 ```yaml
@@ -106,6 +111,7 @@ processors:
 When an application is scaled, we receive traces for multiple units. In some use cases, this telemetry is not desired and can be dropped using the filter processor.
 
 A trace signal flowing through the pipeline will look similar to:
+
 ```shell
 ResourceTraces #0 juju_application=graf juju_charm=grafana-k8s juju_model=how-to juju_model_uuid=7b30903e-8941-4a40-864c-0cbbf277c57f juju_unit=graf/1 process.runtime.description=go version go1.19.13 linux/amd64 service.name=grafana service.version=3.5.5 telemetry.sdk.language=go telemetry.sdk.name=opentelemetry telemetry.sdk.version=1.14.0
 ScopeTraces #0 component-main

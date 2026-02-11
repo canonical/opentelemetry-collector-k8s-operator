@@ -29,16 +29,19 @@ classDef thickStroke stroke-width:2px, stroke:#FFA500;
 With Juju config we use the [otelcol processor config](https://charmhub.io/opentelemetry-collector-k8s/configurations?channel=2/edge#processors) to:
 
 1. Set the minimum severity level to `WARNING`
+
 ```{literalinclude} /how-to/tiered-outgoing-otelcol-bundle.yaml
 :lines: 3, 10-18
 ```
 
 2. Set the minimum severity level to `INFO`
+
 ```{literalinclude} /how-to/tiered-outgoing-otelcol-bundle.yaml
 :lines: 32, 39-46
 ```
 
 3. Redact sensitive log messages and batch
+
 ```{literalinclude} /how-to/tiered-outgoing-otelcol-bundle.yaml
 :lines: 79, 86-91
 ```
@@ -64,16 +67,19 @@ classDef thickStroke stroke-width:2px, stroke:#FFA500;
 With Juju config we use the [otelcol processor config](https://charmhub.io/opentelemetry-collector-k8s/configurations?channel=2/edge#processors) to:
 
 1. Label the log stream as `development` and originating from `region-a`
+
 ```{literalinclude} /how-to/tiered-incoming-otelcol-bundle.yaml
 :lines: 3, 10-16
 ```
 
 2. Label the log stream as `production` and originating from `region-a`
+
 ```{literalinclude} /how-to/tiered-incoming-otelcol-bundle.yaml
 :lines: 53, 60-66
 ```
 
 3. Redact sensitive log messages and batch
+
 ```{literalinclude} /how-to/tiered-incoming-otelcol-bundle.yaml
 :lines: 71, 78-84
 ```
