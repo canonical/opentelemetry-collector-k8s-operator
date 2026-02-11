@@ -6,6 +6,7 @@ multiple OpenTelemetry Collector charms may need to be deployed in a tiered topo
 One such use case is for processing data differently per receiver or exporter.
 
 ## Tiering outgoing data streams
+
 One imaginable scenario is splitting a log stream into [hot and cold data](https://en.wikipedia.org/wiki/Cold_data) based on log levels. For compliance reasons we may also want to implement a [redaction processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/processor/redactionprocessor/README.md) for removing sensitive data. Additionally, the [batch processor](https://github.com/open-telemetry/opentelemetry-collector/blob/main/processor/batchprocessor/README.md) improves efficiency of both log streams via compression. Low-severity levels like `TRACE`, `DEBUG` and `INFO` often have a greater frequency in log streams and indicate normal workload operation. This can be filtered out in a log stream which is sent to long-term (cold) storage to minimize cost while maintaining compliance. Conversely, the hot storage could include `INFO` logs, since storage is short-term, while still filtering out `TRACE` and `DEBUG` logs.
 
 To understand how to filter telemetry with otelcol, refer to the [selectively drop telemetry](selectively-drop-telemetry) documentation or see the [examples for log-level filtering](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/processor/filterprocessor/testdata/config_logs_min_severity.yaml).
@@ -47,6 +48,7 @@ With Juju config we use the [otelcol processor config](https://charmhub.io/opent
 ```
 
 ## Tiering incoming data streams
+
 Another imaginable scenario is classifying log streams prior to ingestion into a common storage destination. Each `flog` log source has unique downstream data processing, useful for environment classification and identification. Both data streams benefit from the `redact & batch` otelcol using the [redaction processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/processor/redactionprocessor/README.md) for compliance reasons and the [batch processor](https://github.com/open-telemetry/opentelemetry-collector/blob/main/processor/batchprocessor/README.md) for efficiency. Additionally, they have an [attributes processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/processor/attributesprocessor/README.md), uniquely configured, to classify the logging source environment.
 
 ```{mermaid}

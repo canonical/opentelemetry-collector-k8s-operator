@@ -2,7 +2,6 @@
 
 Sometimes, from a resource perspective, applications are instrumented with more telemetry than we want to afford. In such cases, we can choose to selectively drop some before they are ingested.
 
-
 ## Filter processor
 
 The [charmed OpenTelemetry Collector](https://charmhub.io/opentelemetry-collector-k8s) (otelcol) is ideal for dropping telemetry due to its processing abilities. It's telemetry format is defined by the OpenTelemetry Protocol (OTLP) with [example JSON files for all signals](https://github.com/open-telemetry/opentelemetry-proto/blob/main/examples/README.md). In OTLP, data is organized hierarchically:
@@ -39,6 +38,7 @@ This allows us to understand the structure of the signal's resources and attribu
 ### Understanding processors
 
 Before reaching an exporter, a signal is first processed by a processor and any modification to signals are propagated throughout the remainder of the pipeline. The [filter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/processor/filterprocessor/README.md) processor supports the [OpenTelemetry Transformation Language (OTTL)](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/pkg/ottl/README.md). This allows us to  define:
+
 1. A function that transforms (or drops) telemetry
 2. Optionally, a condition that determines whether the function is executed.
 
@@ -54,6 +54,7 @@ juju ssh --container otelcol opentelemetry-collector/0 "curl http://localhost:88
 ```
 
 ### Drop metrics
+
 By default, otelcol self-scrapes its metrics and sends it into the configured pipeline, which is useful for operational diagnostics. In some use cases, this self-scraping telemetry is not desired and can be dropped.
 
 A metric signal flowing through the pipeline will look similar to:
@@ -85,6 +86,7 @@ processors:
 ```
 
 ### Drop logs
+
 The log bodies may contain successful (`2xx`) status codes. In some use cases, this telemetry is not desired and can be dropped using the filter processor.
 
 A log signal flowing through the pipeline will look similar to:
@@ -108,6 +110,7 @@ processors:
 ```
 
 ### Drop traces
+
 When an application is scaled, we receive traces for multiple units. In some use cases, this telemetry is not desired and can be dropped using the filter processor.
 
 A trace signal flowing through the pipeline will look similar to:
@@ -131,5 +134,6 @@ processors:
 ```
 
 ## References
+
 - Official docs: [collector configuration](https://opentelemetry.io/docs/collector/configuration/)
 - The [OTLP data model](https://betterstack.com/community/guides/observability/otlp/#the-otlp-data-model)

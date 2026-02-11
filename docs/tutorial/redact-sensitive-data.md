@@ -5,7 +5,6 @@
 For applications that deal with sensitive, private data, the ability to mask certain information in their telemetry is important, in some cases required.
 As OpentelemetryCollector charm serves as the entry point for telemetry data, it can mask logs, traces and metrics before they are sent to Loki, Tempo, Mimir or another destinations.
 
-
 ## Deployment scenario
 
 Let's imagine we need to redact logs and have a deployment with `flog` and `otelcol` in one Juju model, where `flog` sends its logs to Loki through `otelcol`.
