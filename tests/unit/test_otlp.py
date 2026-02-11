@@ -11,22 +11,21 @@ from ops.testing import Relation, State
 from pydantic import ValidationError
 
 from src.integrations import cyclic_otlp_relations_exist
-from src.otlp import OtlpEndpoint, OtlpProviderAppData, ProtocolType, TelemetryType
+from src.otlp import OtlpEndpoint, OtlpProviderAppData
 
 APP_DATA = {
     OtlpProviderAppData.KEY: '{"endpoints": [{"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["logs"]}]}'
 }
+ALL_PROTOCOLS = ["grpc", "http"]
+ALL_TELEMETRIES = ["logs", "metrics", "traces"]
 
 
-# TODO: When moving some of these tests to the lib, we should still assert that this charm
-#       correctly filters to only accepted telems, e.g. metrics
-# TODO: Add an equivalent test in the lib for test_receive_otlp
 @pytest.mark.parametrize(
     "data, error_match",
     [
         (
             {"protocol": "invalid", "endpoint": "http://host:4317", "telemetries": ["logs"]},
-            "Input should be 'grpc' or 'http'",
+            "Input should be 'http' or 'grpc'",
         ),
         (
             {"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["invalid"]},
@@ -60,9 +59,9 @@ def test_provider_app_data_raises_validation_error_lib(data, error_match):
                 ]
             },
             OtlpEndpoint(
-                protocol=ProtocolType.http,
+                protocol="http",
                 endpoint="http://host:4317",
-                telemetries=[TelemetryType.metrics],
+                telemetries=["metrics"],
             ),
         ),
         (
@@ -76,9 +75,9 @@ def test_provider_app_data_raises_validation_error_lib(data, error_match):
                 ]
             },
             OtlpEndpoint(
-                protocol=ProtocolType.http,
+                protocol="http",
                 endpoint="http://host:4317",
-                telemetries=[TelemetryType.logs, TelemetryType.traces],
+                telemetries=["logs", "traces"],
             ),
         ),
     ),
@@ -101,8 +100,8 @@ def test_send_otlp_invalid_lib(ctx, otelcol_container, provides, otlp_endpoint):
         mgr.run()
         # AND WHEN the consumer supports all telemetries
         with (
-            patch.object(mgr.charm.otlp_consumer, "_protocols", new=list(ProtocolType)),
-            patch.object(mgr.charm.otlp_consumer, "_telemetries", new=list(TelemetryType)),
+            patch.object(mgr.charm.otlp_consumer, "_protocols", new=ALL_PROTOCOLS),
+            patch.object(mgr.charm.otlp_consumer, "_telemetries", new=ALL_TELEMETRIES),
         ):
             result = mgr.charm.otlp_consumer.get_remote_otlp_endpoints()[123]
 
@@ -114,49 +113,49 @@ def test_send_otlp_invalid_lib(ctx, otelcol_container, provides, otlp_endpoint):
     "protocols, telemetries, expected",
     [
         (
-            list(ProtocolType),
-            list(TelemetryType),
+            ALL_PROTOCOLS,
+            ALL_TELEMETRIES,
             {
                 123: OtlpEndpoint(
-                    protocol=ProtocolType.http,
+                    protocol="http",
                     endpoint="http://provider-123.endpoint:4318",
-                    telemetries=[TelemetryType.logs, TelemetryType.metrics],
+                    telemetries=["logs", "metrics"],
                 ),
                 456: OtlpEndpoint(
-                    protocol=ProtocolType.grpc,
+                    protocol="grpc",
                     endpoint="http://provider-456.endpoint:4317",
-                    telemetries=[TelemetryType.traces],
+                    telemetries=["traces"],
                 ),
             },
         ),
         (
-            [ProtocolType.grpc],
-            list(TelemetryType),
+            ["grpc"],
+            ALL_TELEMETRIES,
             {
                 456: OtlpEndpoint(
-                    protocol=ProtocolType.grpc,
+                    protocol="grpc",
                     endpoint="http://provider-456.endpoint:4317",
-                    telemetries=[TelemetryType.traces],
+                    telemetries=["traces"],
                 )
             },
         ),
         (
-            list(ProtocolType),
-            [TelemetryType.metrics],
+            ALL_PROTOCOLS,
+            ["metrics"],
             {
                 123: OtlpEndpoint(
-                    protocol=ProtocolType.http,
+                    protocol="http",
                     endpoint="http://provider-123.endpoint:4318",
-                    telemetries=[TelemetryType.metrics],
+                    telemetries=["metrics"],
                 ),
                 456: OtlpEndpoint(
-                    protocol=ProtocolType.http,
+                    protocol="http",
                     endpoint="http://provider-456.endpoint:4318",
-                    telemetries=[TelemetryType.metrics],
+                    telemetries=["metrics"],
                 ),
             },
         ),
-        ([ProtocolType.http], [TelemetryType.traces], {}),
+        (["http"], ["traces"], {}),
     ],
 )
 def test_send_otlp_with_varying_consumer_support_lib(
@@ -168,9 +167,9 @@ def test_send_otlp_with_varying_consumer_support_lib(
             OtlpProviderAppData(
                 endpoints=[
                     OtlpEndpoint(
-                        protocol=ProtocolType.http,
+                        protocol="http",
                         endpoint="http://provider-123.endpoint:4318",
-                        telemetries=[TelemetryType.logs, TelemetryType.metrics],
+                        telemetries=["logs", "metrics"],
                     )
                 ]
             ).model_dump()
@@ -181,14 +180,14 @@ def test_send_otlp_with_varying_consumer_support_lib(
             OtlpProviderAppData(
                 endpoints=[
                     OtlpEndpoint(
-                        protocol=ProtocolType.grpc,
+                        protocol="grpc",
                         endpoint="http://provider-456.endpoint:4317",
-                        telemetries=[TelemetryType.traces],
+                        telemetries=["traces"],
                     ),
                     OtlpEndpoint(
-                        protocol=ProtocolType.http,
+                        protocol="http",
                         endpoint="http://provider-456.endpoint:4318",
-                        telemetries=[TelemetryType.metrics],
+                        telemetries=["metrics"],
                     ),
                 ]
             ).model_dump()
@@ -233,9 +232,9 @@ def test_send_otlp(ctx, otelcol_container):
             OtlpProviderAppData(
                 endpoints=[
                     OtlpEndpoint(
-                        protocol=ProtocolType.http,
+                        protocol="http",
                         endpoint="http://provider-123.endpoint:4318",
-                        telemetries=[TelemetryType.logs, TelemetryType.metrics],
+                        telemetries=["logs", "metrics"],
                     )
                 ]
             ).model_dump()
@@ -246,14 +245,14 @@ def test_send_otlp(ctx, otelcol_container):
             OtlpProviderAppData(
                 endpoints=[
                     OtlpEndpoint(
-                        protocol=ProtocolType.grpc,
+                        protocol="grpc",
                         endpoint="http://provider-456.endpoint:4317",
-                        telemetries=[TelemetryType.traces],
+                        telemetries=["traces"],
                     ),
                     OtlpEndpoint(
-                        protocol=ProtocolType.http,
+                        protocol="http",
                         endpoint="http://provider-456.endpoint:4318",
-                        telemetries=[TelemetryType.metrics],
+                        telemetries=["metrics"],
                     ),
                 ]
             ).model_dump()
@@ -262,14 +261,14 @@ def test_send_otlp(ctx, otelcol_container):
 
     expected_endpoints = {
         456: OtlpEndpoint(
-            protocol=ProtocolType.http,
+            protocol="http",
             endpoint="http://provider-456.endpoint:4318",
-            telemetries=[TelemetryType.metrics],
+            telemetries=["metrics"],
         ),
         123: OtlpEndpoint(
-            protocol=ProtocolType.http,
+            protocol="http",
             endpoint="http://provider-123.endpoint:4318",
-            telemetries=[TelemetryType.metrics],
+            telemetries=["logs", "metrics"],
         ),
     }
 
@@ -319,7 +318,7 @@ def test_receive_otlp(ctx, otelcol_container):
             {
                 "protocol": "http",
                 "endpoint": "http://fqdn:4318",
-                "telemetries": ["metrics"],
+                "telemetries": ["logs", "metrics"],
             }
         ],
     }

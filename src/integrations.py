@@ -68,8 +68,6 @@ from otlp import (
     OtlpConsumer,
     OtlpEndpoint,
     OtlpProvider,
-    ProtocolType,
-    TelemetryType,
     DEFAULT_PROVIDER_RELATION_NAME,
     DEFAULT_CONSUMER_RELATION_NAME,
 )
@@ -488,36 +486,24 @@ def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
 def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     """Instantiate the OtlpProvider.
 
-    Supports:
-        protocols: HTTP
-        telemetries: metrics
-
-    The gRPC protocol is not supported because Traefik does not support it.
+    The gRPC protocol is not supported because Traefik (ingress) does not support it.
     """
-    otlp_provider = OtlpProvider(
-        charm,
-        protocol_ports={"http": Port.otlp_http.value},
-        # TODO: Add more telemetries here once tested/supported
-        telemetries=[TelemetryType.metrics.value],
-    )
+    otlp_provider = OtlpProvider(charm)
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_provider", otlp_provider)
-    otlp_provider.update_endpoints(url=resolved_url)
+    otlp_provider.add_endpoint("http", f"{resolved_url}:4318", ["logs", "metrics"])
+    otlp_provider.publish()
 
 
 def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     """Instantiate the OtlpConsumer.
 
-    Supports:
-        protocols: gRPC, HTTP
-        telemetries: logs, metrics, traces
-
     This provides otelcol with the remote's OTLP endpoint for each relation.
     """
     otlp_consumer = OtlpConsumer(
         charm,
-        protocols=[p.value for p in ProtocolType],
-        telemetries=[TelemetryType.metrics.value],
+        protocols=["grpc", "http"],
+        telemetries=["logs", "metrics"],
     )
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_consumer", otlp_consumer)

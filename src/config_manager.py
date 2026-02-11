@@ -394,14 +394,12 @@ class ConfigManager:
                 "insecure": insecure,
                 "insecure_skip_verify": self._insecure_skip_verify,
             }
-            exporter_type = "otlp" if otlp_endpoint.protocol.value == "grpc" else "otlphttp"
+            exporter_type = "otlp" if otlp_endpoint.protocol == "grpc" else "otlphttp"
             self.config.add_component(
                 Component.exporter,
                 f"{exporter_type}/rel-{rel_id}/{self._unit_name}",
                 {"endpoint": otlp_endpoint.endpoint, "tls": tls_config},
-                pipelines=[
-                    f"{_type.value}/{self._unit_name}" for _type in otlp_endpoint.telemetries
-                ],
+                pipelines=[f"{_type}/{self._unit_name}" for _type in otlp_endpoint.telemetries],
             )
 
     def add_traces_ingestion(
