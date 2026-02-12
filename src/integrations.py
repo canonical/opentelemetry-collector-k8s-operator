@@ -64,6 +64,13 @@ from constants import (
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
+from otlp import (
+    OtlpConsumer,
+    OtlpEndpoint,
+    OtlpProvider,
+    DEFAULT_PROVIDER_RELATION_NAME,
+    DEFAULT_CONSUMER_RELATION_NAME,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -247,8 +254,6 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
         peer_relation_name="peers",
     )
     charm.__setattr__("remote_write", remote_write)
-    # TODO: add alerts from remote write
-    # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
     # TODO: Luca: probably don't need this anymore
     remote_write.reload_alerts()
     return remote_write.endpoints
@@ -460,6 +465,51 @@ def forward_dashboards(charm: CharmBase):
     # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
 
+def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
+    """Check if any application is related on both send-otlp and receive-otlp.
+
+    This function only checks relations for the current charm, i.e. one level deep. If there is
+    another charm in between these applications, but is still cyclic, then it will not be caught.
+    """
+    receive_relations = charm.model.relations.get(DEFAULT_PROVIDER_RELATION_NAME, [])
+    send_relations = charm.model.relations.get(DEFAULT_CONSUMER_RELATION_NAME, [])
+
+    if not receive_relations or not send_relations:
+        return False
+
+    receive_apps = {rel.app.name for rel in receive_relations if rel.app}
+    send_apps = {rel.app.name for rel in send_relations if rel.app}
+
+    return not receive_apps.isdisjoint(send_apps)
+
+
+def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
+    """Instantiate the OtlpProvider.
+
+    The gRPC protocol is not supported because Traefik (ingress) does not support it.
+    """
+    otlp_provider = OtlpProvider(charm)
+    # TODO: We can remove this since the lib doesn't observe events
+    charm.__setattr__("otlp_provider", otlp_provider)
+    otlp_provider.add_endpoint("http", f"{resolved_url}:4318", ["metrics"])
+    otlp_provider.publish()
+
+
+def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
+    """Instantiate the OtlpConsumer.
+
+    This provides otelcol with the remote's OTLP endpoint for each relation.
+    """
+    otlp_consumer = OtlpConsumer(
+        charm,
+        protocols=["grpc", "http"],
+        telemetries=["logs", "metrics"],
+    )
+    # TODO: We can remove this since the lib doesn't observe events
+    charm.__setattr__("otlp_consumer", otlp_consumer)
+    return otlp_consumer.get_remote_otlp_endpoints()
+
+
 # TODO: Luca: move this into the GrafanCloudIntegrator library
 @dataclass
 class CloudIntegratorData:
@@ -630,7 +680,10 @@ def _static_ingress_config() -> dict:
 
 
 def _build_lb_server_config(scheme: str, port: int) -> List[Dict[str, str]]:
-    """Build the server portion of the loadbalancer config of Traefik ingress."""
+    """Build the server portion of the loadbalancer config of Traefik ingress.
+
+    The leader provides the kubernetes service address to Traefik to serve as ingress.
+    """
     return [{"url": f"{scheme}://{socket.getfqdn()}:{port}"}]
 
 
@@ -641,7 +694,7 @@ def is_tls_ready(container: Container) -> bool:
     )
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Address:
     """Provide address information for the charm.
 
@@ -650,6 +703,7 @@ class Address:
         - tls events
     """
 
+    ingress: bool
     internal_scheme: str  # Only TLS context
     internal_url: str  # Only TLS context
     resolved_scheme: str  # TLS & ingress context

@@ -81,6 +81,17 @@ provides:
     interface: profiling
     optional: true
     description: Receive profiles from other charms.
+  receive-otlp:
+    interface: otlp
+    optional: true
+    description: |
+      Receive OTLP data with an OTLP server by publishing all OTLP endpoints for the supported
+      protocols and telemetries of this server. OTLP data can contain multiple telemetries, making
+      this endpoint a modern alternative to having one relation per telemetry-type, e.g.
+      `receive-loki-logs` and/or `receive-remote-write`.
+
+      This endpoint currently supports:
+        - HTTP for ["metrics"]
 
 requires:
   send-profiles:
@@ -152,6 +163,16 @@ requires:
     description: |
       Ingress integration for the Otelcol server, so that cross-model workloads can send their data
       through the ingress. Uses `traefik_route` to open ports on Traefik host for tracing ingesters.
+  send-otlp:
+    interface: otlp
+    optional: true
+    description: |
+      Send OTLP data to an OTLP server by agregating all supported OTLP endpoints offered by an
+      OTLP server. If multiple endpoints are supported, then the first supported one is chosen.
+      
+      This endpoint currently supports:
+        - gRPC for ["logs", "metrics"]
+        - HTTP for ["logs", "metrics"]
 
 peers:
   peers:

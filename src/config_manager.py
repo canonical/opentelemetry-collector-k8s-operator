@@ -2,12 +2,14 @@
 
 import logging
 from typing import Any, Dict, List, Literal, Optional, Set
+from urllib.parse import urlparse
 
 import yaml
 
 from config_builder import Component, ConfigBuilder, Port
 from constants import FILE_STORAGE_DIRECTORY
 from integrations import ProfilingEndpoint
+from otlp import OtlpEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -251,14 +253,14 @@ class ConfigManager:
         """Configure ingesting profiles."""
         self.config.add_component(
             Component.receiver,
-            "otlp",
+            f"otlp/{self._unit_name}",
             {
                 "protocols": {
                     "http": {"endpoint": f"0.0.0.0:{Port.otlp_http.value}"},
                     "grpc": {"endpoint": f"0.0.0.0:{Port.otlp_grpc.value}"},
                 },
             },
-            pipelines=["profiles"],
+            pipelines=[f"profiles/{self._unit_name}"],
         )
 
     def add_profile_forwarding(self, endpoints: List[ProfilingEndpoint]):
@@ -282,7 +284,7 @@ class ConfigManager:
                         "insecure_skip_verify": self._insecure_skip_verify,
                     },
                 },
-                pipelines=["profiles"],
+                pipelines=[f"profiles/{self._unit_name}"],
             )
 
     def add_self_scrape(self, identifier: str, labels: Dict) -> None:
@@ -367,8 +369,38 @@ class ConfigManager:
                 pipelines=[f"metrics/{self._unit_name}"],
             )
 
-        # TODO Receive alert rules via remote write
-        # https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37277
+    def add_otlp_forwarding(self, relation_map: Dict[int, OtlpEndpoint]):
+        """Configure sending OTLP telemetry to an OTLP endpoint.
+
+        There are 2 different OTLP exporters for their respective protocols: gRPC and HTTP. If a
+        gRPC endpoint is provided, it is preferred over the HTTP equivalent.
+
+        Telemetry is sent to all pipelines since OTLP supports all and its computationally
+        inexpensive unless a receiver is connected and receiving telemetry.
+
+        Args:
+            relation_map: a mapping of relation ID to a mapping of unit name to OtlpEndpoint
+        """
+        # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlpexporter
+        # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlphttpexporter
+
+        if not relation_map:
+            return
+
+        # Exporter config
+        for rel_id, otlp_endpoint in relation_map.items():
+            insecure = urlparse(otlp_endpoint.endpoint).scheme == "http"
+            tls_config: Dict[str, Any] = {
+                "insecure": insecure,
+                "insecure_skip_verify": self._insecure_skip_verify,
+            }
+            exporter_type = "otlp" if otlp_endpoint.protocol == "grpc" else "otlphttp"
+            self.config.add_component(
+                Component.exporter,
+                f"{exporter_type}/rel-{rel_id}/{self._unit_name}",
+                {"endpoint": otlp_endpoint.endpoint, "tls": tls_config},
+                pipelines=[f"{_type}/{self._unit_name}" for _type in otlp_endpoint.telemetries],
+            )
 
     def add_traces_ingestion(
         self,

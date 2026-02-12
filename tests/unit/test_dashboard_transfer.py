@@ -32,10 +32,12 @@ def test_dashboard_propagation(ctx, execs):
     consumer0 = Relation(
         "grafana-dashboards-consumer",
         remote_app_data={"dashboards": json.dumps(data[0])},
+        id=100
     )
     consumer1 = Relation(
         "grafana-dashboards-consumer",
         remote_app_data={"dashboards": json.dumps(data[1])},
+        id=101
     )
     # AND otelcol is related to multiple Grafana instances
     provider0 = Relation("grafana-dashboards-provider")
@@ -53,6 +55,6 @@ def test_dashboard_propagation(ctx, execs):
             # THEN each Grafana instance receives otelcol's bundled dashboard and aggregated dashboards
             if "-provider" in rel.endpoint:
                 dashboard_str = rel.local_app_data["dashboards"]
-                assert "file:juju_file:dashboard-0-some-charm-1" in dashboard_str
-                assert "file:juju_file:dashboard-1-some-charm-2" in dashboard_str
+                assert "file:juju_file:dashboard-0-some-charm-100" in dashboard_str
+                assert "file:juju_file:dashboard-1-some-charm-101" in dashboard_str
                 assert "file:overview-dashboard" in dashboard_str

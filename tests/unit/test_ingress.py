@@ -4,6 +4,7 @@
 """Feature: Otelcol server can operate behind an ingress."""
 
 import json
+from typing import Any, List
 from unittest.mock import patch
 
 import yaml
@@ -11,9 +12,12 @@ from ops.testing import Relation, State
 
 from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
+from src.otlp import OtlpProviderAppData
+
+FQDN = "otelcol-0.otelcol-endpoints.otel.svc.cluster.local"
 
 
-@patch("socket.getfqdn", lambda: "1.2.3.4")
+@patch("socket.getfqdn", lambda: FQDN)
 def test_traefik_sent_config(ctx, otelcol_container):
     """Scenario: Otelcol deployed without tls-certificates relation."""
     # GIVEN otelcol deployed in isolation
@@ -67,28 +71,28 @@ def test_traefik_sent_config(ctx, otelcol_container):
             },
             "services": {
                 f"juju-{state.model.name}-{charm_name}-service-health": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:13133"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:13133"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-jaeger-grpc": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:14250"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:14250"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-jaeger-thrift-http": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:14268"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:14268"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-loki-http": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:3500"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:3500"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-metrics": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:8888"}]},
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:8888"}]},
                 },
                 f"juju-{state.model.name}-{charm_name}-service-otlp-grpc": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:4317"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:4317"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-otlp-http": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:4318"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:4318"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-zipkin": {
-                    "loadBalancer": {"servers": [{"url": "http://1.2.3.4:9411"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:9411"}]}
                 },
             },
         },
@@ -131,7 +135,7 @@ def test_ingress_config_middleware_tls(ctx, otelcol_container):
         }
 
 
-@patch("socket.getfqdn", new=lambda *args: "fqdn")
+@patch("socket.getfqdn", lambda: "fqdn")
 def test_loki_url_in_databag(ctx, otelcol_container):
     # WHEN traefik ingress is related to otelcol
     receive_logs_endpoint = Relation("receive-loki-logs")
@@ -162,3 +166,80 @@ def test_loki_url_in_databag(ctx, otelcol_container):
     receive_logs_out = out_3.get_relations(receive_logs_endpoint.endpoint)[0]
     expected_data = {"url": f"http://fqdn:{Port.loki_http.value}/loki/api/v1/push"}
     assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data
+
+
+@patch("socket.getfqdn", new=lambda *args: "fqdn")
+def test_otlp_url_in_databag(ctx, otelcol_container):
+    def expected_endpoints(ingress: bool) -> List[dict[str, Any]]:
+        host = "1.2.3.4" if ingress else "fqdn"
+        return [
+            {
+                "protocol": "http",
+                "endpoint": f"http://{host}:{Port.otlp_http.value}",
+                "telemetries": ["metrics"],
+            },
+        ]
+
+    # WHEN traefik ingress is related to otelcol
+    receive_otlp = Relation("receive-otlp")
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
+    state = State(relations=[ingress, receive_otlp], containers=otelcol_container, leader=True)
+
+    # AND WHEN the ingress relation is created
+    out_1 = ctx.run(ctx.on.relation_created(ingress), state)
+
+    # THEN ingress URL is present in receive-otlp relation databag
+    receive_otlp_out = out_1.get_relations(receive_otlp.endpoint)[0]
+    assert json.loads(receive_otlp_out.local_app_data[OtlpProviderAppData.KEY])[
+        "endpoints"
+    ] == expected_endpoints(ingress=True)
+
+    # AND WHEN the receive-otlp relation is created
+    out_2 = ctx.run(ctx.on.relation_created(receive_otlp), state)
+
+    # THEN ingress URL is present in receive-otlp relation databag
+    receive_otlp_out = out_2.get_relations(receive_otlp.endpoint)[0]
+    assert json.loads(receive_otlp_out.local_app_data[OtlpProviderAppData.KEY])[
+        "endpoints"
+    ] == expected_endpoints(ingress=True)
+
+    # AND WHEN ingress is removed
+    out_3 = ctx.run(ctx.on.relation_broken(ingress), state)
+    # THEN the internal URL is present in receive-otlp relation databag
+    receive_otlp_out = out_3.get_relations(receive_otlp.endpoint)[0]
+    assert json.loads(receive_otlp_out.local_app_data[OtlpProviderAppData.KEY])[
+        "endpoints"
+    ] == expected_endpoints(ingress=False)
+
+
+def test_blocked_status_when_scaled_without_ingress(ctx, otelcol_container):
+    # GIVEN otelcol is not scaled and has no ingress relation
+    state = State(planned_units=1, containers=otelcol_container, leader=True)
+
+    # WHEN any event executes the reconciler
+    out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN the charm is Active
+    assert out.unit_status.name != "blocked"
+
+    # AND WHEN otelcol is scaled to 2 units
+    state = State(planned_units=2, containers=otelcol_container, leader=True)
+    out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN the charm is Blocked
+    assert out.unit_status.name == "blocked"
+    assert "Ingress missing" in out.unit_status.message
+
+    # AND WHEN otelcol is scaled to 2 units with ingress relation
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
+    state = State(
+        planned_units=2,
+        relations=[ingress],
+        containers=otelcol_container,
+        leader=True,
+    )
+    out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN the charm is Active
+    assert out.unit_status.name != "blocked"
+    assert not out.unit_status.message
