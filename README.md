@@ -7,9 +7,12 @@
 Charmed [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetry-collector) operator for Kubernetes.
 
 
-## Design
+## Design and features
 
-This charm is written in the reconciler pattern.
+- This charm is written in the reconciler pattern.
+- A key design choice for the charm is that all telemetry goes to all exporters. Splitting telemetry can still be accomplished by tiering multiple otelcol apps. 
+- The charm uses a custom otelcol distribution, which does not include all of [contrib](https://github.com/open-telemetry/opentelemetry-collector-contrib/).
+  Refer to `manifest.yaml` in the [rock repo](https://github.com/canonical/opentelemetry-collector-rock) for included components.
 
 
 ## Usage
@@ -17,7 +20,9 @@ This charm is written in the reconciler pattern.
 ```bash
 charmcraft pack
 juju deploy ./opentelemetry-collector-k8s_ubuntu@24.04-amd64.charm otelcol \
-  --resource opentelemetry-collector-image=ubuntu/opentelemetry-collector
+  --resource opentelemetry-collector-image=ubuntu/opentelemetry-collector \
+  --queue_size=500 \
+  --extra_alert_labels="environment:dev"
 ```
 
 You can "recreate the world" with a dedicated charm action,
@@ -27,9 +32,9 @@ juju run otelcol/0 reconcile
 ```
 
 
-## Deployment scenarios
+## Sample deployment scenario
 
-### Collection agent, pushing directly to backends
+In this example, otelcol is a collection agent pushing directly to backends.
 
 ```mermaid
 graph LR

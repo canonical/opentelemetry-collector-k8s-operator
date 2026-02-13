@@ -165,9 +165,9 @@ if os.getenv("OPENAPI", ""):
 # - https://launchpad.net/example
 # - https://git.launchpad.net/example
 #
-# html_theme_options = {
-# 'source_edit_link': 'https://github.com/canonical/sphinx-docs-starter-pack',
-# }
+html_theme_options = {
+    'source_edit_link': 'https://github.com/canonical/opentelemetry-collector-k8s-operator',
+}
 
 # Project slug; see https://meta.discourse.org/t/what-is-category-slug/87897
 #

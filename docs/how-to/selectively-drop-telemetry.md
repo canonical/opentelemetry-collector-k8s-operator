@@ -4,7 +4,7 @@ Sometimes, from a resource perspective, applications are instrumented with more 
 
 ## Filter processor
 
-The [charmed OpenTelemetry Collector](https://charmhub.io/opentelemetry-collector-k8s) (otelcol) is ideal for dropping telemetry due to its processing abilities. It's telemetry format is defined by the OpenTelemetry Protocol (OTLP) with [example JSON files for all signals](https://github.com/open-telemetry/opentelemetry-proto/blob/main/examples/README.md). In OTLP, data is organized hierarchically:
+The [charmed OpenTelemetry Collector](https://charmhub.io/opentelemetry-collector-k8s) (otelcol) is ideal for dropping telemetry due to its processing abilities. Its telemetry format is defined by the OpenTelemetry Protocol (OTLP) with [example JSON files for all signals](https://github.com/open-telemetry/opentelemetry-proto/blob/main/examples/README.md). In OTLP, data is organized hierarchically:
 
 ```
 LogsData -> ResourceLogs -> ScopeLogs -> LogRecord
@@ -50,7 +50,7 @@ Incorrectly modifying or dropping telemetry can result in data loss!
 To gain insight on how effective the filter processor is, curl the metrics endpoint for the `otelcol_processor_filter_datapoints_filtered` metric with:
 
 ```shell
-juju ssh --container otelcol opentelemetry-collector/0 "curl http://localhost:8888/metrics" | grep otelcol_processor_filter_datapoints_filtered`
+juju ssh --container otelcol opentelemetry-collector/0 "curl http://localhost:8888/metrics" | grep otelcol_processor_filter_datapoints_filtered
 ```
 
 ### Drop metrics

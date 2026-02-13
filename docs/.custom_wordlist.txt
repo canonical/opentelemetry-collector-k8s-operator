@@ -18,6 +18,7 @@ Intersphinx
 lang
 LaTeX
 latexmk
+loki
 Multipass
 otelcol
 otf
