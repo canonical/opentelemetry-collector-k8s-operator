@@ -156,7 +156,7 @@ class ConfigBuilder:
         #       fighting for port bindings. This is only for relevant for the vm charm
         self.add_component(
             Component.receiver,
-            "otlp",
+            f"otlp/{self._unit_name}",
             {
                 "protocols": {
                     "http": {"endpoint": f"0.0.0.0:{Port.otlp_http.value}"},

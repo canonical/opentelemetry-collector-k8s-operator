@@ -38,7 +38,10 @@ from constants import (
 
 logger = logging.getLogger(__name__)
 
-def charm_address(container: Container, ingress: integrations.TraefikRouteRequirer) -> integrations.Address:
+
+def charm_address(
+    container: Container, ingress: integrations.TraefikRouteRequirer
+) -> integrations.Address:
     """Return the Address dataclass from charm context.
 
     Args:
@@ -52,17 +55,21 @@ def charm_address(container: Container, ingress: integrations.TraefikRouteRequir
     internal_scheme = "https" if tls else "http"
     internal_url = f"{internal_scheme}://{socket.getfqdn()}"
     external_url = (
-        f"{ingress.scheme}://{ingress.external_host}" if integrations.ingress_ready(ingress) else None
+        f"{ingress.scheme}://{ingress.external_host}"
+        if integrations.ingress_ready(ingress)
+        else None
     )
     resolved_url = external_url if external_url else internal_url
     resolved_scheme = urlparse(external_url).scheme if external_url else "https" if tls else "http"
 
     return integrations.Address(
-        internal_scheme,
-        internal_url,
-        resolved_scheme,
-        resolved_url,
+        ingress=integrations.ingress_ready(ingress),
+        internal_scheme=internal_scheme,
+        internal_url=internal_url,
+        resolved_scheme=resolved_scheme,
+        resolved_url=resolved_url,
     )
+
 
 def refresh_certs(container: Container):
     """Run `update-ca-certificates` to refresh the trusted system certs."""
@@ -85,6 +92,7 @@ def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
         pairs={
             "metrics-endpoint": [  # must be paired with:
                 {"send-remote-write"},  # or
+                {"send-otlp"},
                 {"cloud-config"},
             ],
             "receive-loki-logs": [  # must be paired with:
@@ -97,6 +105,15 @@ def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
             ],
             "grafana-dashboards-consumer": [  # must be paired with:
                 {"grafana-dashboards-provider"},  # or
+                {"cloud-config"},
+            ],
+            "receive-otlp": [  # must be paired with:
+                {"send-otlp"},  # or
+                # Technically, this would depend on databag contents for enabled pipelines,
+                # but we keep it simple for now.
+                {"send-traces"},
+                {"send-loki-logs"},
+                {"send-remote-write"},
                 {"cloud-config"},
             ],
         }
@@ -203,6 +220,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         #  pass multiple feature gates into the pebble layer command;
         #  cf: https://github.com/canonical/opentelemetry-collector-k8s-operator/issues/17
         feature_gates: Optional[str] = None
+
+        # OTLP setup
+        integrations.receive_otlp(self, otelcol_address.resolved_url)
+        otlp_endpoints = integrations.send_otlp(self)
+        config_manager.add_otlp_forwarding(otlp_endpoints)
 
         # Logs setup
         integrations.receive_loki_logs(self, otelcol_address)
@@ -329,6 +351,21 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         missing_relations = _get_missing_mandatory_relations(self)
         if missing_relations:
             self.unit.status = BlockedStatus(missing_relations)
+
+        # Cyclic OTLP relations
+        if integrations.cyclic_otlp_relations_exist(self):
+            self.unit.status = BlockedStatus("cyclic OTLP relations exist")
+
+        # Ingress and scaling status
+        if self.model.unit.is_leader():
+            if self.app.planned_units() > 1 and not otelcol_address.ingress:
+                self.unit.status = BlockedStatus(
+                    "Ingress missing - routing only to leader; see debug-log"
+                )
+                logger.warning(
+                    "without ingress and planned_units > 1, all data is forwarded to the leader "
+                    "unit, with nothing sent to non-leader units."
+                )
 
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")
