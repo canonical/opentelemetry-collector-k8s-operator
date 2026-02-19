@@ -257,4 +257,9 @@ def test_forward_otlp_alert_rules(ctx, otelcol_container):
         assert group_count == promql_groups + generic_groups + databag_groups
 
         # THEN the upstream databag rule has topology labels injected
-        assert REMOTE_DATABAG["groups"][0] == rules.promql.alert_rules["groups"][2]
+        expected_group = REMOTE_DATABAG["groups"][0]
+        group_by_name = {
+            group["name"]: group for group in rules.promql.alert_rules.get("groups", [])
+        }
+        assert expected_group["name"] in group_by_name
+        assert expected_group == group_by_name[expected_group["name"]]
