@@ -41,20 +41,18 @@ def test_provider_app_data_raises_validation_error_lib(data, error_match):
     "provides, otlp_endpoint",
     (
         (
-            {
-                "endpoints": [
-                    {
-                        "protocol": "fake",
-                        "endpoint": "http://host:0000",
-                        "telemetries": ["metrics"],
-                    },
-                    {
-                        "protocol": "http",
-                        "endpoint": "http://host:4317",
-                        "telemetries": ["metrics"],
-                    },
-                ]
-            },
+            [
+                {
+                    "protocol": "fake",
+                    "endpoint": "http://host:0000",
+                    "telemetries": ["metrics"],
+                },
+                {
+                    "protocol": "http",
+                    "endpoint": "http://host:4317",
+                    "telemetries": ["metrics"],
+                },
+            ],
             OtlpEndpoint(
                 protocol="http",
                 endpoint="http://host:4317",
@@ -62,15 +60,13 @@ def test_provider_app_data_raises_validation_error_lib(data, error_match):
             ),
         ),
         (
-            {
-                "endpoints": [
-                    {
-                        "protocol": "http",
-                        "endpoint": "http://host:4317",
-                        "telemetries": ["logs", "fake", "traces"],
-                    },
-                ]
-            },
+            [
+                {
+                    "protocol": "http",
+                    "endpoint": "http://host:4317",
+                    "telemetries": ["logs", "fake", "traces"],
+                },
+            ],
             OtlpEndpoint(
                 protocol="http",
                 endpoint="http://host:4317",
@@ -85,7 +81,7 @@ def test_send_otlp_invalid_lib(ctx, otelcol_container, provides, otlp_endpoint):
     provider = Relation(
         "send-otlp",
         id=123,
-        remote_app_data={OtlpProviderAppData.ENDPOINTS: json.dumps(provides)},
+        remote_app_data={"endpoints": json.dumps(provides)},
     )
     state = State(
         relations=[provider],
@@ -159,37 +155,29 @@ def test_send_otlp_with_varying_consumer_support_lib(
     ctx, otelcol_container, protocols, telemetries, expected
 ):
     # GIVEN a remote app provides multiple OtlpEndpoints
-    remote_app_data_1 = {
-        OtlpProviderAppData.ENDPOINTS: json.dumps(
-            OtlpProviderAppData(
-                endpoints=[
-                    OtlpEndpoint(
-                        protocol="http",
-                        endpoint="http://provider-123.endpoint:4318",
-                        telemetries=["logs", "metrics"],
-                    )
-                ]
-            ).model_dump()
-        )
-    }
-    remote_app_data_2 = {
-        OtlpProviderAppData.ENDPOINTS: json.dumps(
-            OtlpProviderAppData(
-                endpoints=[
-                    OtlpEndpoint(
-                        protocol="grpc",
-                        endpoint="http://provider-456.endpoint:4317",
-                        telemetries=["traces"],
-                    ),
-                    OtlpEndpoint(
-                        protocol="http",
-                        endpoint="http://provider-456.endpoint:4318",
-                        telemetries=["metrics"],
-                    ),
-                ]
-            ).model_dump()
-        )
-    }
+    remote_app_data_1 = OtlpProviderAppData(
+        endpoints=[
+            OtlpEndpoint(
+                protocol="http",
+                endpoint="http://provider-123.endpoint:4318",
+                telemetries=["logs", "metrics"],
+            )
+        ]
+    ).to_databag()
+    remote_app_data_2 = OtlpProviderAppData(
+        endpoints=[
+            OtlpEndpoint(
+                protocol="grpc",
+                endpoint="http://provider-456.endpoint:4317",
+                telemetries=["traces"],
+            ),
+            OtlpEndpoint(
+                protocol="http",
+                endpoint="http://provider-456.endpoint:4318",
+                telemetries=["metrics"],
+            ),
+        ]
+    ).to_databag()
 
     # WHEN they are related over the "send-otlp" endpoint
     provider_0 = Relation(
@@ -224,37 +212,29 @@ def test_send_otlp_with_varying_consumer_support_lib(
 
 def test_send_otlp(ctx, otelcol_container):
     # GIVEN a remote app provides multiple OtlpEndpoints
-    remote_app_data_1 = {
-        OtlpProviderAppData.ENDPOINTS: json.dumps(
-            OtlpProviderAppData(
-                endpoints=[
-                    OtlpEndpoint(
-                        protocol="http",
-                        endpoint="http://provider-123.endpoint:4318",
-                        telemetries=["logs", "metrics"],
-                    )
-                ]
-            ).model_dump()
-        )
-    }
-    remote_app_data_2 = {
-        OtlpProviderAppData.ENDPOINTS: json.dumps(
-            OtlpProviderAppData(
-                endpoints=[
-                    OtlpEndpoint(
-                        protocol="grpc",
-                        endpoint="http://provider-456.endpoint:4317",
-                        telemetries=["traces"],
-                    ),
-                    OtlpEndpoint(
-                        protocol="http",
-                        endpoint="http://provider-456.endpoint:4318",
-                        telemetries=["metrics"],
-                    ),
-                ]
-            ).model_dump()
-        )
-    }
+    remote_app_data_1 = OtlpProviderAppData(
+        endpoints=[
+            OtlpEndpoint(
+                protocol="http",
+                endpoint="http://provider-123.endpoint:4318",
+                telemetries=["logs", "metrics"],
+            )
+        ]
+    ).to_databag()
+    remote_app_data_2 = OtlpProviderAppData(
+        endpoints=[
+            OtlpEndpoint(
+                protocol="grpc",
+                endpoint="http://provider-456.endpoint:4317",
+                telemetries=["traces"],
+            ),
+            OtlpEndpoint(
+                protocol="http",
+                endpoint="http://provider-456.endpoint:4318",
+                telemetries=["metrics"],
+            ),
+        ]
+    ).to_databag()
 
     expected_endpoints = {
         456: OtlpEndpoint(

@@ -3,8 +3,6 @@
 
 """Feature: OTLP endpoint handling."""
 
-import json
-
 from helpers import count_src_rules
 from ops.testing import Model, Relation, State
 
@@ -219,13 +217,10 @@ REMOTE_DATABAG = {
 
 def test_forward_otlp_alert_rules(ctx, otelcol_container):
     # GIVEN receive-otlp and send-otlp relations
-    rules_key = OtlpConsumerAppData.RULES
-    rules = {
-        rules_key: {"logql": {"alert_rules": LOKI_RULES}, "promql": {"alert_rules": PROM_RULES}}
-    }
-    rules_model = OtlpConsumerAppData.model_validate(rules).rules
-    remote_app_data = {rules_key: json.dumps(rules_model.model_dump(exclude_none=True))}
-    receiver = Relation("receive-otlp", remote_app_data=remote_app_data)
+    provider_appdata = OtlpConsumerAppData.model_validate(
+        {"rules": {"logql": {"alert_rules": LOKI_RULES}, "promql": {"alert_rules": PROM_RULES}}}
+    )
+    receiver = Relation("receive-otlp", remote_app_data=provider_appdata.to_databag())
     provider_1 = Relation(
         "send-otlp",
         id=123,
@@ -252,16 +247,14 @@ def test_forward_otlp_alert_rules(ctx, otelcol_container):
     for rel in list(state_out.relations):
         if rel.endpoint != "send-otlp":
             continue
-        rules_data = json.loads(rel.local_app_data.get(rules_key, {}))
-        rules = OtlpConsumerAppData.model_validate({rules_key: rules_data}).rules
+        rules = OtlpConsumerAppData.model_validate(rel.local_app_data).rules
 
         assert rules.logql.alert_rules is not None
         assert rules.promql.alert_rules is not None
-        assert len(rules.logql.alert_rules.get("groups", [])) == logql_groups + databag_groups
-        assert (
-            len(rules.promql.alert_rules.get("groups", []))
-            == promql_groups + generic_groups + databag_groups
-        )
+        group_count = len(rules.logql.alert_rules.get("groups", []))
+        assert group_count == logql_groups + databag_groups
+        group_count = len(rules.promql.alert_rules.get("groups", []))
+        assert group_count == promql_groups + generic_groups + databag_groups
 
         # THEN the upstream databag rule has topology labels injected
         assert REMOTE_DATABAG["groups"][0] == rules.promql.alert_rules["groups"][2]

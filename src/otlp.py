@@ -16,11 +16,11 @@ provide OTLP telemetry for Opentelemetry-collector.
 import copy
 import json
 import logging
-from typing import ClassVar, Dict, List, Literal, Optional, Sequence
+from typing import ClassVar, Dict, List, Literal, Optional, Sequence, Union
 
 from cosl.juju_topology import JujuTopology
-from cosl.rules import AlertRules, RecordingRules, generic_alert_groups, RulesModel
-from ops import CharmBase, Relation
+from cosl.rules import AlertRules, RecordingRules, RulesModel, generic_alert_groups
+from ops import CharmBase
 from ops.framework import Object
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
@@ -64,14 +64,11 @@ class OtlpProviderAppData(BaseModel):
     def to_databag(self) -> Dict[str, str]:
         """Serialize model fields for relation app databag storage."""
         payload = self.model_dump(exclude_none=True)
-        return {key: json.dumps(value) for key, value in payload.items()}
+        return {key: json.dumps(value, sort_keys=True) for key, value in payload.items()}
 
 
 class OtlpConsumerAppData(BaseModel):
     """A pydantic model for the OTLP provider's unit databag."""
-
-    # TODO: remove this if we add .update({k,v.model_dump() for k,v in MODEL})
-    RULES: ClassVar[str] = RulesModel.RULES
 
     model_config = ConfigDict(extra="forbid")
 
@@ -87,7 +84,7 @@ class OtlpConsumerAppData(BaseModel):
     def to_databag(self) -> Dict[str, str]:
         """Serialize model fields for relation app databag storage."""
         payload = self.model_dump(exclude_none=True)
-        return {key: json.dumps(value) for key, value in payload.items()}
+        return {key: json.dumps(value, sort_keys=True) for key, value in payload.items()}
 
 
 class OtlpConsumer(Object):
@@ -127,32 +124,27 @@ class OtlpConsumer(Object):
             prometheus_record_rules_path, charm_dir
         )
 
-    def _filter_endpoints(self, otlp_databag: str) -> Optional[OtlpProviderAppData]:
+    def _filter_endpoints(
+        self, endpoints: List[Dict[str, Union[str, List[str]]]]
+    ) -> Optional[OtlpProviderAppData]:
         """Load the OtlpProviderAppData from the given databag string.
 
         For each endpoint in the databag, if it contains unsupported telemetry types, those
         telemetries are filtered out before validation. If an endpoint contains an unsupported
         protocol, or has no supported telemetries, it is skipped entirely.
         """
-        try:
-            data = json.loads(otlp_databag)
-            endpoints_data = data.get("endpoints", [])
-        except json.JSONDecodeError as e:
-            logger.error(f"Consumer failed validation of Provider's OTLP databag: {e}")
-            return None
-
         valid_endpoints = []
         supported_telemetries = set(self._telemetries)
-        for endpoint_data in endpoints_data:
+        for endpoint in endpoints:
             if filtered_telemetries := [
-                t for t in endpoint_data.get("telemetries", []) if t in supported_telemetries
+                t for t in endpoint.get("telemetries", []) if t in supported_telemetries
             ]:
-                endpoint_data["telemetries"] = filtered_telemetries
+                endpoint["telemetries"] = filtered_telemetries
             else:
                 # If there are no supported telemetries for this endpoint, skip it entirely
                 continue
             try:
-                endpoint = OtlpEndpoint.model_validate(endpoint_data)
+                endpoint = OtlpEndpoint.model_validate(endpoint)
             except ValidationError:
                 continue
             valid_endpoints.append(endpoint)
@@ -162,22 +154,16 @@ class OtlpConsumer(Object):
             logger.error(f"OTLP databag failed validation: {e}")
             return None
 
-    def publish(self, relation: Optional[Relation] = None):
+    def publish(self):
         """Triggers programmatically the update of the relation data.
-
-        Args:
-            relation: An optional instance of `class:ops.model.Relation` to update.
-                If not provided, all instances of the `otlp`
-                relation are updated.
 
         There are 2 rules file paths which are loaded from disk and published to the databag. The
         rules files exist in 2 separate directories, distinguished by logql and promql expression
         formats.
         """
         if not self._charm.unit.is_leader():
+            # Only the leader unit can write to app data.
             return
-
-        relations = [relation] if relation else self.model.relations[self._relation_name]
 
         loki_alert_rules = AlertRules(query_type="logql", topology=self._topology)
         prom_alert_rules = AlertRules(query_type="promql", topology=self._topology)
@@ -208,7 +194,7 @@ class OtlpConsumer(Object):
             }
         )
 
-        for relation in relations:
+        for relation in self.model.relations[self._relation_name]:
             relation.data[self._charm.app].update(consumer_appdata.to_databag())
 
     def endpoints(self) -> Dict[int, OtlpEndpoint]:
@@ -220,20 +206,21 @@ class OtlpConsumer(Object):
             - If the endpoint contains an unsupported protocol it is ignored.
             - The first available (and supported) endpoint is returned.
         """
-        endpoints = {}
+        endpoint_map = {}
         for rel in self.model.relations[self._relation_name]:
-            if not (otlp := rel.data[rel.app].get(OtlpProviderAppData.ENDPOINTS)):
+            if not (raw_databag := rel.data[rel.app]):
                 continue
-            if not (app_databag := self._filter_endpoints(otlp)):
+            endpoints = json.loads(raw_databag.get("endpoints") or "[]")
+            if not (app_databag := self._filter_endpoints(endpoints)):
                 continue
 
             # Choose the first valid endpoint in list
             if endpoint_choice := next(
                 (e for e in app_databag.endpoints if e.protocol in self._protocols), None
             ):
-                endpoints[rel.id] = endpoint_choice
+                endpoint_map[rel.id] = endpoint_choice
 
-        return endpoints
+        return endpoint_map
 
 
 class OtlpProvider(Object):
@@ -269,20 +256,13 @@ class OtlpProvider(Object):
             OtlpEndpoint(protocol=protocol, endpoint=endpoint, telemetries=telemetries)
         )
 
-    def publish(self, relation: Optional[Relation] = None) -> None:
-        """Triggers programmatically the update of the relation data.
-
-        Args:
-            relation: An optional instance of `class:ops.model.Relation` to update.
-                If not provided, all instances of the `otlp`
-                relation are updated.
-        """
+    def publish(self) -> None:
+        """Triggers programmatically the update of the relation data."""
         if not self._charm.unit.is_leader():
             # Only the leader unit can write to app data.
             return
 
-        relations = [relation] if relation else self.model.relations[self._relation_name]
-        for relation in relations:
+        for relation in self.model.relations[self._relation_name]:
             provider_appdata = OtlpProviderAppData(endpoints=self._endpoints)
             relation.data[self._charm.app].update(provider_appdata.to_databag())
 
