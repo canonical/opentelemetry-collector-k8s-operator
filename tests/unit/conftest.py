@@ -1,13 +1,15 @@
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-from shutil import copytree
-import pytest
-from ops.testing import Container, Context, Exec
-from ops import ActiveStatus
 from dataclasses import dataclass
+from pathlib import Path
+from shutil import copytree
+from textwrap import dedent
+from unittest.mock import MagicMock, patch
 
+import pytest
+from ops import ActiveStatus
+from ops.testing import Container, Context, Exec
 
 from src.charm import OpenTelemetryCollectorK8sCharm
+from src.config_manager import ConfigManager
 
 CHARM_ROOT = Path(__file__).parent.parent.parent
 
@@ -90,7 +92,6 @@ def cert_obj(server_cert, ca_cert):
 @pytest.fixture
 def sample_ca_cert():
     """Sample CA certificate content for testing (real cert format)."""
-    from textwrap import dedent
     return dedent("""\
         -----BEGIN CERTIFICATE-----
         MIIDXTCCAkWgAwIBAgIJAJC1HiIAZAiIMA0GCSqGSIb3DQEBBQUAMEUxCzAJBgNV
@@ -106,7 +107,6 @@ def sample_ca_cert():
 @pytest.fixture
 def second_ca_cert():
     """Second sample CA certificate for testing multiple certificates."""
-    from textwrap import dedent
     return dedent("""\
         -----BEGIN CERTIFICATE-----
         MIIDXjCCAkYCCQCCKpT1rYK7pzANBgkqhkiG9w0BAQFADCBiDELMAkGA1UEBhMC
@@ -138,7 +138,6 @@ def disconnected_container():
 @pytest.fixture
 def config_manager():
     """Create a ConfigManager instance for testing."""
-    from config_manager import ConfigManager
     return ConfigManager(
         unit_name="test/0",
         global_scrape_interval="15s",

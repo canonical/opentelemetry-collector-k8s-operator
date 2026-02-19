@@ -486,7 +486,8 @@ def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
 def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     """Instantiate the OtlpProvider.
 
-    The gRPC protocol is not supported because Traefik (ingress) does not support it.
+    Define the OTLP endpoints which the charm should publish to the databag. The gRPC protocol is
+    not supported because Traefik (ingress) does not support it.
     """
     otlp_provider = OtlpProvider(charm)
     # TODO: We can remove this since the lib doesn't observe events
@@ -494,20 +495,60 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     otlp_provider.add_endpoint("http", f"{resolved_url}:4318", ["metrics"])
     otlp_provider.publish()
 
+    charm_root = charm.charm_dir.absolute()
+    forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
+    _add_alerts(
+        alerts=otlp_provider.rules(query_type="logql") if forward_alert_rules else {},
+        dest_path=charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
+    )
+    _add_alerts(
+        alerts=otlp_provider.rules(query_type="promql") if forward_alert_rules else {},
+        dest_path=charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
+    )
+
 
 def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     """Instantiate the OtlpConsumer.
 
     This provides otelcol with the remote's OTLP endpoint for each relation.
+
+    Copy the:
+        - local rule files from the src/*_alert_rules directories
+        - aggregated rules from the OtlpConsumer
+
+    to a local path (*_RULES_DEST_PATH directories) within the charm's FS. Since OTLP can handle
+    both logs and metrics, rules can can exist with expressions using formats: promql and logql.
+    These are written to separate paths on disk. Since these paths are wiped on every hook, they
+    can be used as a source of truth for the current state of alert rules for the library to
+    publish to the databag.
     """
+    charm_root = charm.charm_dir.absolute()
     otlp_consumer = OtlpConsumer(
         charm,
         protocols=["grpc", "http"],
         telemetries=["logs", "metrics"],
+        loki_alert_rules_path=charm_root.joinpath(LOKI_RULES_DEST_PATH).as_posix(),
+        prometheus_alert_rules_path=charm_root.joinpath(METRICS_RULES_DEST_PATH).as_posix(),
     )
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_consumer", otlp_consumer)
-    return otlp_consumer.get_remote_otlp_endpoints()
+
+    charm_root = charm.charm_dir.absolute()
+
+    # Rules local to this charm
+    shutil.copytree(
+        charm_root.joinpath(*LOKI_RULES_SRC_PATH.split("/")),
+        charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
+        dirs_exist_ok=True,
+    )
+    shutil.copytree(
+        charm_root.joinpath(*METRICS_RULES_SRC_PATH.split("/")),
+        charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
+        dirs_exist_ok=True,
+    )
+
+    otlp_consumer.publish()
+    return otlp_consumer.endpoints()
 
 
 # TODO: Luca: move this into the GrafanCloudIntegrator library
