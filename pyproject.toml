@@ -12,7 +12,7 @@ dependencies = [
   "jsonschema",
   "cryptography",
   "lightkube>=0.11",
-  "cosl",
+  "cosl @ git+https://github.com/canonical/cos-lib.git@feat/more-rules-methods",
   "pydantic",
   "charmlibs-pathops",
   "charmed-service-mesh-helpers>=0.2.0", # istio-beacon lib requirement"lightkube-extensions@git+https://github.com/canonical/lightkube-extensions.git@main", # istio-beacon lib requirement,
