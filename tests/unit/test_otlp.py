@@ -11,7 +11,7 @@ from ops.testing import Relation, State
 from pydantic import ValidationError
 
 from src.integrations import cyclic_otlp_relations_exist
-from src.otlp import OtlpEndpoint, OtlpProviderAppData
+from charmlibs.otlp import OtlpEndpoint, OtlpProviderAppData
 
 APP_DATA = {
     OtlpProviderAppData.KEY: '{"endpoints": [{"protocol": "grpc", "endpoint": "http://host:4317", "telemetries": ["logs"]}]}'

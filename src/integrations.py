@@ -64,7 +64,7 @@ from constants import (
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
-from otlp import (
+from charmlibs.otlp import (
     OtlpConsumer,
     OtlpEndpoint,
     OtlpProvider,
