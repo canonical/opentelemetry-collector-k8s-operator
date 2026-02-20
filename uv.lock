@@ -206,7 +206,7 @@ wheels = [
 [[package]]
 name = "cosl"
 version = "1.3.1"
-source = { git = "https://github.com/canonical/cos-lib.git?rev=feat%2Fmore-rules-methods#03c7f713c70269df377541227c092d5a14e5f7f4" }
+source = { git = "https://github.com/canonical/cos-lib.git?rev=feat%2Fmore-rules-methods#c63b05cf0684a35771ab13fc4eb600ff65c2d8a1" }
 dependencies = [
     { name = "ops" },
     { name = "pydantic" },

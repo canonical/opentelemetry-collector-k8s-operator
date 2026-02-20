@@ -497,11 +497,11 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     charm_root = charm.charm_dir.absolute()
     forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
     _add_alerts(
-        alerts=otlp_provider.rules(query_type="logql") if forward_alert_rules else {},
+        alerts=otlp_provider.rules("logql", "alerting") if forward_alert_rules else {},
         dest_path=charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
     )
     _add_alerts(
-        alerts=otlp_provider.rules(query_type="promql") if forward_alert_rules else {},
+        alerts=otlp_provider.rules("promql", "alerting") if forward_alert_rules else {},
         dest_path=charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
     )
 

@@ -19,7 +19,8 @@ import logging
 from typing import Dict, List, Literal, Optional, Sequence, Union
 
 from cosl.juju_topology import JujuTopology
-from cosl.rules import AlertRules, RecordingRules, RulesModel, generic_alert_groups, LZMABase64
+from cosl.rules import AlertRules, RecordingRules, RulesModel, generic_alert_groups
+from cosl.utils import LZMABase64
 from ops import CharmBase
 from ops.framework import Object
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
@@ -188,12 +189,12 @@ class OtlpConsumer(Object):
             {
                 "rules": {
                     "logql": {
-                        "alert_rules": loki_alert_rules.as_dict(),
-                        "recording_rules": loki_recording_rules.as_dict(),
+                        "alerting": loki_alert_rules.as_dict(),
+                        "recording": loki_recording_rules.as_dict(),
                     },
                     "promql": {
-                        "alert_rules": prom_alert_rules.as_dict(),
-                        "recording_rules": prom_recording_rules.as_dict(),
+                        "alerting": prom_alert_rules.as_dict(),
+                        "recording": prom_recording_rules.as_dict(),
                     },
                 }
             }
@@ -271,7 +272,7 @@ class OtlpProvider(Object):
             provider_appdata = OtlpProviderAppData(endpoints=self._endpoints)
             relation.data[self._charm.app].update(provider_appdata.to_databag())
 
-    def rules(self, query_type: Literal["logql", "promql"]):
+    def rules(self, query_type: Literal["logql", "promql"], rule_type: Literal["alerting", "recording"]):
         """Fetch alerts for all relations.
 
         A Loki alert rules file consists of a list of "groups". Each
@@ -304,26 +305,29 @@ class OtlpProvider(Object):
             metadata indexed by relation ID.
         """
         alert_rules = AlertRules(query_type, self._topology)
-        alerts = {}
+        rules_map = {}
         for relation in self.model.relations[self._relation_name]:
             if not (raw_data := relation.data[relation.app]):
                 continue
             consumer_appdata = OtlpConsumerAppData.model_validate(raw_data)
 
-            rules_type = getattr(consumer_appdata.rules, alert_rules.query_type, None)
-            if not rules_type:
-                continue
-            if not rules_type.alert_rules:
+            # get rules for the desired query type
+            if not (rules_types := getattr(consumer_appdata.rules, alert_rules.query_type, None)):
                 continue
 
-            alert_rules_data = alert_rules.inject_alert_expr_labels(rules_type.alert_rules)
+            # get rules for the desired type
+            if not (rules := getattr(rules_types, rule_type)):
+                continue
+
+            alert_rules_data = alert_rules.inject_alert_expr_labels(rules)
 
             identifier, topology = alert_rules.get_identifier_by_alert_rules(alert_rules_data)
             if not topology:
                 try:
+                    # TODO: What is this metadata?
                     metadata = json.loads(relation.data[relation.app]["metadata"])
                     identifier = JujuTopology.from_dict(metadata).identifier
-                    alerts[identifier] = alert_rules.tool.apply_label_matchers(alert_rules_data)  # type: ignore
+                    rules_map[identifier] = alert_rules.tool.apply_label_matchers(alert_rules_data)  # type: ignore
 
                 except KeyError as e:
                     logger.debug(
@@ -343,6 +347,6 @@ class OtlpProvider(Object):
                 relation.data[self._charm.app]["event"] = json.dumps({"errors": errmsg})
                 continue
 
-            alerts[identifier] = alert_rules_data
+            rules_map[identifier] = alert_rules_data
 
-        return alerts
+        return rules_map
