@@ -13,6 +13,7 @@ output "endpoints" {
     cloud_config                = "cloud-config",
     receive_server_cert         = "receive-server-cert",
     send_traces                 = "send-traces",
+    send_otlp                   = "send-otlp",
     service_mesh                = "service-mesh",
     require_cmr_mesh            = "require-cmr-mesh",
 
@@ -20,6 +21,7 @@ output "endpoints" {
     receive_loki_logs           = "receive-loki-logs",
     grafana_dashboards_provider = "grafana-dashboards-provider",
     receive_traces              = "receive-traces",
+    receive_otlp                = "receive-otlp",
     provide_cmr_mesh            = "provide-cmr-mesh",
   }
 }
