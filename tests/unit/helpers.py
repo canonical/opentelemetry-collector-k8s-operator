@@ -1,8 +1,8 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-import os
-from typing import List
+
+from typing import Any, Dict, Optional
 
 import yaml
 from ops.testing import Context, State
@@ -18,9 +18,10 @@ def get_otelcol_file(state_out: State, ctx: Context, file_path: str) -> dict:
     return cfg
 
 
-def count_src_rules(paths: List[str]):
-    src_groups = 0
-    for path in paths:
-        if os.path.exists(path):
-            src_groups += len([name for name in os.listdir(path) if name.endswith((".rules"))])
-    return src_groups
+def get_group_by_name(rules: Optional[Dict[str, Any]], name: str) -> Optional[Dict[str, Any]]:
+    if rules is None:
+        return None
+    for group in rules.get("groups", []):
+        if group.get("name") == name:
+            return group
+    return None

@@ -38,6 +38,7 @@ dev = [
   "jubilant",
   "tenacity",
   "pytest-asyncio",
+  "pytest-bdd",
 ]
 
 # Testing tools configuration
