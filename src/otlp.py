@@ -16,10 +16,10 @@ provide OTLP telemetry for Opentelemetry-collector.
 import copy
 import json
 import logging
-from typing import ClassVar, Dict, List, Literal, Optional, Sequence, Union
+from typing import Dict, List, Literal, Optional, Sequence, Union
 
 from cosl.juju_topology import JujuTopology
-from cosl.rules import AlertRules, RecordingRules, RulesModel, generic_alert_groups
+from cosl.rules import AlertRules, RecordingRules, RulesModel, generic_alert_groups, LZMABase64
 from ops import CharmBase
 from ops.framework import Object
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
@@ -47,8 +47,6 @@ class OtlpEndpoint(BaseModel):
 
 class OtlpProviderAppData(BaseModel):
     """A pydantic model for the OTLP provider's unit databag."""
-
-    ENDPOINTS: ClassVar[str] = "endpoints"
 
     model_config = ConfigDict(extra="forbid")
 
@@ -78,13 +76,20 @@ class OtlpConsumerAppData(BaseModel):
     @classmethod
     def _rules_from_json(cls, value):
         if isinstance(value, str):
-            return json.loads(value)
+            decompressed = LZMABase64.decompress(json.dumps(value, sort_keys=True))
+            return json.loads(decompressed)
         return value
 
     def to_databag(self) -> Dict[str, str]:
+        # TODO: Update deccriptions about compress and decompress
         """Serialize model fields for relation app databag storage."""
         payload = self.model_dump(exclude_none=True)
-        return {key: json.dumps(value, sort_keys=True) for key, value in payload.items()}
+        return {
+            key: json.dumps(value, sort_keys=True)
+            if key != "rules"
+            else LZMABase64.compress(json.dumps(value, sort_keys=True))
+            for key, value in payload.items()
+        }
 
 
 class OtlpConsumer(Object):
@@ -333,7 +338,7 @@ class OtlpProvider(Object):
                 )
                 continue
 
-            _, errmsg = alert_rules.tool.validate_alert_rules(alert_rules_data)
+            _, errmsg = alert_rules.tool.validate_alert_rules(alert_rules_data)  # type: ignore[reportCallIssue]
             if errmsg:
                 relation.data[self._charm.app]["event"] = json.dumps({"errors": errmsg})
                 continue

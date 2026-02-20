@@ -1,9 +1,12 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Feature: OTLP endpoint handling."""
+"""Feature: Rules aggregation and forwarding."""
+
+import json
 
 import pytest
+from cosl.rules import LZMABase64
 from helpers import get_group_by_name
 from ops.testing import Model, Relation, State
 
@@ -203,7 +206,7 @@ def otelcol_bundled_promql_alert_rule_labeled():
         ),
     ],
 )
-def test_forward_otlp_alert_rule_counts(ctx, otelcol_container, databag, expected_group_counts):
+def test_forwarded_otlp_alert_rule_counts(ctx, otelcol_container, databag, expected_group_counts):
     # GIVEN receive-otlp and send-otlp relations
     provider_appdata = OtlpConsumerAppData.model_validate(databag)
     receiver = Relation("receive-otlp", remote_app_data=provider_appdata.to_databag())
@@ -243,7 +246,7 @@ def test_forward_otlp_alert_rule_counts(ctx, otelcol_container, databag, expecte
         ),
     ],
 )
-def test_forward_otlp_record_rule_counts(ctx, otelcol_container, databag, expected_group_counts):
+def test_forwarded_otlp_record_rule_counts(ctx, otelcol_container, databag, expected_group_counts):
     # GIVEN receive-otlp and send-otlp relations
     provider_appdata = OtlpConsumerAppData.model_validate(databag)
     receiver = Relation("receive-otlp", remote_app_data=provider_appdata.to_databag())
@@ -273,7 +276,7 @@ def test_forward_otlp_record_rule_counts(ctx, otelcol_container, databag, expect
         )
 
 
-def test_forward_alert_rules_have_topology(
+def test_forwarded_alert_rules_have_topology(
     ctx,
     otelcol_container,
     databag_logql_alert_rule_labeled,
@@ -326,3 +329,37 @@ def test_forward_alert_rules_have_topology(
         group_name = "otelcol_f4d59020_opentelemetry_collector_k8s_AggregatorHostHealth_alerts"
         actual = get_group_by_name(rules.promql.alert_rules, group_name)
         assert actual == generic_promql_alert_rule_labeled
+
+
+def test_forwarded_alert_rules_compression(
+    ctx,
+    otelcol_container,
+):
+    # GIVEN receive-otlp and send-otlp relations
+    databag = {
+        "rules": {"logql": {"alert_rules": LOKI_RULES}, "promql": {"alert_rules": ZOO_RULES}}
+    }
+    provider_appdata = OtlpConsumerAppData.model_validate(databag)
+    receiver = Relation("receive-otlp", remote_app_data=provider_appdata.to_databag())
+    sender_1 = Relation("send-otlp")
+    sender_2 = Relation("send-otlp")
+    state = State(
+        relations=[receiver, sender_1, sender_2],
+        leader=True,
+        containers=otelcol_container,
+        model=Model("otelcol", uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"),
+    )
+
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state=state)
+
+    for rel in list(state_out.relations):
+        if rel.endpoint != "send-otlp":
+            continue
+        raw_data = rel.local_app_data
+        # THEN the databag contains a compressed set of alert rules
+        expected = json.loads(LZMABase64.decompress(raw_data.get("rules", "")))
+        # AND WHEN they are accessed with OtlpConsumerAppData.rules
+        actual = json.loads(OtlpConsumerAppData.model_validate(raw_data).rules.model_dump_json())
+        # THEN they are decompressed
+        assert actual == expected
