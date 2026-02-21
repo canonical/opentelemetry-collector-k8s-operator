@@ -12,7 +12,7 @@ from ops.testing import Relation, State
 
 from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
-from src.otlp import OtlpProviderAppData
+from charmlibs.otlp import OtlpProviderAppData
 
 FQDN = "otelcol-0.otelcol-endpoints.otel.svc.cluster.local"
 
