@@ -486,22 +486,31 @@ def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
 def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     """Instantiate the OtlpProvider.
 
-    Define the OTLP endpoints which the charm should publish to the databag. The gRPC protocol is
-    not supported because Traefik (ingress) does not support it.
+    Define the OTLP endpoints which the charm should publish to the databag.
+    The gRPC protocol is not supported because Traefik (ingress) does not
+    support it.
+
+    The otlp_provider.rules are rules gathered from the related OTLP consumer
+    charms. These rules are saved to a rules aggregation path on disk for their
+    respective expression format
+    This is only applicable if `forward_alert_rules` is enabled in config, which is disabled by default since it's an expensive operation and not all users need it.
     """
     otlp_provider = OtlpProvider(charm)
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_provider", otlp_provider)
-    otlp_provider.add_endpoint("http", f"{resolved_url}:4318", ["metrics"])
+    otlp_provider.add_endpoint(
+        protocol="http", endpoint=f"{resolved_url}:4318", telemetries=["metrics"]
+    )
 
     charm_root = charm.charm_dir.absolute()
-    forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
+    # TODO: Rename the config option to forward_rules? This is breaking people, maybe add a new one and deprecate the old one?
+    forward_rules = cast(bool, charm.config.get("forward_alert_rules"))
     _add_alerts(
-        alerts=otlp_provider.rules("logql", "alerting") if forward_alert_rules else {},
+        alerts=otlp_provider.rules("logql", "alerting") if forward_rules else {},
         dest_path=charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
     )
     _add_alerts(
-        alerts=otlp_provider.rules("promql", "alerting") if forward_alert_rules else {},
+        alerts=otlp_provider.rules("promql", "alerting") if forward_rules else {},
         dest_path=charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
     )
 
@@ -513,15 +522,20 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
 
     This provides otelcol with the remote's OTLP endpoint for each relation.
 
-    Copy the:
-        - local rule files from the src/*_alert_rules directories
-        - aggregated rules from the OtlpConsumer
+    The bundled rule files from the src/*_rules directories are copied to a
+    local path (*_RULES_DEST_PATH directories) within the charm's filesystem.
 
-    to a local path (*_RULES_DEST_PATH directories) within the charm's FS. Since OTLP can handle
-    both logs and metrics, rules can can exist with expressions using formats: promql and logql.
-    These are written to separate paths on disk. Since these paths are wiped on every hook, they
-    can be used as a source of truth for the current state of alert rules for the library to
-    publish to the databag.
+    The `otlp_consumer.publish` then publishes them to the databag. See the
+    publish method's docstring of the otlp_consumer to understand what rules
+    are published to the databag and the mechanism to do so.
+
+    Since these paths are wiped on every hook, they can be used as a source of
+    truth for the current state of rules for the library to publish to the
+    databag.
+
+    This function assumes that receive_otlp is called before, so that the
+    rules from related OTLP consumer charms are already gathered and saved to
+    disk, ready to be published to the databag.
     """
     charm_root = charm.charm_dir.absolute()
     otlp_consumer = OtlpConsumer(
@@ -533,8 +547,6 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     )
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_consumer", otlp_consumer)
-
-    charm_root = charm.charm_dir.absolute()
 
     # Rules local to this charm
     shutil.copytree(

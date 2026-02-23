@@ -178,34 +178,56 @@ def generic_promql_alert_rule_labeled():
 
 
 @pytest.mark.parametrize(
-    "databag, expected_group_counts",
+    "forwarding_enabled, databag, expected_group_counts",
     [
-        # format , databag_groups, generic_groups, bundled_groups, total
-        # logql  , (0)           , (0)           , (0)           , (0)
-        # promql , (1)           , (1)           , (3)           , (5)
-        # (
-        #     {"rules": {"logql": {"alerting": None}, "promql": {"alerting": ZOO_RULES}}},
-        #     {"logql": 0, "promql": 5},
-        # ),
-        # format , databag_groups, generic_groups, bundled_groups, total
-        # logql  , (1)           , (0)           , (0)           , (1)
-        # promql , (1)           , (1)           , (3)           , (5)
+        # format , type      , databag_groups, generic_groups, bundled_groups, total
+        # logql  , alerting  , (1)           , (0)           , (0)           , (1)
+        # logql  , recording , (0)           , (0)           , (0)           , (0)
+        # promql , alerting  , (1)           , (1)           , (3)           , (5)
+        # promql , recording , (0)           , (0)           , (0)           , (0)
         (
+            True,
             {"rules": {"logql": {"alerting": LOKI_RULES}, "promql": {"alerting": ZOO_RULES}}},
-            {"logql": 1, "promql": 5},
+            {"logql": {"alerting": 1, "recording": 0}, "promql": {"alerting": 5, "recording": 0}},
         ),
-        # format , databag_groups, generic_groups, bundled_groups, total
-        # logql  , (1)           , (0)           , (0)           , (1)
-        # promql , (0)           , (1)           , (3)           , (4)
+        # format , type      , databag_groups, generic_groups, bundled_groups, total
+        # logql  , alerting  , (1)           , (0)           , (0)           , (0)
+        # logql  , recording , (0)           , (0)           , (0)           , (0)
+        # promql , alerting  , (1)           , (1)           , (3)           , (4)
+        # promql , recording , (0)           , (0)           , (0)           , (0)
         (
+            False,
+            {"rules": {"logql": {"alerting": LOKI_RULES}, "promql": {"alerting": ZOO_RULES}}},
+            {"logql": {"alerting": 0, "recording": 0}, "promql": {"alerting": 4, "recording": 0}},
+        ),
+        # format , type      , databag_groups, generic_groups, bundled_groups, total
+        # logql  , alerting  , (0)           , (0)           , (0)           , (0)
+        # logql  , recording , (0)           , (0)           , (0)           , (0)
+        # promql , alerting  , (1)           , (1)           , (3)           , (5)
+        # promql , recording , (0)           , (0)           , (0)           , (0)
+        (
+            True,
+            {"rules": {"logql": {"alerting": None}, "promql": {"alerting": ZOO_RULES}}},
+            {"logql": {"alerting": 0, "recording": 0}, "promql": {"alerting": 5, "recording": 0}},
+        ),
+        # format , type      , databag_groups, generic_groups, bundled_groups, total
+        # logql  , alerting  , (1)           , (0)           , (0)           , (1)
+        # logql  , recording , (0)           , (0)           , (0)           , (0)
+        # promql , alerting  , (0)           , (1)           , (3)           , (4)
+        # promql , recording , (0)           , (0)           , (0)           , (0)
+        (
+            True,
             {"rules": {"logql": {"alerting": LOKI_RULES}, "promql": {"alerting": None}}},
-            {"logql": 1, "promql": 4},
+            {"logql": {"alerting": 1, "recording": 0}, "promql": {"alerting": 4, "recording": 0}},
         ),
     ],
 )
-def test_forwarded_otlp_alert_rule_counts(ctx, otelcol_container, databag, expected_group_counts):
-    # TODO: Test also that the forwarding config works
-    # GIVEN receive-otlp and send-otlp relations
+def test_forwarding_otlp_rule_counts(
+    ctx, otelcol_container, forwarding_enabled, databag, expected_group_counts
+):
+    # GIVEN forwarding of alert rules is enabled
+    # * a receive-otlp with rules in the databag
+    # * two send-otlp relations
     provider_appdata = OtlpConsumerAppData.model_validate(databag)
     receiver = Relation("receive-otlp", remote_app_data=provider_appdata.to_databag())
     sender_1 = Relation("send-otlp")
@@ -215,12 +237,14 @@ def test_forwarded_otlp_alert_rule_counts(ctx, otelcol_container, databag, expec
         leader=True,
         containers=otelcol_container,
         model=Model("otelcol", uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"),
+        config={"forward_alert_rules": forwarding_enabled},
     )
 
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state=state)
 
-    # THEN all expected logql and promql alerting rules exist in the databag
+    # THEN all expected rules exist in the databag
+    # AND databag_groups are included/forwarded
     for rel in list(state_out.relations):
         if rel.endpoint != "send-otlp":
             continue
@@ -228,48 +252,24 @@ def test_forwarded_otlp_alert_rule_counts(ctx, otelcol_container, databag, expec
 
         assert rules.logql.alerting is not None
         assert rules.promql.alerting is not None
-        assert len(rules.logql.alerting.get("groups", [])) == expected_group_counts["logql"]
-        assert len(rules.promql.alerting.get("groups", [])) == expected_group_counts["promql"]
-
-
-@pytest.mark.parametrize(
-    "databag, expected_group_counts",
-    [
-        # format , databag_groups, generic_groups, bundled_groups, total
-        # logql  , (0)           , (0)           , (0)           , (0)
-        # promql , (0)           , (0)           , (0)           , (0)
-        (
-            {"rules": {"logql": {"recording": None}, "promql": {"recording": None}}},
-            {"logql": 0, "promql": 0},
-        ),
-    ],
-)
-def test_forwarded_otlp_record_rule_counts(ctx, otelcol_container, databag, expected_group_counts):
-    # GIVEN receive-otlp and send-otlp relations
-    provider_appdata = OtlpConsumerAppData.model_validate(databag)
-    receiver = Relation("receive-otlp", remote_app_data=provider_appdata.to_databag())
-    sender_1 = Relation("send-otlp")
-    sender_2 = Relation("send-otlp")
-    state = State(
-        relations=[receiver, sender_1, sender_2],
-        leader=True,
-        containers=otelcol_container,
-        model=Model("otelcol", uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"),
-    )
-
-    # WHEN any event executes the reconciler
-    state_out = ctx.run(ctx.on.update_status(), state=state)
-
-    # THEN all expected logql and promql recording rules exist in the databag
-    for rel in list(state_out.relations):
-        if rel.endpoint != "send-otlp":
-            continue
-        rules = OtlpConsumerAppData.model_validate(rel.local_app_data).rules
-
         assert rules.logql.recording is not None
         assert rules.promql.recording is not None
-        assert len(rules.logql.recording.get("groups", [])) == expected_group_counts["logql"]
-        assert len(rules.promql.recording.get("groups", [])) == expected_group_counts["promql"]
+        assert (
+            len(rules.logql.alerting.get("groups", []))
+            == expected_group_counts["logql"]["alerting"]
+        )
+        assert (
+            len(rules.promql.alerting.get("groups", []))
+            == expected_group_counts["promql"]["alerting"]
+        )
+        assert (
+            len(rules.logql.recording.get("groups", []))
+            == expected_group_counts["logql"]["recording"]
+        )
+        assert (
+            len(rules.promql.recording.get("groups", []))
+            == expected_group_counts["promql"]["recording"]
+        )
 
 
 def test_forwarded_alert_rules_have_topology(

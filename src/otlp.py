@@ -16,7 +16,7 @@ provide OTLP telemetry for Opentelemetry-collector.
 import copy
 import json
 import logging
-from typing import Dict, List, Literal, Optional, Sequence, Union
+from typing import Dict, List, Literal, Optional, OrderedDict, Sequence, Union
 
 from cosl.juju_topology import JujuTopology
 from cosl.rules import AlertRules, RecordingRules, RulesModel, generic_alert_groups
@@ -67,11 +67,22 @@ class OtlpProviderAppData(BaseModel):
 
 
 class OtlpConsumerAppData(BaseModel):
-    """A pydantic model for the OTLP provider's unit databag."""
+    """A pydantic model for the OTLP consumer's unit databag.
+
+    The rules are compressed when published to databag and decompressed when
+    read to avoid hitting databag size limits for large deployments. An admin
+    can decode the rules using the following command:
+    ```bash
+    <rules-from-show-unit> | base64 -d | xz -d | jq
+    ```
+
+    TODO: Add metadata description
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     rules: RulesModel
+    metadata: Optional[OrderedDict[str, str]] = None
 
     @field_validator("rules", mode="before")
     @classmethod
@@ -81,8 +92,14 @@ class OtlpConsumerAppData(BaseModel):
             return json.loads(decompressed)
         return value
 
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def _metadata_from_json(cls, value):
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
     def to_databag(self) -> Dict[str, str]:
-        # TODO: Update deccriptions about compress and decompress
         """Serialize model fields for relation app databag storage."""
         payload = self.model_dump(exclude_none=True)
         return {
@@ -94,7 +111,24 @@ class OtlpConsumerAppData(BaseModel):
 
 
 class OtlpConsumer(Object):
-    """A class for consuming OTLP endpoints."""
+    """A class for consuming OTLP endpoints.
+
+    Args:
+        charm: The charm instance.
+        relation_name: The name of the relation to use.
+        protocols: The protocols to filter for in the provider's OTLP
+            endpoints.
+        telemetries: The telemetries to filter for in the provider's OTLP
+            endpoints.
+        loki_alert_rules_path: The path to Loki alerting rules provided by this
+            charm.
+        loki_record_rules_path: The path to Loki recording rules provided by
+            this charm.
+        prometheus_alert_rules_path: The path to Prometheus alerting rules
+            provided by this charm.
+        prometheus_record_rules_path: The path to Prometheus recording rules
+            provided by this charm.
+    """
 
     def __init__(
         self,
@@ -103,7 +137,6 @@ class OtlpConsumer(Object):
         protocols: Optional[Sequence[Literal["http", "grpc"]]] = None,
         telemetries: Optional[Sequence[Literal["logs", "metrics", "traces"]]] = None,
         *,
-        forward_rules: bool = True,
         loki_alert_rules_path: str = DEFAULT_LOKI_ALERT_RULES_RELATIVE_PATH,
         loki_record_rules_path: str = DEFAULT_LOKI_RECORD_RULES_RELATIVE_PATH,
         prometheus_alert_rules_path: str = DEFAULT_PROM_ALERT_RULES_RELATIVE_PATH,
@@ -115,29 +148,31 @@ class OtlpConsumer(Object):
         self._protocols = protocols if protocols is not None else []
         self._telemetries = telemetries if telemetries is not None else []
         self._topology = JujuTopology.from_charm(charm)
-        self._forward_rules = forward_rules
         charm_dir = self._charm.charm_dir
         self._loki_alert_rules_path = AlertRules.validate_rules_path(
             loki_alert_rules_path, charm_dir
         )
-        self._loki_record_rules_path = AlertRules.validate_rules_path(
-            loki_record_rules_path, charm_dir
-        )
         self._prom_alert_rules_path = AlertRules.validate_rules_path(
             prometheus_alert_rules_path, charm_dir
         )
-        self._prom_record_rules_path = AlertRules.validate_rules_path(
+        self._loki_record_rules_path = RecordingRules.validate_rules_path(
+            loki_record_rules_path, charm_dir
+        )
+        self._prom_record_rules_path = RecordingRules.validate_rules_path(
             prometheus_record_rules_path, charm_dir
         )
 
     def _filter_endpoints(
         self, endpoints: List[Dict[str, Union[str, List[str]]]]
-    ) -> Optional[OtlpProviderAppData]:
-        """Load the OtlpProviderAppData from the given databag string.
+    ) -> List[OtlpEndpoint]:
+        """Filter out unsupported OtlpEndpoints.
 
-        For each endpoint in the databag, if it contains unsupported telemetry types, those
-        telemetries are filtered out before validation. If an endpoint contains an unsupported
-        protocol, or has no supported telemetries, it is skipped entirely.
+        For each endpoint:
+            - If a telemetry type is not supported, then the endpoint is
+              accepted, but the telemetry is ignored.
+            - If there are no supported telemetries for this endpoint, the
+              endpoint is ignored.
+            - If the endpoint contains an unsupported protocol it is ignored.
         """
         valid_endpoints = []
         supported_telemetries = set(self._telemetries)
@@ -154,37 +189,47 @@ class OtlpConsumer(Object):
             except ValidationError:
                 continue
             valid_endpoints.append(endpoint)
-        try:
-            return OtlpProviderAppData(endpoints=valid_endpoints)
-        except ValidationError as e:
-            logger.error(f"OTLP databag failed validation: {e}")
-            return None
+
+        return valid_endpoints
 
     def publish(self):
         """Triggers programmatically the update of the relation data.
 
-        There are 2 rules file paths which are loaded from disk and published to the databag. The
-        rules files exist in 2 separate directories, distinguished by logql and promql expression
-        formats.
+        The rule files exist in separate directories, distinguished by format
+        (logql|promql) and type (alerting|recording). The charm uses these
+        paths as aggregation points for rules, acting as their source of truth.
+        For each type of rule, the charm may aggregate rules from:
+            - rules bundled in the charm's source code
+            - any rules provided by related charms
+
+        Generic, injected rules (not specific to any charm) are always
+        published. Besides these generic rules, the inclusion of bundled rules
+        and rules from related charms is the responsibility of the charm using
+        the library. Including bundled rules and rules from related charms is
+        achieved by copying these rules to the respective paths within the
+        charm's filesystem and providing those paths to the OtlpConsumer constructor.
         """
         if not self._charm.unit.is_leader():
             # Only the leader unit can write to app data.
             return
 
+        # Define the 4 rule types
         loki_alert_rules = AlertRules(query_type="logql", topology=self._topology)
         prom_alert_rules = AlertRules(query_type="promql", topology=self._topology)
         loki_recording_rules = RecordingRules(query_type="logql", topology=self._topology)
         prom_recording_rules = RecordingRules(query_type="promql", topology=self._topology)
+
+        # Add rules
         prom_alert_rules.add(
             copy.deepcopy(generic_alert_groups.aggregator_rules),
             group_name_prefix=self._topology.identifier,
         )
-        if self._forward_rules:
-            loki_alert_rules.add_path(self._loki_alert_rules_path, recursive=True)
-            prom_alert_rules.add_path(self._prom_alert_rules_path, recursive=True)
-            loki_recording_rules.add_path(self._loki_record_rules_path, recursive=True)
-            prom_recording_rules.add_path(self._prom_record_rules_path, recursive=True)
+        loki_alert_rules.add_path(self._loki_alert_rules_path, recursive=True)
+        prom_alert_rules.add_path(self._prom_alert_rules_path, recursive=True)
+        loki_recording_rules.add_path(self._loki_record_rules_path, recursive=True)
+        prom_recording_rules.add_path(self._prom_record_rules_path, recursive=True)
 
+        # Publish to databag
         consumer_appdata = OtlpConsumerAppData.model_validate(
             {
                 "rules": {
@@ -196,28 +241,40 @@ class OtlpConsumer(Object):
                         "alerting": prom_alert_rules.as_dict(),
                         "recording": prom_recording_rules.as_dict(),
                     },
-                }
+                },
+                # TODO: Add tests for this set vs. not set
+                "metadata": self._topology.as_dict()
             }
         )
-
         for relation in self.model.relations[self._relation_name]:
             relation.data[self._charm.app].update(consumer_appdata.to_databag())
 
     def endpoints(self) -> Dict[int, OtlpEndpoint]:
         """Return a mapping of relation ID to OTLP endpoint.
 
-        For each remote unit's list of OtlpEndpoints:
-            - If a telemetry type is not supported, then the endpoint is accepted, but the
-              telemetry is ignored.
-            - If the endpoint contains an unsupported protocol it is ignored.
-            - The first available (and supported) endpoint is returned.
+        For each remote's list of OtlpEndpoints, the consumer filters out
+        unsupported endpoints and telemetries. If there are multiple supported
+        endpoints, the consumer chooses the first available endpoint in the
+        list. This allows providers to specify multiple endpoints with
+        different protocols and/or telemetry types and the consumer can choose
+        one based on its own capabilities. For example, a provider may specify
+        both an HTTP and gRPC endpoint, and a consumer that only supports HTTP
+        will choose the HTTP endpoint.
         """
         endpoint_map = {}
         for rel in self.model.relations[self._relation_name]:
             if not (raw_databag := rel.data[rel.app]):
                 continue
-            endpoints = json.loads(raw_databag.get("endpoints") or "[]")
-            if not (app_databag := self._filter_endpoints(endpoints)):
+
+            provided_endpoints = json.loads(raw_databag.get("endpoints") or "[]")
+            if not (endpoints := self._filter_endpoints(provided_endpoints)):
+                continue
+
+            # Ensure that the filtered endpoints are valid
+            try:
+                app_databag = OtlpProviderAppData(endpoints=endpoints)
+            except ValidationError as e:
+                logger.error(f"OTLP databag failed validation: {e}")
                 continue
 
             # Choose the first valid endpoint in list
@@ -254,7 +311,7 @@ class OtlpProvider(Object):
         endpoint: str,
         telemetries: Sequence[Literal["logs", "metrics", "traces"]],
     ):
-        """Add an OtlpEndpoint to the list.
+        """Add an OtlpEndpoint to the list of endpoints to publish.
 
         Call this method after endpoint-changing events e.g. TLS and ingress.
         """
@@ -272,39 +329,25 @@ class OtlpProvider(Object):
             provider_appdata = OtlpProviderAppData(endpoints=self._endpoints)
             relation.data[self._charm.app].update(provider_appdata.to_databag())
 
-    def rules(self, query_type: Literal["logql", "promql"], rule_type: Literal["alerting", "recording"]):
-        """Fetch alerts for all relations.
+    def rules(
+        self, query_type: Literal["logql", "promql"], rule_type: Literal["alerting", "recording"]
+    ):
+        """Fetch rules for all relations of the desired query and rule types.
 
-        A Loki alert rules file consists of a list of "groups". Each
-        group consists of a list of alerts (`rules`) that are sequentially
-        executed. This method returns all the alert rules provided by each
-        related metrics provider charm. These rules may be used to generate a
-        separate alert rules file for each relation since the returned list
-        of alert groups are indexed by relation ID. Also for each relation ID
-        associated scrape metadata such as Juju model, UUID and application
-        name are provided so a unique name may be generated for the rules
-        file. For each relation the structure of data returned is a dictionary
-        with four keys
-
-        - groups
-        - model
-        - model_uuid
-        - application
-
-        The value of the `groups` key is such that it may be used to generate
-        a Loki alert rules file directly using `yaml.dump` but the
-        `groups` key itself must be included as this is required by Loki,
-        for example as in `yaml.dump({"groups": alerts["groups"]})`.
-
-        Currently only accepts a list of rules and these
-        rules are all placed into a single group, even though Loki itself
-        allows for multiple groups within a single alert rules file.
+        This method returns all rules of the desired query and rule types
+        provided by related OTLP consumer charms. These rules may be used to
+        generate a rules file for each relation since the returned list of
+        groups are indexed by relation ID. This method ensures rules:
+            - have Juju topology from the rule's labels injected into the expr.
+            - are valid using CosTool.
 
         Returns:
-            a dictionary of alert rule groups and associated scrape
-            metadata indexed by relation ID.
+            a mapping of relation ID to a dictionary of alert rule groups
+            following the OfficialRuleFileFormat from cos-lib.
         """
-        alert_rules = AlertRules(query_type, self._topology)
+        rule_cls = AlertRules if rule_type == "alerting" else RecordingRules
+        rules_obj = rule_cls(query_type, self._topology)
+
         rules_map = {}
         for relation in self.model.relations[self._relation_name]:
             if not (raw_data := relation.data[relation.app]):
@@ -312,22 +355,25 @@ class OtlpProvider(Object):
             consumer_appdata = OtlpConsumerAppData.model_validate(raw_data)
 
             # get rules for the desired query type
-            if not (rules_types := getattr(consumer_appdata.rules, alert_rules.query_type, None)):
+            if not (rule_types := getattr(consumer_appdata.rules, rules_obj.query_type, None)):
                 continue
 
             # get rules for the desired type
-            if not (rules := getattr(rules_types, rule_type)):
+            if not (rules := getattr(rule_types, rule_type, None)):
                 continue
 
-            alert_rules_data = alert_rules.inject_alert_expr_labels(rules)
+            rules_data = rules_obj.inject_alert_expr_labels(rules)
 
-            identifier, topology = alert_rules.get_identifier_by_alert_rules(alert_rules_data)
+            # TODO: If rules don't have labels for topology, then they can provide it via metadata.
+            identifier, topology = rules_obj.get_identifier_by_alert_rules(rules_data)
             if not topology:
                 try:
-                    # TODO: What is this metadata?
+                    # TODO: What is this metadata, would fail if it DNE, .get(metadata, default)?
                     metadata = json.loads(relation.data[relation.app]["metadata"])
+                    # TODO: Why do we get the identifier twice? Check with loki_push_api
                     identifier = JujuTopology.from_dict(metadata).identifier
-                    rules_map[identifier] = alert_rules.tool.apply_label_matchers(alert_rules_data)  # type: ignore
+                    # TODO: Shouldn't we apply label matchers before injecting expr labels? Check with loki_push_api
+                    rules_map[identifier] = rules_obj.tool.apply_label_matchers(rules_data)  # type: ignore
 
                 except KeyError as e:
                     logger.debug(
@@ -338,15 +384,15 @@ class OtlpProvider(Object):
 
             if not identifier:
                 logger.error(
-                    "Alert rules were found but no usable group or identifier was present."
+                    f"{query_type}, {rule_type} rules were found but no usable group or identifier was present."
                 )
                 continue
 
-            _, errmsg = alert_rules.tool.validate_alert_rules(alert_rules_data)  # type: ignore[reportCallIssue]
+            _, errmsg = rules_obj.tool.validate_alert_rules(rules_data)  # type: ignore[reportCallIssue]
             if errmsg:
                 relation.data[self._charm.app]["event"] = json.dumps({"errors": errmsg})
                 continue
-
-            rules_map[identifier] = alert_rules_data
+            # TODO: Does this not override the code in the try/except above?
+            rules_map[identifier] = rules_data
 
         return rules_map
