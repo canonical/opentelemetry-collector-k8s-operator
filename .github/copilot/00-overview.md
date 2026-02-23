@@ -1,6 +1,6 @@
 # Overview
 
-This repository contains a Juju Kubernetes charm responsible for managing the `opentelemetry-collector` workload.  
+This repository contains a Juju Kubernetes charm responsible for managing the `opentelemetry-collector` workload.
 The charm follows a consistent architectural pattern based on a reconciler loop, strict idempotency, and clear separation between charm logic and workload logic.
 
 ## Purpose of These Instructions
