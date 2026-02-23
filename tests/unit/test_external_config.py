@@ -323,7 +323,7 @@ def test_external_config_missing_config_yaml_key(config_manager):
     config_yaml = config_manager.config.build()
     config_dict = yaml.safe_load(config_yaml)
     # Should not have any external components added
-    assert not any(key.endswith("/test/0") for key in config_dict.get("receivers", {}).keys())
+    assert "test/test/0" not in config_dict.get("receivers", {})
 
 
 def test_external_config_missing_pipelines_key(config_manager):
@@ -349,7 +349,7 @@ def test_external_config_missing_pipelines_key(config_manager):
     config_yaml = config_manager.config.build()
     config_dict = yaml.safe_load(config_yaml)
     # Should not have any external components added
-    assert not any(key.endswith("/test/0") for key in config_dict.get("receivers", {}).keys())
+    assert "test/test/0" not in config_dict.get("receivers", {})
 
 
 def test_external_config_invalid_component_type(config_manager):

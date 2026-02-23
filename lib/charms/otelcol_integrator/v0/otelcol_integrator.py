@@ -12,11 +12,12 @@ between charms.
 
 ## Overview
 
-This library provides three main components:
+This library provides four main components:
 
 - **OtelcolIntegratorProviderAppData**: Data model for validation
 - **OtelcolIntegratorProviderRelationUpdater**: Provider-side relation updates
 - **OtelcolIntegratorRequirer**: Requirer-side configuration retrieval
+- **SecretURI**: Secret URI validation and parsing utilities
 
 ## Usage
 
@@ -29,9 +30,13 @@ to other charms.
 from charms.otelcol_integrator.v0.otelcol_integrator import (
     OtelcolIntegratorProviderAppData,
     OtelcolIntegratorProviderRelationUpdater,
+    Pipeline,
 )
+```
 
 # 1. Create and validate your configuration data
+
+```python
 config_data = OtelcolIntegratorProviderAppData(
     config_yaml='''
 exporters:
@@ -39,10 +44,13 @@ exporters:
     token: "secret://model-uuid/secret-id/token?render=inline"
     endpoint: "https://splunk:8088/services/collector"
     ''',
-    pipelines=["metrics", "logs"]
+    pipelines=[Pipeline.METRICS, Pipeline.LOGS]
 )
+```
 
 # 2. Update all relations with the configuration
+
+```python
 relations = self.model.relations.get("external-config", [])
 OtelcolIntegratorProviderRelationUpdater.update_relations_data(
     application=self.app,
@@ -63,34 +71,63 @@ from another charm.
 ```python
 from charms.otelcol_integrator.v0.otelcol_integrator import (
     OtelcolIntegratorRequirer,
+    Pipeline,
 )
+```
 
 # 1. Initialize the requirer
+
+```python
 self.requirer = OtelcolIntegratorRequirer(
     model=self.model,
     relation_name="external-config",
     secrets_dir="/etc/otelcol/secrets"  # Where secret files should go
 )
+```
 
 # 2. Retrieve configurations from all relations
+
+```python
+configs = self.requirer.retrieve_external_configs()
+```
+
+configs is a list of dicts:
+
+```python
+[
+    {
+        "config_yaml": "...",  # Secrets resolved to values or paths
+        "pipelines": [Pipeline.METRICS, Pipeline.LOGS]  # List of Pipeline enums
+    }
+]
+```
+
+
+# 3. Write secret files to disk
+
+After calling `retrieve_external_configs()`, the library tracks all file-based secrets
+(those with `render=file`) in the `secret_files` property:
+
+```python
+# Retrieve configs (this populates secret_files automatically)
 configs = self.requirer.retrieve_external_configs()
 
-# configs is a list of dicts:
-# [
-#     {
-#         "config_yaml": "...",  # Secrets resolved to values or paths
-#         "pipelines": ["metrics", "logs"]
-#     }
-# ]
+# Access the tracked secret files
+# secret_files is a Dict[str, str] mapping file paths to content
+for file_path, content in self.requirer.secret_files.items():
+    # Create parent directories if needed
+    Path(file_path).parent.mkdir(parents=True, exist_ok=True)
 
-# 3. Write secret files to disk (library only generates paths/content)
+    # Write the secret content to disk
+    Path(file_path).write_text(content, mode=0o644)
 ```
 
 **Important Notes:**
-- The library does NOT write files to disk
-- It only provides file paths and content
-- The charm is responsible for writing files
-- Secret URIs are automatically replaced with values or file paths
+- The library does NOT write files to disk automatically
+- It tracks file paths and content in the `secret_files` property
+- The charm is responsible for actually writing the files
+- Secret URIs with `render=inline` are embedded directly in `config_yaml`
+- Secret URIs with `render=file` are replaced with paths in `config_yaml` and tracked in `secret_files`
 
 ## Data Validation
 
@@ -98,9 +135,31 @@ The `OtelcolIntegratorProviderAppData` model automatically validates:
 
 - **config_yaml**: Must be valid YAML
 - **Secret URIs**: Must follow format `secret://<model-uuid>/<secret-id>/<key>?render=<inline|file>`
-- **pipelines**: Must be one of: "metrics", "logs", "traces"
+  - Validated using the `SecretURI` class, which can also be used directly for custom validation
+  - Note that if render=inline, the key's value will be embedded directly in the config, on the other hand if render=file a filepath will be generated and the secret content will be tracked for writing by the charm.
+
+- **pipelines**: List of Pipeline enum values (Pipeline.METRICS, Pipeline.LOGS, Pipeline.TRACES)
 
 Invalid data will raise a `ValidationError` with a descriptive message.
+
+## Advanced Usage
+
+### Direct Secret URI Validation
+
+For advanced use cases, you can work with secret URIs directly:
+
+```python
+from charms.otelcol_integrator.v0.otelcol_integrator import SecretURI
+
+# Parse and use a secret URI
+secret = SecretURI.from_uri("secret://model-uuid/secret-id/key?render=inline")
+print(secret.base_secret_id)  # secret://model-uuid/secret-id
+print(secret.key)             # key
+print(secret.render)          # inline
+
+# Just validate without parsing (raises ValueError/ValidationError if invalid)
+SecretURI.validate_uri("secret://model-uuid/secret-id/key?render=file")
+```
 
 ## Examples
 
@@ -116,7 +175,7 @@ receivers:
       scrape_configs:
         - bearer_token: "secret://model-uuid/secret-id/token?render=inline"
     ''',
-    pipelines=["metrics"]
+    pipelines=[Pipeline.METRICS]
 )
 ```
 
@@ -132,7 +191,7 @@ exporters:
       cert_file: "secret://model-uuid/secret-id/cert?render=file"
       key_file: "secret://model-uuid/secret-id/key?render=file"
     ''',
-    pipelines=["traces"]
+    pipelines=[Pipeline.TRACES]
 )
 ```
 
@@ -145,11 +204,16 @@ configs = self.requirer.retrieve_external_configs()
 # Merge or process each config
 for config in configs:
     yaml_config = yaml.safe_load(config["config_yaml"])
-    pipelines = config["pipelines"]
+    pipelines = config["pipelines"]  # List[Pipeline] enums
+
+    # Convert to strings if needed
+    pipeline_names = [p.value for p in pipelines]
 
     # Process configuration...
+    # Note: config_yaml already has file-based secrets replaced with paths
 
-# Write secret files
+# Write secret files to disk (for all relations)
+# secret_files contains all file-based secrets from retrieve_external_configs()
 for file_path, content in self.requirer.secret_files.items():
     Path(file_path).parent.mkdir(parents=True, exist_ok=True)
     Path(file_path).write_text(content)
@@ -165,13 +229,13 @@ from typing import Dict, List, Set, Literal, Any, Optional
 from urllib.parse import urlparse, parse_qs
 
 import yaml
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, ValidationError
 from ops import Application, Model, ModelError, Relation, SecretNotFoundError
 
 logger = logging.getLogger(__name__)
 
 # The unique Charmhub library identifier, never change it
-LIBID = "CHANGE-ME!!"
+LIBID = "c95aa0a5ff7641e18cf76e150e1d266e"
 
 # Increment this major API version when introducing breaking changes
 LIBAPI = 0
@@ -179,14 +243,24 @@ LIBAPI = 0
 # to 0 if you are raising the major API version
 LIBPATCH = 1
 
+# Regex patterns for validating secret URI components
+# UUID v4 format: 8-4-4-4-12 hex digits
+UUID_V4_PATTERN = r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}'
+UUID_V4_PATTERN_COMP = re.compile(f'^{UUID_V4_PATTERN}$')
+
+# Juju secret ID format: exactly 20 lowercase alphanumeric characters
+SECRET_ID_PATTERN = r'[a-z0-9]{20}'
+SECRET_ID_PATTERN_COMP = re.compile(f'^{SECRET_ID_PATTERN}$')
+
 # Base pattern for secret URIs: secret://model-uuid/secret-id
-SECRET_URI_PATTERN = r'secret://[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/[a-z0-9]{20}'
+SECRET_URI_PATTERN = f'secret://{UUID_V4_PATTERN}/{SECRET_ID_PATTERN}'
 SECRET_URI_PATTERN_COMP = re.compile(SECRET_URI_PATTERN)
 
 # Extended pattern to match secret URIs with optional key and query string
 # Format: secret://model-uuid/secret-id[/key][?query]
 SECRET_URI_PATTERN_EXTENDED = SECRET_URI_PATTERN + r'(?:/[a-z0-9_-]+)?(?:\?[^\s"\']*)?'
 SECRET_URI_PATTERN_EXTENDED_COMP = re.compile(SECRET_URI_PATTERN_EXTENDED)
+
 
 
 # ============================================================================
@@ -242,7 +316,7 @@ class SecretURI(BaseModel):
             uri: Secret URI in format secret://<model-uuid>/<secret-id>/<key>?render=<inline|file>
 
         Returns:
-            Dictionary with 'key' and 'query' components.
+            Dictionary with parsed components (model_uuid, secret_id, key, render).
 
         Raises:
             ValueError: If URI scheme is not 'secret://' or format is invalid.
@@ -250,23 +324,42 @@ class SecretURI(BaseModel):
         if not uri.startswith("secret://"):
             raise ValueError(f"Secret URI must start with 'secret://': {uri}")
 
-        # Parse URL components
+        # Parse the URI components (single urlparse call)
         parsed = urlparse(uri)
-
-        # Extract key from path (must have at least 2 components: secret-id and key)
         path_parts = [p for p in parsed.path.split('/') if p]
-        if len(path_parts) < 2:
-            key = None
-        else:
-            key = path_parts[-1]  # Last component is the key
+
+        # Validate model_uuid format (UUID v4)
+        model_uuid = parsed.netloc
+        if not UUID_V4_PATTERN_COMP.match(model_uuid):
+            raise ValueError(
+                f"Invalid model_uuid format in '{uri}': '{model_uuid}' "
+                f"(expected UUID v4: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
+            )
+
+        # Validate secret_id format (20 lowercase alphanumeric chars)
+        secret_id = path_parts[0] if path_parts else ""
+        if not SECRET_ID_PATTERN_COMP.match(secret_id):
+            raise ValueError(
+                f"Invalid secret_id format in '{uri}': '{secret_id}' "
+                f"(expected 20 lowercase alphanumeric characters)"
+            )
+
+        # Validate required path components
+        key = path_parts[1] if len(path_parts) >= 2 else None
+        if key is None:
+            raise ValueError(f"Secret URI must include a key: {uri}")
 
         # Parse query parameters
         query_params = parse_qs(parsed.query)
-        query_dict = {k: v[0] if len(v) == 1 else v for k, v in query_params.items()}
+        render = query_params.get("render", [None])[0]
+        if render is None:
+            raise ValueError(f"Secret URI must include render query parameter: {uri}")
 
         return {
+            "model_uuid": model_uuid,
+            "secret_id": secret_id,
             "key": key,
-            "query": query_dict,
+            "render": render,
         }
 
     @classmethod
@@ -281,41 +374,44 @@ class SecretURI(BaseModel):
 
         Raises:
             ValueError: If URI format is invalid or missing required parts.
+            ValidationError: If parsed values don't match expected types.
         """
         parsed = cls._parse_secret_uri(uri)
+        return cls(**parsed)
 
-        if parsed["key"] is None:
-            raise ValueError(f"Secret URI must include a key: {uri}")
-        if "render" not in parsed["query"]:
-            raise ValueError(f"Secret URI must include render query parameter: {uri}")
+    @classmethod
+    def validate_uri(cls, uri: str) -> None:
+        """Validate a secret URI format and values.
 
-        render_value = parsed["query"]["render"]
-        if render_value not in ("inline", "file"):
-            raise ValueError(
-                f"Secret URI render parameter must be 'inline' or 'file': {uri}"
-            )
+        Use this when you only need to validate a URI without using the parsed object.
 
-        # Extract model_uuid and secret_id from the URI
-        # Format: secret://<model-uuid>/<secret-id>/<key>?render=<inline|file>
-        url_parsed = urlparse(uri)
-        model_uuid = url_parsed.netloc
-        path_components = [p for p in url_parsed.path.split('/') if p]
-        secret_id = path_components[0] if path_components else ""
+        Args:
+            uri: Secret URI string to validate.
 
-        return cls(
-            model_uuid=model_uuid,
-            secret_id=secret_id,
-            key=parsed["key"],
-            render=render_value,
-        )
+        Raises:
+            ValueError: If URI format is invalid or missing required parts.
+            ValidationError: If parsed values don't match expected types (e.g., invalid render mode).
+        """
+        parsed = cls._parse_secret_uri(uri)
+        # Validate types with Pydantic (discards object)
+        cls(**parsed)
 
-    def to_uri(self) -> str:
+    @property
+    def base_secret_id(self) -> str:
+        """Base secret ID without key or query parameters.
+
+        Returns:
+            Base secret URI (secret://<model-uuid>/<secret-id>).
+        """
+        return f"secret://{self.model_uuid}/{self.secret_id}"
+
+    def __str__(self) -> str:
         """Convert back to URI string format.
 
         Returns:
             The secret URI as a string.
         """
-        return f"secret://{self.model_uuid}/{self.secret_id}/{self.key}?render={self.render}"
+        return f"{self.base_secret_id}/{self.key}?render={self.render}"
 
 
 class OtelcolIntegratorProviderAppData(BaseModel):
@@ -328,9 +424,9 @@ class OtelcolIntegratorProviderAppData(BaseModel):
     """
 
     config_yaml: str
-    pipelines: List[str]
+    pipelines: List[Pipeline]
 
-    @field_validator("config_yaml")
+    @field_validator("config_yaml", mode="after")
     @classmethod
     def validate_yaml(cls, v: str) -> str:
         """Validate that config_yaml is valid YAML and secret URIs have correct format.
@@ -355,30 +451,26 @@ class OtelcolIntegratorProviderAppData(BaseModel):
         secret_refs = _extract_secret_references(v)
         for secret_ref in secret_refs:
             try:
-                SecretURI.from_uri(secret_ref)
-            except ValueError as e:
+                SecretURI.validate_uri(secret_ref)
+            except (ValueError, ValidationError) as e:
                 raise ValueError(f"Invalid secret URI '{secret_ref}': {e}")
 
         return v
 
-    @field_validator("pipelines")
+    @field_validator("pipelines", mode="after")
     @classmethod
-    def validate_pipelines(cls, v: List[str]) -> List[str]:
-        """Validate pipelines contains only valid values.
+    def validate_pipelines(cls, v: List[Pipeline]) -> List[Pipeline]:
+        """Validate pipelines list is not empty.
 
         Args:
-            v: List of pipeline names to validate.
+            v: List of pipelines to validate.
 
         Returns:
-            The validated list of pipeline names.
+            The validated list of pipelines.
 
         Raises:
-            ValueError: If pipelines are invalid or empty.
+            ValueError: If pipelines list is empty.
         """
-        valid_pipeline_values = {p.value for p in Pipeline}
-        invalid = set(v) - valid_pipeline_values
-        if invalid:
-            raise ValueError(f"Invalid pipelines: {invalid}. Must be one of {valid_pipeline_values}")
         if not v:
             raise ValueError("At least one pipeline must be enabled")
         return v
@@ -619,28 +711,25 @@ class _SecretResolver:
             # Parse the secret URI using SecretURI class
             secret_uri = SecretURI.from_uri(secret_uri_string)
 
-            # Reconstruct base secret ID for cache lookup
-            base_secret_id = f"secret://{secret_uri.model_uuid}/{secret_uri.secret_id}"
-
             # Get the value from cache
-            secret_content = secrets_by_base_id.get(base_secret_id, {}).get(secret_uri.key)
+            secret_content = secrets_by_base_id.get(secret_uri.base_secret_id, {}).get(secret_uri.key)
             if not secret_content:
-                raise ValueError(f"Secret key '{secret_uri.key}' not found in secret '{base_secret_id}'")
+                raise ValueError(f"Secret key '{secret_uri.key}' not found in secret '{secret_uri.base_secret_id}'")
 
             # Handle file-based secrets
             replacement_value = secret_content
             if secret_uri.render == 'file':
                 # Generate path using the base secret ID and key
-                secret_file_path = file_manager.generate_path(base_secret_id, secret_uri.key)
+                secret_file_path = file_manager.generate_path(secret_uri.base_secret_id, secret_uri.key)
                 file_manager.track_file(secret_file_path, secret_content)
                 replacement_value = secret_file_path
 
             resolved_config_yaml = resolved_config_yaml.replace(secret_uri_string, replacement_value)
             logger.debug(
                 "Resolved secret URI '%s' to key '%s' in secret %s",
-                secret_uri.to_uri(),
+                secret_uri,
                 secret_uri.key,
-                base_secret_id,
+                secret_uri.base_secret_id,
             )
 
         return resolved_config_yaml
