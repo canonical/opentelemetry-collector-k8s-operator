@@ -16,4 +16,5 @@ As your deployment grows, you may need more advanced features to support richer 
 
 selectively-drop-telemetry
 tiered-otelcols
+troubleshoot
 ```
