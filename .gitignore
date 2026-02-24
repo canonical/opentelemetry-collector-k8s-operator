@@ -11,5 +11,4 @@ cos-tool*
 sqlite-static
 
 # Charm-specific
-requirements*.txt
-version
+./version
