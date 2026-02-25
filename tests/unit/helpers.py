@@ -2,8 +2,6 @@
 # See LICENSE file for licensing details.
 
 
-import dataclasses
-
 import yaml
 from ops.testing import Context, State
 

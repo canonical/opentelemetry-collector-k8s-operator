@@ -9,7 +9,6 @@ from typing import Any, Dict, Optional
 import pytest
 from cosl.utils import LZMABase64
 from ops.testing import Model, Relation, State
-from cosl.juju_topology import JujuTopology
 from src.otlp import OtlpConsumerAppData
 
 
