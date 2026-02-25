@@ -492,8 +492,9 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
 
     The otlp_provider.rules are rules gathered from the related OTLP consumer
     charms. These rules are saved to a rules aggregation path on disk for their
-    respective expression format
-    This is only applicable if `forward_alert_rules` is enabled in config, which is disabled by default since it's an expensive operation and not all users need it.
+    respective expression format (logql|promql), including both alerting and
+    recording types. This is only applicable if the `forward_alert_rules`
+    config is enabled.
     """
     otlp_provider = OtlpProvider(charm)
     # TODO: We can remove this since the lib doesn't observe events
@@ -506,11 +507,11 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     # TODO: Rename the config option to forward_rules? This is breaking people, maybe add a new one and deprecate the old one?
     forward_rules = cast(bool, charm.config.get("forward_alert_rules"))
     _add_alerts(
-        alerts=otlp_provider.rules("logql", "alerting") if forward_rules else {},
+        alerts=otlp_provider.rules("logql") if forward_rules else {},
         dest_path=charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
     )
     _add_alerts(
-        alerts=otlp_provider.rules("promql", "alerting") if forward_rules else {},
+        alerts=otlp_provider.rules("promql") if forward_rules else {},
         dest_path=charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
     )
 
@@ -542,8 +543,8 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
         charm,
         protocols=["grpc", "http"],
         telemetries=["logs", "metrics"],
-        loki_alert_rules_path=charm_root.joinpath(LOKI_RULES_DEST_PATH).as_posix(),
-        prometheus_alert_rules_path=charm_root.joinpath(METRICS_RULES_DEST_PATH).as_posix(),
+        loki_rules_path=charm_root.joinpath(LOKI_RULES_DEST_PATH).as_posix(),
+        prometheus_rules_path=charm_root.joinpath(METRICS_RULES_DEST_PATH).as_posix(),
     )
     # TODO: We can remove this since the lib doesn't observe events
     charm.__setattr__("otlp_consumer", otlp_consumer)
@@ -561,7 +562,7 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     )
 
     otlp_consumer.publish()
-    return otlp_consumer.endpoints()
+    return otlp_consumer.endpoints
 
 
 # TODO: Luca: move this into the GrafanCloudIntegrator library

@@ -4,234 +4,180 @@
 """Feature: Rules aggregation and forwarding."""
 
 import json
+from typing import Any, Dict, Optional
 
 import pytest
 from cosl.utils import LZMABase64
-from helpers import get_group_by_name
 from ops.testing import Model, Relation, State
-
+from cosl.juju_topology import JujuTopology
 from src.otlp import OtlpConsumerAppData
 
-# TODO: I can add alert rules which have no topology in "labels" (expr labels are tested separately)
-#       and assert that this doesn't return alerts? this would add test coverage
-LOKI_RULES = {
-    "groups": [
-        {
-            "name": "otelcol_f4d59020_loki_loki_alerts_alerts",
-            "rules": [
-                {
-                    "alert": "HighLogVolume",
-                    "expr": 'count_over_time({job=~".+"}[30s]) > 100',
-                    "labels": {
-                        "severity": "high",
-                        "juju_model": "otelcol",
-                        "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                        "juju_application": "loki",
-                        "juju_charm": "loki-coordinator-k8s",
-                    },
-                    "annotations": {
-                        "summary": "Log rate is too high!",
-                    },
-                },
-            ],
-        }
-    ]
-}
 
-ZOO_RULES = {
-    "groups": [
+OTELCOL_LABELS = {
+    "juju_model": "otelcol",
+    "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
+    "juju_application": "opentelemetry-collector-k8s",
+    "juju_charm": "opentelemetry-collector-k8s",
+}
+LOGQL_ALERT = {
+    "name": "otelcol_f4d59020_charm_x_foo_alerts",
+    "rules": [
         {
-            "name": "otelcol_f4d59020_zoo_zookeeper_alerting_alerts",
-            "rules": [
-                {
-                    "alert": "ZooKeeper Missing",
-                    "expr": 'up{job=~".+"} == 0',
-                    "for": "0m",
-                    "labels": {
-                        "severity": "critical",
-                        "juju_model": "otelcol",
-                        "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                        "juju_application": "zoo",
-                        "juju_charm": "zookeeper",
-                    },
-                    "annotations": {
-                        "summary": "Prometheus target missing (instance {{ $labels.instance }})",
-                        "description": "ZooKeeper target has disappeared. An exporter might be crashed.\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}",
-                    },
-                },
-            ],
+            "alert": "HighLogVolume",
+            "expr": 'count_over_time({job=~".+"}[30s]) > 100',
+            "labels": {"severity": "high"},
+        },
+    ],
+}
+LOGQL_RECORD = {
+    "name": "otelcol_f4d59020_charm_x_foobar_alerts",
+    "rules": [
+        {
+            "record": "log:error_rate:rate5m",
+            "expr": 'sum by (service) (rate({job=~".+"} | json | level="error" [5m]))',
+            "labels": {"severity": "high"},
         }
-    ]
+    ],
+}
+PROMQL_ALERT = {
+    "name": "otelcol_f4d59020_charm_x_bar_alerts",
+    "rules": [
+        {
+            "alert": "Workload Missing",
+            "expr": 'up{job=~".+"} == 0',
+            "for": "0m",
+            "labels": {"severity": "critical"},
+        },
+    ],
+}
+PROMQL_RECORD = {
+    "name": "otelcol_f4d59020_charm_x_barfoo_alerts",
+    "rules": [
+        {
+            "record": "code:prometheus_http_requests_total:sum",
+            "expr": 'sum by (code) (prometheus_http_requests_total{job=~".+"})',
+            "labels": {"severity": "high"},
+        }
+    ],
 }
 
 
-@pytest.fixture
-def databag_logql_alert_rule_labeled():
-    return {
-        "name": "otelcol_f4d59020_loki_loki_alerts_alerts",
-        "rules": [
-            {
-                "alert": "HighLogVolume",
-                "annotations": {"summary": "Log rate is too high!"},
-                "expr": '(count_over_time({job=~".+", juju_application="loki", juju_charm="loki-coordinator-k8s", juju_model="otelcol", juju_model_uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"}[30s]) > 100)',
-                "labels": {
-                    "juju_application": "loki",
-                    "juju_charm": "loki-coordinator-k8s",
-                    "juju_model": "otelcol",
-                    "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                    "severity": "high",
-                },
-            }
-        ],
+def _decompress(rules: str) -> dict:
+    return json.loads(LZMABase64.decompress(rules))
+
+
+def _get_group_by_name(rules: Optional[Dict[str, Any]], name: str) -> Optional[Dict[str, Any]]:
+    if rules is None:
+        return None
+    for group in rules.get("groups", []):
+        if group.get("name") == name:
+            return group
+    return None
+
+
+def _rules_have_labels(groups: Dict[str, Any], labels: Dict[str, Any]) -> bool:
+    assert groups
+    assert labels
+    for rule in groups.get("rules", []):
+        if "labels" not in rule:
+            return False
+        for key, value in labels.items():
+            if rule["labels"].get(key) != value:
+                return False
+    return True
+
+
+def test_forwarded_rules_compression(
+    ctx,
+    otelcol_container,
+):
+    # GIVEN receive-otlp and send-otlp relations
+    rules = {
+        "logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]},
+        "promql": {"groups": [PROMQL_ALERT, PROMQL_RECORD]},
     }
+    databag = {"rules": json.dumps(rules), "metadata": "{}"}
+    receiver = Relation("receive-otlp", remote_app_data=databag)
+    sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
+    sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
+    state = State(
+        relations=[receiver, sender_1, sender_2],
+        leader=True,
+        containers=otelcol_container,
+        model=Model("otelcol", uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"),
+    )
 
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state=state)
 
-@pytest.fixture
-def databag_promql_alert_rule_labeled():
-    return {
-        "name": "otelcol_f4d59020_zoo_zookeeper_alerting_alerts",
-        "rules": [
-            {
-                "alert": "ZooKeeper Missing",
-                "annotations": {
-                    "description": "ZooKeeper target has disappeared. An exporter might be crashed.\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}",
-                    "summary": "Prometheus target missing (instance {{ $labels.instance }})",
-                },
-                "expr": 'up{job=~".+",juju_application="zoo",juju_charm="zookeeper",juju_model="otelcol",juju_model_uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"} == 0',
-                "for": "0m",
-                "labels": {
-                    "juju_application": "zoo",
-                    "juju_charm": "zookeeper",
-                    "juju_model": "otelcol",
-                    "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                    "severity": "critical",
-                },
-            },
-        ],
-    }
+    for relation in list(state_out.relations):
+        if relation.endpoint != "send-otlp":
+            continue
+        raw_rules = relation.local_app_data.get("rules")
 
+        # THEN the databag contains a compressed set of rules
+        assert isinstance(raw_rules, str)
+        assert raw_rules.startswith("/")
 
-@pytest.fixture
-def otelcol_bundled_promql_alert_rule_labeled():
-    return {
-        "name": "otelcol_f4d59020_opentelemetry_collector_k8s_Hardware_alerts",
-        "rules": [
-            {
-                "alert": "high-cpu-usage",
-                "expr": 'max(rate(otelcol_process_cpu_seconds_total{juju_application="opentelemetry-collector-k8s",juju_model="otelcol",juju_model_uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"}[5m]) * 100) > 90',
-                "for": "5m",
-                "labels": {
-                    "severity": "critical",
-                    "juju_model": "otelcol",
-                    "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                    "juju_application": "opentelemetry-collector-k8s",
-                    "juju_charm": "opentelemetry-collector-k8s",
-                },
-                "annotations": {
-                    "summary": "High max CPU usage",
-                    "description": "Collector needs to scale up",
-                },
-            }
-        ],
-    }
-
-
-@pytest.fixture
-def generic_promql_alert_rule_labeled():
-    return {
-        "name": "otelcol_f4d59020_opentelemetry_collector_k8s_AggregatorHostHealth_alerts",
-        "rules": [
-            {
-                "alert": "HostMetricsMissing",
-                "annotations": {
-                    "description": "`Up` missing for unit '{{ $labels.juju_unit }}' of application {{ $labels.juju_application }} in model {{ $labels.juju_model }}. Please ensure the unit or the collector scraping it is up and is able to successfully reach the metrics backend.",
-                    "summary": "Unit '{{ $labels.juju_unit }}' of application '{{ $labels.juju_application }}' is down or failing to remote write.",
-                },
-                "expr": 'absent(up{juju_application="opentelemetry-collector-k8s",juju_model="otelcol",juju_model_uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"})',
-                "for": "5m",
-                "labels": {
-                    "juju_application": "opentelemetry-collector-k8s",
-                    "juju_charm": "opentelemetry-collector-k8s",
-                    "juju_model": "otelcol",
-                    "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                    "severity": "warning",
-                },
-            },
-            {
-                "alert": "AggregatorMetricsMissing",
-                "annotations": {
-                    "description": "`Up` missing for ALL units of application {{ $labels.juju_application }} in model {{ $labels.juju_model }}. This can also mean the units or the collector scraping them are unable to reach the remote write endpoint of the metrics backend. Please ensure the correct firewall rules are applied.",
-                    "summary": "Metrics not received from application '{{ $labels.juju_application }}'. All units are down or failing to remote write.",
-                },
-                "expr": 'absent(up{juju_application="opentelemetry-collector-k8s",juju_model="otelcol",juju_model_uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"})',
-                "for": "5m",
-                "labels": {
-                    "juju_application": "opentelemetry-collector-k8s",
-                    "juju_charm": "opentelemetry-collector-k8s",
-                    "juju_model": "otelcol",
-                    "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                    "severity": "critical",
-                },
-            },
-        ],
-    }
+        # THEN the decompressed databag contains rules
+        assert (decompressed := _decompress(raw_rules))
+        assert isinstance(decompressed, dict)
+        assert len(decompressed.get("logql", {}).get("groups", [])) > 0
 
 
 @pytest.mark.parametrize(
-    "forwarding_enabled, databag, expected_group_counts",
+    "forwarding_enabled, rules, expected_group_counts",
     [
-        # format , type      , databag_groups, generic_groups, bundled_groups, total
-        # logql  , alerting  , (1)           , (0)           , (0)           , (1)
-        # logql  , recording , (0)           , (0)           , (0)           , (0)
-        # promql , alerting  , (1)           , (1)           , (3)           , (5)
-        # promql , recording , (0)           , (0)           , (0)           , (0)
-        (
-            True,
-            {"rules": {"logql": {"alerting": LOKI_RULES}, "promql": {"alerting": ZOO_RULES}}},
-            {"logql": {"alerting": 1, "recording": 0}, "promql": {"alerting": 5, "recording": 0}},
-        ),
-        # format , type      , databag_groups, generic_groups, bundled_groups, total
-        # logql  , alerting  , (1)           , (0)           , (0)           , (0)
-        # logql  , recording , (0)           , (0)           , (0)           , (0)
-        # promql , alerting  , (1)           , (1)           , (3)           , (4)
-        # promql , recording , (0)           , (0)           , (0)           , (0)
+        # format , databag_groups, generic_groups, bundled_groups, total
+        # logql  , (2)           , (0)           , (0)           , (0)
+        # promql , (2)           , (1)           , (3)           , (4)
         (
             False,
-            {"rules": {"logql": {"alerting": LOKI_RULES}, "promql": {"alerting": ZOO_RULES}}},
-            {"logql": {"alerting": 0, "recording": 0}, "promql": {"alerting": 4, "recording": 0}},
+            {
+                "logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]},
+                "promql": {"groups": [PROMQL_ALERT, PROMQL_RECORD]},
+            },
+            {"logql": 0, "promql": 4},
         ),
-        # format , type      , databag_groups, generic_groups, bundled_groups, total
-        # logql  , alerting  , (0)           , (0)           , (0)           , (0)
-        # logql  , recording , (0)           , (0)           , (0)           , (0)
-        # promql , alerting  , (1)           , (1)           , (3)           , (5)
-        # promql , recording , (0)           , (0)           , (0)           , (0)
+        # format , databag_groups, generic_groups, bundled_groups, total
+        # logql  , (2)           , (0)           , (0)           , (2)
+        # promql , (2)           , (1)           , (3)           , (6)
         (
             True,
-            {"rules": {"logql": {"alerting": None}, "promql": {"alerting": ZOO_RULES}}},
-            {"logql": {"alerting": 0, "recording": 0}, "promql": {"alerting": 5, "recording": 0}},
+            {
+                "logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]},
+                "promql": {"groups": [PROMQL_ALERT, PROMQL_RECORD]},
+            },
+            {"logql": 2, "promql": 6},
         ),
-        # format , type      , databag_groups, generic_groups, bundled_groups, total
-        # logql  , alerting  , (1)           , (0)           , (0)           , (1)
-        # logql  , recording , (0)           , (0)           , (0)           , (0)
-        # promql , alerting  , (0)           , (1)           , (3)           , (4)
-        # promql , recording , (0)           , (0)           , (0)           , (0)
+        # format , databag_groups, generic_groups, bundled_groups, total
+        # logql  , (0)           , (0)           , (0)           , (0)
+        # promql , (2)           , (1)           , (3)           , (6)
         (
             True,
-            {"rules": {"logql": {"alerting": LOKI_RULES}, "promql": {"alerting": None}}},
-            {"logql": {"alerting": 1, "recording": 0}, "promql": {"alerting": 4, "recording": 0}},
+            {"logql": {}, "promql": {"groups": [PROMQL_ALERT, PROMQL_RECORD]}},
+            {"logql": 0, "promql": 6},
+        ),
+        # format , databag_groups, generic_groups, bundled_groups, total
+        # logql  , (2)           , (0)           , (0)           , (2)
+        # promql , (0)           , (1)           , (3)           , (4)
+        (
+            True,
+            {"logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]}, "promql": {}},
+            {"logql": 2, "promql": 4},
         ),
     ],
 )
 def test_forwarding_otlp_rule_counts(
-    ctx, otelcol_container, forwarding_enabled, databag, expected_group_counts
+    ctx, otelcol_container, forwarding_enabled, rules, expected_group_counts
 ):
-    # GIVEN forwarding of alert rules is enabled
+    # GIVEN forwarding of rules is enabled
     # * a receive-otlp with rules in the databag
     # * two send-otlp relations
-    provider_appdata = OtlpConsumerAppData.model_validate(databag)
-    receiver = Relation("receive-otlp", remote_app_data=provider_appdata.to_databag())
-    sender_1 = Relation("send-otlp")
-    sender_2 = Relation("send-otlp")
+    databag = {"rules": json.dumps(rules), "metadata": "{}"}
+    receiver = Relation("receive-otlp", remote_app_data=databag)
+    sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
+    sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     state = State(
         relations=[receiver, sender_1, sender_2],
         leader=True,
@@ -245,47 +191,97 @@ def test_forwarding_otlp_rule_counts(
 
     # THEN all expected rules exist in the databag
     # AND databag_groups are included/forwarded
-    for rel in list(state_out.relations):
-        if rel.endpoint != "send-otlp":
+    for relation in list(state_out.relations):
+        if relation.endpoint != "send-otlp":
             continue
-        rules = OtlpConsumerAppData.model_validate(rel.local_app_data).rules
-
-        assert rules.logql.alerting is not None
-        assert rules.promql.alerting is not None
-        assert rules.logql.recording is not None
-        assert rules.promql.recording is not None
-        assert (
-            len(rules.logql.alerting.get("groups", []))
-            == expected_group_counts["logql"]["alerting"]
-        )
-        assert (
-            len(rules.promql.alerting.get("groups", []))
-            == expected_group_counts["promql"]["alerting"]
-        )
-        assert (
-            len(rules.logql.recording.get("groups", []))
-            == expected_group_counts["logql"]["recording"]
-        )
-        assert (
-            len(rules.promql.recording.get("groups", []))
-            == expected_group_counts["promql"]["recording"]
-        )
+        assert (decompressed := _decompress(relation.local_app_data.get("rules")))
+        rules = OtlpConsumerAppData.model_validate({"rules": decompressed, "metadata": {}}).rules
+        assert len(rules.logql.get("groups", [])) == expected_group_counts["logql"]
+        assert len(rules.promql.get("groups", [])) == expected_group_counts["promql"]
 
 
-def test_forwarded_alert_rules_have_topology(
+@pytest.mark.parametrize(
+    "metadata, expected_labels",
+    [
+        (
+            # No metadata
+            {},
+            OTELCOL_LABELS,
+        ),
+        (
+            # Minimal metadata
+            {
+                "model": "otelcol",
+                "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
+                "application": "foo",
+            },
+            {
+                "juju_model": "otelcol",
+                "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
+                "juju_application": "foo",
+                "juju_unit": "",
+                "juju_charm": "",
+            },
+        ),
+        (
+            # All metadata fields
+            {
+                "model": "otelcol",
+                "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
+                "application": "foo",
+                "unit": "0",
+                "charm_name": "foo",
+            },
+            {
+                "juju_model": "otelcol",
+                "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
+                "juju_application": "foo",
+                "juju_unit": "0",
+                "juju_charm": "foo",
+            },
+        ),
+        (
+            # Invalid metadata field
+            {
+                "model": "otelcol",
+                "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
+                "application": "foo",
+                "does_not_exist": "foo",
+            },
+            {
+                "juju_model": "otelcol",
+                "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
+                "juju_application": "foo",
+                "juju_unit": "",
+                "juju_charm": "",
+            },
+        ),
+        (
+            # Missing mandatory "application" metadata field
+            {
+                "model": "otelcol",
+                "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
+                # "application": "intentionally commented out",
+            },
+            OTELCOL_LABELS
+        ),
+    ],
+)
+def test_forwarded_rules_have_topology(
     ctx,
     otelcol_container,
-    databag_logql_alert_rule_labeled,
-    databag_promql_alert_rule_labeled,
-    otelcol_bundled_promql_alert_rule_labeled,
-    generic_promql_alert_rule_labeled,
+    metadata,
+    expected_labels
 ):
     # GIVEN receive-otlp and send-otlp relations
-    databag = {"rules": {"logql": {"alerting": LOKI_RULES}, "promql": {"alerting": ZOO_RULES}}}
-    provider_appdata = OtlpConsumerAppData.model_validate(databag)
-    receiver = Relation("receive-otlp", remote_app_data=provider_appdata.to_databag())
-    sender_1 = Relation("send-otlp")
-    sender_2 = Relation("send-otlp")
+    rules = {
+        "logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]},
+        "promql": {"groups": [PROMQL_ALERT, PROMQL_RECORD]},
+    }
+    databag = {"rules": json.dumps(rules), "metadata": json.dumps(metadata)}
+    receiver = Relation("receive-otlp", remote_app_data=databag)
+    sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
+    sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     state = State(
         relations=[receiver, sender_1, sender_2],
         leader=True,
@@ -295,62 +291,40 @@ def test_forwarded_alert_rules_have_topology(
 
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state=state)
-
-    for rel in list(state_out.relations):
-        if rel.endpoint != "send-otlp":
+    for relation in list(state_out.relations):
+        if relation.endpoint != "send-otlp":
             continue
-        rules = OtlpConsumerAppData.model_validate(rel.local_app_data).rules
+        assert (decompressed := _decompress(relation.local_app_data.get("rules")))
+        databag = OtlpConsumerAppData.model_validate({"rules": decompressed, "metadata": metadata})
 
         # --- logql assertions ---
         # THEN the upstream databag alert rule has topology labels injected
-        group_name = "otelcol_f4d59020_loki_loki_alerts_alerts"
-        actual = get_group_by_name(rules.logql.alerting, group_name)
-        assert actual == databag_logql_alert_rule_labeled
+        group_name = "otelcol_f4d59020_charm_x_foo_alerts"
+        assert (actual := _get_group_by_name(databag.rules.logql, group_name))
+        assert _rules_have_labels(actual, expected_labels)
+
+        # THEN the upstream databag record rule has topology labels injected
+        group_name = "otelcol_f4d59020_charm_x_foobar_alerts"
+        assert (actual := _get_group_by_name(databag.rules.logql, group_name))
+        assert _rules_have_labels(actual, expected_labels)
 
         # --- promql assertions ---
         # THEN the upstream databag alert rule has topology labels injected
-        group_name = "otelcol_f4d59020_zoo_zookeeper_alerting_alerts"
-        actual = get_group_by_name(rules.promql.alerting, group_name)
-        assert actual == databag_promql_alert_rule_labeled
+        group_name = "otelcol_f4d59020_charm_x_bar_alerts"
+        assert (actual := _get_group_by_name(databag.rules.promql, group_name))
+        assert _rules_have_labels(actual, expected_labels)
+
+        # THEN the upstream databag record rule has topology labels injected
+        group_name = "otelcol_f4d59020_charm_x_barfoo_alerts"
+        assert (actual := _get_group_by_name(databag.rules.promql, group_name))
+        assert _rules_have_labels(actual, expected_labels)
 
         # THEN the bundled alert rule has topology labels injected
         group_name = "otelcol_f4d59020_opentelemetry_collector_k8s_Hardware_alerts"
-        actual = get_group_by_name(rules.promql.alerting, group_name)
-        assert actual == otelcol_bundled_promql_alert_rule_labeled
+        assert (actual := _get_group_by_name(databag.rules.promql, group_name))
+        assert _rules_have_labels(actual, OTELCOL_LABELS)
 
         # THEN the generic alert rule has topology labels injected
         group_name = "otelcol_f4d59020_opentelemetry_collector_k8s_AggregatorHostHealth_alerts"
-        actual = get_group_by_name(rules.promql.alerting, group_name)
-        assert actual == generic_promql_alert_rule_labeled
-
-
-def test_forwarded_alert_rules_compression(
-    ctx,
-    otelcol_container,
-):
-    # GIVEN receive-otlp and send-otlp relations
-    databag = {"rules": {"logql": {"alerting": LOKI_RULES}, "promql": {"alerting": ZOO_RULES}}}
-    provider_appdata = OtlpConsumerAppData.model_validate(databag)
-    receiver = Relation("receive-otlp", remote_app_data=provider_appdata.to_databag())
-    sender_1 = Relation("send-otlp")
-    sender_2 = Relation("send-otlp")
-    state = State(
-        relations=[receiver, sender_1, sender_2],
-        leader=True,
-        containers=otelcol_container,
-        model=Model("otelcol", uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"),
-    )
-
-    # WHEN any event executes the reconciler
-    state_out = ctx.run(ctx.on.update_status(), state=state)
-
-    for rel in list(state_out.relations):
-        if rel.endpoint != "send-otlp":
-            continue
-        raw_data = rel.local_app_data
-        # THEN the databag contains a compressed set of alert rules
-        expected = json.loads(LZMABase64.decompress(raw_data.get("rules", "")))
-        # AND WHEN they are accessed with OtlpConsumerAppData.rules
-        actual = json.loads(OtlpConsumerAppData.model_validate(raw_data).rules.model_dump_json())
-        # THEN they are decompressed
-        assert actual == expected
+        assert (actual := _get_group_by_name(databag.rules.promql, group_name))
+        assert _rules_have_labels(actual, OTELCOL_LABELS)
