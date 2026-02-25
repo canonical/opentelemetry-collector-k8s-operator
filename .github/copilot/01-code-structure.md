@@ -8,7 +8,6 @@ about where to place code and how to write tests.
 - `src/integrations.py`: integration classes that encapsulate relation logic (provider/requirer or consumer/provider pairs). Integrations handle databag shaping and relation-specific conversions.
 - `src/config_builder.py`: programmatic builder for the OpenTelemetry Collector configuration (produces YAML). Use it to compose receivers, exporters, processors, extensions and pipelines.
 - `src/config_manager.py`: higher-level config management utilities (persisting configs, validating, applying TLS options, global scrape settings).
-- `src/containers` or workload helpers (may be a module/file): Pebble layer construction, health-checks, and service lifecycle management belong here.
 - `src/constants.py`: shared constants and keys used across modules.
 - `tests/unit` and `tests/integration`: unit tests use `ops.testing` primitives; integration tests use `jubilant` and real Juju models.
 
@@ -27,7 +26,6 @@ about where to place code and how to write tests.
 Do not place workload code (Pebble layers, file writes, k8s API calls) directly inside event handlers.
 
 ## Integrations pattern
-- Implement each relation as a small class exposing clear methods (e.g. `on_relation_changed`, `on_relation_broken`, `get_local_app_data`).
 - Use pydantic models to validate and normalise relation databag contents (see `tests/unit/test_otlp.py`).
 - Keep relationship logic testable and free of side-effects: unit tests should be able to instantiate integration classes and call methods without Juju.
 
@@ -65,13 +63,43 @@ def on_config_changed(self, event):
 		restart_services()
 ```
 
+## Another good / bad example from this repo
+
+**Good example (small, testable helper)** — the charm keeps filesystem and container interactions
+in focused helper methods (example simplified from `src/charm.py`):
+```
+def _write_ca_certificates_to_disk(self, scrape_jobs, container):
+	if not container.can_connect():
+		return {}
+	cert_paths = {}
+	for job in scrape_jobs:
+		ca = job.get("tls_config", {}).get("ca")
+		if not ca or not self._validate_cert(ca):
+			continue
+		path = f"/etc/ssl/otel_{job['job_name']}_ca.pem"
+		container.push(path, ca)
+		cert_paths[job['job_name']] = path
+	return cert_paths
+```
+Why it's good: single responsibility, easy to unit-test (pass a mock `container`), and no hidden global side-effects.
+
+**Bad example (avoid IO-heavy properties)** — properties should be cheap; doing blocking IO in a property is brittle:
+```
+@property
+def _otelcol_version(self):
+	# BAD: runs `container.exec(...)` and may raise/timeout unexpectedly
+	version_output, _ = container.exec(["/usr/bin/otelcol", "--version"]).wait_output()
+	return parse_version(version_output)
+```
+Why it's bad: hidden IO in a property can throw, block, or be expensive. Prefer an explicit method like `get_workload_version()` with clear error handling and timeouts.
+
 ## PR expectations and style
 - Keep changes small and well-tested. Add unit tests for logic and integration tests for behaviour changes.
 - Update `src/integrations.py` and relevant tests when changing relation schemas or databag keys.
 - Use clear function names and keep single-responsibility functions.
 
 ## Where to look when debugging
-- `src/integrations.py` and `src/config_builder.py` for relation handling and config generation.
+- `src/integrations.py`, `src/config_builder.py`, `src/config_manager.py` for relation handling and config generation.
 - `tests/unit` for quick iteration; `tests/integration` for end-to-end scenarios.
 
 If Copilot is asked to modify or debug the charm, prefer small, test-driven changes that follow these conventions.

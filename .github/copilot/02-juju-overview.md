@@ -30,6 +30,8 @@ Charms should avoid embedding business logic in event handlers. Instead, they sh
 ---
 
 ## **Juju Events**
+The upstream docs for Juju Events are located at: https://documentation.ubuntu.com/juju/3.6/reference/hook/
+When in doubt, refer to them.
 Juju emits events to signal changes in the environment. Common events include:
 - **install** — initial setup of the workload.
 - **config-changed** — configuration updates. The `config-changed` hook is guaranteed to run after the `install` or `update-status` hooks.
@@ -38,16 +40,7 @@ Juju emits events to signal changes in the environment. Common events include:
 - **update-status** — periodic health reporting. Some charms use the `update-status` hook to perform polling of the workload's status.
 
 Event handlers should remain thin and delegate to a central reconciliation loop.
-
----
-
-## **Observed vs. Desired State**
-Juju charms operate by comparing:
-- **Observed state** — what the system currently looks like (files, services, relation data, configuration).
-- **Desired state** — what the system *should* look like based on charm logic and relation data.
-
-The charm’s job is to converge the system toward desired state in an idempotent way.
-
+    
 ---
 
 ## **Relations and Integrations**
