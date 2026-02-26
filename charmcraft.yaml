@@ -11,7 +11,7 @@ description: |
   (e.g. Jaeger, Prometheus, etc.) to multiple open-source or commercial back-ends.
 
 links:
-  # documentation: https://discourse.charmhub.io/
+  documentation: https://canonical-charmed-opentelemetry-collector-k8s.readthedocs-hosted.com/
   website: https://charmhub.io/opentelemetry-collector-k8s
   source: https://github.com/canonical/opentelemetry-collector-k8s-operator
   issues: https://github.com/canonical/opentelemetry-collector-k8s-operator/issues
