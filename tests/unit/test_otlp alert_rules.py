@@ -9,8 +9,8 @@ from typing import Any, Dict, Optional
 import pytest
 from cosl.utils import LZMABase64
 from ops.testing import Model, Relation, State
-from src.otlp import OtlpConsumerAppData
 
+from src.otlp import OtlpConsumerAppData, RulesModel
 
 OTELCOL_LABELS = {
     "juju_model": "otelcol",
@@ -59,6 +59,10 @@ PROMQL_RECORD = {
         }
     ],
 }
+ALL_RULES = {
+    "logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]},
+    "promql": {"groups": [PROMQL_ALERT, PROMQL_RECORD]},
+}
 
 
 def _decompress(rules: str) -> dict:
@@ -86,16 +90,21 @@ def _rules_have_labels(groups: Dict[str, Any], labels: Dict[str, Any]) -> bool:
     return True
 
 
+@pytest.mark.parametrize(
+    "valid_compression, compressed_rules",
+    [
+        (True, LZMABase64.compress(json.dumps(ALL_RULES, sort_keys=True))),
+        (False, "/Td6WFoAAATm1rRGAgAhARYAAAB0L+Wj4AM4AWFdAD2I"),
+    ],
+)
 def test_forwarded_rules_compression(
     ctx,
     otelcol_container,
+    valid_compression,
+    compressed_rules,
 ):
     # GIVEN receive-otlp and send-otlp relations
-    rules = {
-        "logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]},
-        "promql": {"groups": [PROMQL_ALERT, PROMQL_RECORD]},
-    }
-    databag = {"rules": json.dumps(rules), "metadata": "{}"}
+    databag = {"rules": compressed_rules, "metadata": "{}"}
     receiver = Relation("receive-otlp", remote_app_data=databag)
     sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
@@ -117,11 +126,19 @@ def test_forwarded_rules_compression(
         # THEN the databag contains a compressed set of rules
         assert isinstance(raw_rules, str)
         assert raw_rules.startswith("/")
-
-        # THEN the decompressed databag contains rules
         assert (decompressed := _decompress(raw_rules))
         assert isinstance(decompressed, dict)
-        assert len(decompressed.get("logql", {}).get("groups", [])) > 0
+        actual_groups = decompressed.get("logql", {}).get("groups", [])
+        if not valid_compression:
+            # THEN the decompressed databag contains no rules
+            assert not actual_groups
+        else:
+            # THEN the decompressed databag contains rules
+            assert actual_groups
+            assert (expected_groups := ALL_RULES.get("logql", {}).get("groups", []))
+            assert (actual_group_names := {group.get("name") for group in actual_groups})
+            assert (expected_group_names := {group.get("name") for group in expected_groups})
+            assert actual_group_names == expected_group_names
 
 
 @pytest.mark.parametrize(
@@ -188,15 +205,17 @@ def test_forwarding_otlp_rule_counts(
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state=state)
 
-    # THEN all expected rules exist in the databag
-    # AND databag_groups are included/forwarded
     for relation in list(state_out.relations):
         if relation.endpoint != "send-otlp":
             continue
         assert (decompressed := _decompress(relation.local_app_data.get("rules")))
-        rules = OtlpConsumerAppData.model_validate({"rules": decompressed, "metadata": {}}).rules
-        assert len(rules.logql.get("groups", [])) == expected_group_counts["logql"]
-        assert len(rules.promql.get("groups", [])) == expected_group_counts["promql"]
+        databag = OtlpConsumerAppData.model_validate({"rules": decompressed, "metadata": {}})
+
+        # THEN all expected rules exist in the databag
+        # * databag_groups are included/forwarded
+        assert isinstance(databag.rules, RulesModel)
+        assert len(databag.rules.logql.get("groups", [])) == expected_group_counts["logql"]
+        assert len(databag.rules.promql.get("groups", [])) == expected_group_counts["promql"]
 
 
 @pytest.mark.parametrize(
@@ -205,6 +224,15 @@ def test_forwarding_otlp_rule_counts(
         (
             # No metadata
             {},
+            OTELCOL_LABELS,
+        ),
+        (
+            # Missing mandatory "application" metadata field
+            {
+                "model": "otelcol",
+                "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
+                # "application": "intentionally commented out",
+            },
             OTELCOL_LABELS,
         ),
         (
@@ -255,23 +283,9 @@ def test_forwarding_otlp_rule_counts(
                 "juju_charm": "",
             },
         ),
-        (
-            # Missing mandatory "application" metadata field
-            {
-                "model": "otelcol",
-                "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                # "application": "intentionally commented out",
-            },
-            OTELCOL_LABELS
-        ),
     ],
 )
-def test_forwarded_rules_have_topology(
-    ctx,
-    otelcol_container,
-    metadata,
-    expected_labels
-):
+def test_forwarded_rules_have_topology(ctx, otelcol_container, metadata, expected_labels):
     # GIVEN receive-otlp and send-otlp relations
     rules = {
         "logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]},
@@ -295,6 +309,7 @@ def test_forwarded_rules_have_topology(
             continue
         assert (decompressed := _decompress(relation.local_app_data.get("rules")))
         databag = OtlpConsumerAppData.model_validate({"rules": decompressed, "metadata": metadata})
+        assert isinstance(databag.rules, RulesModel)
 
         # --- logql assertions ---
         # THEN the upstream databag alert rule has topology labels injected

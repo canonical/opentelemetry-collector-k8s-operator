@@ -52,18 +52,24 @@ def test_provider_app_data_raises_validation_error_lib(data, error_match):
     "provides, otlp_endpoint",
     (
         (
-            [
-                {
-                    "protocol": "fake",
-                    "endpoint": "http://host:0000",
-                    "telemetries": ["metrics"],
-                },
-                {
-                    "protocol": "http",
-                    "endpoint": "http://host:4317",
-                    "telemetries": ["metrics"],
-                },
-            ],
+            # GIVEN an endpoint with an invalid protocol
+            # * an endpoint with a valid protocol
+            {
+                "endpoints": json.dumps(
+                    [
+                        {
+                            "protocol": "fake",
+                            "endpoint": "http://host:0000",
+                            "telemetries": ["metrics"],
+                        },
+                        {
+                            "protocol": "http",
+                            "endpoint": "http://host:4317",
+                            "telemetries": ["metrics"],
+                        },
+                    ],
+                ),
+            },
             OtlpEndpoint(
                 protocol="http",
                 endpoint="http://host:4317",
@@ -71,46 +77,65 @@ def test_provider_app_data_raises_validation_error_lib(data, error_match):
             ),
         ),
         (
-            [
-                {
-                    "protocol": "http",
-                    "endpoint": "http://host:4317",
-                    "telemetries": ["logs", "fake", "traces"],
-                },
-            ],
+            # GIVEN an endpoint with valid and invalid telemetries
+            {
+                "endpoints": json.dumps(
+                    [
+                        {
+                            "protocol": "http",
+                            "endpoint": "http://host:4317",
+                            "telemetries": ["logs", "fake", "traces"],
+                        },
+                    ]
+                ),
+            },
             OtlpEndpoint(
                 protocol="http",
                 endpoint="http://host:4317",
                 telemetries=["logs", "traces"],
             ),
         ),
+        (
+            # GIVEN a valid endpoint
+            # * an invalid databag key
+            {
+                "endpoints": json.dumps(
+                    [
+                        {
+                            "protocol": "http",
+                            "endpoint": "http://host:4317",
+                            "telemetries": ["metrics"],
+                        }
+                    ],
+                ),
+                "does_not": "exist",
+            },
+            OtlpEndpoint(
+                protocol="http",
+                endpoint="http://host:4317",
+                telemetries=["metrics"],
+            ),
+        ),
     ),
 )
-def test_send_otlp_invalid_lib(ctx, otelcol_container, provides, otlp_endpoint):
-    # GIVEN a remote app provides an invalid OtlpEndpoint
+def test_send_otlp_invalid_databag_lib(ctx, otelcol_container, provides, otlp_endpoint):
+    # GIVEN a remote app provides an OtlpEndpoint
     # WHEN they are related over the "send-otlp" endpoint
-    provider = Relation(
-        "send-otlp",
-        id=123,
-        remote_app_data={"endpoints": json.dumps(provides)},
-    )
-    state = State(
-        relations=[provider],
-        leader=True,
-        containers=otelcol_container,
-    )
+    provider = Relation("send-otlp", id=123, remote_app_data=provides)
+    state = State(relations=[provider], leader=True, containers=otelcol_container)
 
     with ctx(ctx.on.update_status(), state=state) as mgr:
-        mgr.run()
-        # AND WHEN the consumer supports all telemetries
+        # WHEN the consumer processes the relation data
+        # * the consumer supports all protocols and telemetries
         with (
             patch.object(mgr.charm.otlp_consumer, "_protocols", new=ALL_PROTOCOLS),
             patch.object(mgr.charm.otlp_consumer, "_telemetries", new=ALL_TELEMETRIES),
         ):
+            # THEN the consumer does not raise an error
+            # * the returned endpoint does not include invalid protocols or telemetries
+            assert mgr.run()
             result = mgr.charm.otlp_consumer.endpoints[123]
-
-    # THEN the returned endpoint does not include invalid protocols or telemetries
-    assert result.model_dump() == otlp_endpoint.model_dump()
+            assert result.model_dump() == otlp_endpoint.model_dump()
 
 
 @pytest.mark.parametrize(

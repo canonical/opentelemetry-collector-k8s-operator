@@ -16,6 +16,7 @@ provide OTLP telemetry for Opentelemetry-collector.
 import copy
 import json
 import logging
+from lzma import LZMAError
 from typing import Any, Dict, List, Literal, Optional, OrderedDict, Sequence, Union
 
 from cosl.juju_topology import JujuTopology
@@ -74,8 +75,20 @@ class OtlpConsumerAppData(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    rules: RulesModel
+    rules: Union[RulesModel, str]
     metadata: OrderedDict[str, str]
+
+    @staticmethod
+    def decode_value(json_str: str) -> Any:
+        """Decode relation data values using BaseModel validation."""
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            try:
+                decompressed = LZMABase64.decompress(json_str)
+                return RulesModel.model_validate(json.loads(decompressed))
+            except (json.JSONDecodeError, ValidationError, LZMAError):
+                return ""
 
     @staticmethod
     def encode_value(obj: Any) -> str:
@@ -218,7 +231,12 @@ class OtlpConsumer(Object):
             if not (endpoints := self._filter_endpoints(endpoints)):
                 continue
 
-            app_databag = OtlpProviderAppData(endpoints=endpoints)
+            try:
+                # Ensure that the databag is valid
+                app_databag = OtlpProviderAppData(endpoints=endpoints)
+            except ValidationError as e:
+                logger.error(f"OTLP databag failed validation: {e}")
+                continue
 
             # Choose the first valid endpoint in list
             if endpoint_choice := next(
@@ -291,7 +309,9 @@ class OtlpProvider(Object):
 
         rules_map = {}
         for relation in self.model.relations[self._relation_name]:
-            consumer = relation.load(OtlpConsumerAppData, relation.app)
+            consumer = relation.load(
+                OtlpConsumerAppData, relation.app, decoder=OtlpConsumerAppData.decode_value
+            )
 
             # get rules for the desired query type
             if not (rules := getattr(consumer.rules, rules_obj.query_type, None)):
