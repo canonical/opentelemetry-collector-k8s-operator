@@ -1,7 +1,8 @@
 """Unit tests for certificate handling functionality."""
 
 import pytest
-from unittest.mock import MagicMock, patch
+from pathlib import PurePosixPath
+from unittest.mock import ANY, MagicMock, patch
 
 from charm import OpenTelemetryCollectorK8sCharm
 
@@ -93,7 +94,13 @@ def test_write_certificates_to_disk_scenarios(mock_charm, mock_container, sample
 
     # Verify container operations
     # make_dir is called from _ensure_certs_dir once using make_dir
-    mock_container.make_dir.assert_called_once_with("/etc/otelcol/certs/", make_parents=True)
+    mock_container.make_dir.assert_called_once_with(
+        path=PurePosixPath("/etc/otelcol/certs"),
+        make_parents=True,
+        permissions=ANY,
+        user=ANY,
+        group=ANY
+    )
     assert mock_container.push.call_count == expected_push_count
 
     # Verify specific push calls for single job scenarios

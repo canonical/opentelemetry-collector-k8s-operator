@@ -19,4 +19,5 @@ DASHBOARDS_DEST_PATH: Final[str] = "grafana_dashboards"
 FILE_STORAGE_DIRECTORY: Final[str] = "/otelcol"
 # Certs received from relation data for client-like operations, e.g. scrape_configs are stored here. Certs received from `tls-certificates` and `certificate_transfer` interfaces are stored in the root CA store
 CERTS_DIR: Final[str] = "/etc/otelcol/certs/"
+EXTERNAL_CONFIG_SECRETS_DIR: Final[str] = "/etc/otelcol/external_config_secrets/"
 INGRESS_IP_MATCHER: Final[str] = "ClientIP(`0.0.0.0/0`)"
