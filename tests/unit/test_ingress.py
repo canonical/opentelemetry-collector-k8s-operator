@@ -181,7 +181,8 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
         ]
 
     # WHEN traefik ingress is related to otelcol
-    receive_otlp = Relation("receive-otlp")
+    rules = json.dumps({"logql": {}, "promql": {}})
+    receive_otlp = Relation("receive-otlp", remote_app_data={"rules": rules, "metadata": "{}"})
     ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
     state = State(relations=[ingress, receive_otlp], containers=otelcol_container, leader=True)
 
@@ -190,26 +191,26 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
 
     # THEN ingress URL is present in receive-otlp relation databag
     receive_otlp_out = out_1.get_relations(receive_otlp.endpoint)[0]
-    assert json.loads(receive_otlp_out.local_app_data[OtlpProviderAppData.KEY])[
-        "endpoints"
-    ] == expected_endpoints(ingress=True)
+    endpoints = json.loads(receive_otlp_out.local_app_data.get("endpoints", "[]"))
+    databag = OtlpProviderAppData(endpoints=endpoints).model_dump()
+    assert databag["endpoints"] == expected_endpoints(ingress=True)
 
     # AND WHEN the receive-otlp relation is created
     out_2 = ctx.run(ctx.on.relation_created(receive_otlp), state)
 
     # THEN ingress URL is present in receive-otlp relation databag
     receive_otlp_out = out_2.get_relations(receive_otlp.endpoint)[0]
-    assert json.loads(receive_otlp_out.local_app_data[OtlpProviderAppData.KEY])[
-        "endpoints"
-    ] == expected_endpoints(ingress=True)
+    endpoints = json.loads(receive_otlp_out.local_app_data.get("endpoints", "[]"))
+    databag = OtlpProviderAppData(endpoints=endpoints).model_dump()
+    assert databag["endpoints"] == expected_endpoints(ingress=True)
 
     # AND WHEN ingress is removed
     out_3 = ctx.run(ctx.on.relation_broken(ingress), state)
     # THEN the internal URL is present in receive-otlp relation databag
     receive_otlp_out = out_3.get_relations(receive_otlp.endpoint)[0]
-    assert json.loads(receive_otlp_out.local_app_data[OtlpProviderAppData.KEY])[
-        "endpoints"
-    ] == expected_endpoints(ingress=False)
+    endpoints = json.loads(receive_otlp_out.local_app_data.get("endpoints", "[]"))
+    databag = OtlpProviderAppData(endpoints=endpoints).model_dump()
+    assert databag["endpoints"] == expected_endpoints(ingress=False)
 
 
 def test_blocked_status_when_scaled_without_ingress(ctx, otelcol_container):

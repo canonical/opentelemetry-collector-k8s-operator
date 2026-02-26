@@ -372,14 +372,13 @@ class ConfigManager:
     def add_otlp_forwarding(self, relation_map: Dict[int, OtlpEndpoint]):
         """Configure sending OTLP telemetry to an OTLP endpoint.
 
-        There are 2 different OTLP exporters for their respective protocols: gRPC and HTTP. If a
-        gRPC endpoint is provided, it is preferred over the HTTP equivalent.
-
-        Telemetry is sent to all pipelines since OTLP supports all and its computationally
-        inexpensive unless a receiver is connected and receiving telemetry.
+        There are 2 different OTLP exporters for their respective protocols:
+        gRPC (otlp) and HTTP (otlphttp). The collector exporters are configured
+        based on the provided OtlpEndpoint definitions. Data is sent to
+        pipelines for all defined telemetries.
 
         Args:
-            relation_map: a mapping of relation ID to a mapping of unit name to OtlpEndpoint
+            relation_map: a mapping of relation ID to a single OtlpEndpoint
         """
         # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlpexporter
         # https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlphttpexporter
