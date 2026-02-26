@@ -17,10 +17,11 @@ import copy
 import json
 import logging
 from lzma import LZMAError
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, OrderedDict, Sequence, Union
 
 from cosl.juju_topology import JujuTopology
-from cosl.rules import AlertRules, generic_alert_groups
+from cosl.rules import AlertRules, InvalidRulePathError, generic_alert_groups
 from cosl.utils import LZMABase64
 from ops import CharmBase
 from ops.framework import Object
@@ -133,8 +134,23 @@ class OtlpConsumer(Object):
         self._telemetries = telemetries if telemetries is not None else []
         self._topology = JujuTopology.from_charm(charm)
         charm_dir = self._charm.charm_dir
-        self._loki_rules_path = AlertRules.validate_rules_path(loki_rules_path, charm_dir)
-        self._prom_rules_path = AlertRules.validate_rules_path(prometheus_rules_path, charm_dir)
+        self._loki_rules_path = self._validate_rules_path(loki_rules_path, charm_dir)
+        self._prom_rules_path = self._validate_rules_path(prometheus_rules_path, charm_dir)
+
+    def _validate_rules_path(self, rules_path: str, charm_dir: Path) -> str:
+        """Validate the rules path and return an absolute path if valid.
+
+        If the path is invalid, log a warning and return the original path.
+        This method ensures that there is always a returned path, allowing
+        later methods to error if these paths do not exist.
+        """
+        try:
+            rules_path = AlertRules.resolve_dir_against_charm_path(rules_path, charm_dir=charm_dir)
+        except InvalidRulePathError as e:
+            logger.warning(
+                "Invalid Prometheus alert rules folder at %s: %s", e.rules_absolute_path, e.message
+            )
+        return rules_path
 
     def _filter_endpoints(
         self, endpoints: List[Dict[str, Union[str, List[str]]]]
