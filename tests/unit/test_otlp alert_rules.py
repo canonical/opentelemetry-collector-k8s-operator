@@ -135,8 +135,8 @@ def test_forwarded_rules_compression(
         else:
             # THEN the decompressed databag contains rules
             assert actual_groups
-            assert (expected_groups := ALL_RULES.get("logql", {}).get("groups", []))
             assert (actual_group_names := {group.get("name") for group in actual_groups})
+            assert (expected_groups := ALL_RULES.get("logql", {}).get("groups", []))
             assert (expected_group_names := {group.get("name") for group in expected_groups})
             assert actual_group_names == expected_group_names
 
