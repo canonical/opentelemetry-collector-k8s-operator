@@ -117,6 +117,9 @@ class OtlpConsumer(Object):
             rules provided by this charm.
     """
 
+    # NOTE: The AlertRules class supports both alert and record rules.
+    _rules_cls = AlertRules
+
     def __init__(
         self,
         charm: CharmBase,
@@ -145,7 +148,9 @@ class OtlpConsumer(Object):
         later methods to error if these paths do not exist.
         """
         try:
-            rules_path = AlertRules.resolve_dir_against_charm_path(rules_path, charm_dir=charm_dir)
+            rules_path = self._rules_cls.resolve_dir_against_charm_path(
+                rules_path, charm_dir=charm_dir
+            )
         except InvalidRulePathError as e:
             logger.warning(
                 "Invalid Prometheus alert rules folder at %s: %s", e.rules_absolute_path, e.message
@@ -206,9 +211,8 @@ class OtlpConsumer(Object):
             return
 
         # Define the rule types
-        # TODO: Create a type named "Rules"
-        loki_rules = AlertRules(query_type="logql", topology=self._topology)
-        prom_rules = AlertRules(query_type="promql", topology=self._topology)
+        loki_rules = self._rules_cls(query_type="logql", topology=self._topology)
+        prom_rules = self._rules_cls(query_type="promql", topology=self._topology)
 
         # Add rules
         prom_rules.add(
@@ -271,6 +275,9 @@ class OtlpProvider(Object):
         relation_name: The name of the relation to use.
     """
 
+    # NOTE: The AlertRules class supports both alert and record rules.
+    _rules_cls = AlertRules
+
     def __init__(
         self,
         charm: CharmBase,
@@ -320,8 +327,7 @@ class OtlpProvider(Object):
             a mapping of relation ID to a dictionary of alert rule groups
             following the OfficialRuleFileFormat from cos-lib.
         """
-        # TODO: Use the new Rules class
-        rules_obj = AlertRules(query_type, self._topology)
+        rules_obj = self._rules_cls(query_type, self._topology)
 
         rules_map = {}
         for relation in self.model.relations[self._relation_name]:

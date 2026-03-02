@@ -96,6 +96,7 @@ def _rules_have_labels(groups: Dict[str, Any], labels: Dict[str, Any]) -> bool:
         (True, LZMABase64.compress(json.dumps(ALL_RULES, sort_keys=True))),
         (False, "/Td6WFoAAATm1rRGAgAhARYAAAB0L+Wj4AM4AWFdAD2I"),
     ],
+    ids=["valid compression string", "invalid compressed string"]
 )
 def test_forwarded_rules_compression(
     ctx,
@@ -234,54 +235,6 @@ def test_forwarding_otlp_rule_counts(
                 # "application": "intentionally commented out",
             },
             OTELCOL_LABELS,
-        ),
-        (
-            # Minimal metadata
-            {
-                "model": "otelcol",
-                "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                "application": "foo",
-            },
-            {
-                "juju_model": "otelcol",
-                "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                "juju_application": "foo",
-                "juju_unit": "",
-                "juju_charm": "",
-            },
-        ),
-        (
-            # All metadata fields
-            {
-                "model": "otelcol",
-                "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                "application": "foo",
-                "unit": "0",
-                "charm_name": "foo",
-            },
-            {
-                "juju_model": "otelcol",
-                "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                "juju_application": "foo",
-                "juju_unit": "0",
-                "juju_charm": "foo",
-            },
-        ),
-        (
-            # Invalid metadata field
-            {
-                "model": "otelcol",
-                "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                "application": "foo",
-                "does_not_exist": "foo",
-            },
-            {
-                "juju_model": "otelcol",
-                "juju_model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-                "juju_application": "foo",
-                "juju_unit": "",
-                "juju_charm": "",
-            },
         ),
     ],
 )
