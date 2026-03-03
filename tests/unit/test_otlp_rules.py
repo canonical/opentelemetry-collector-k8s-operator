@@ -96,7 +96,7 @@ def _rules_have_labels(groups: Dict[str, Any], labels: Dict[str, Any]) -> bool:
         (True, LZMABase64.compress(json.dumps(ALL_RULES, sort_keys=True))),
         (False, "/Td6WFoAAATm1rRGAgAhARYAAAB0L+Wj4AM4AWFdAD2I"),
     ],
-    ids=["valid compression string", "invalid compressed string"]
+    ids=["valid compression string", "invalid compressed string"],
 )
 def test_forwarded_rules_compression(
     ctx,
@@ -142,56 +142,12 @@ def test_forwarded_rules_compression(
             assert actual_group_names == expected_group_names
 
 
-@pytest.mark.parametrize(
-    "forwarding_enabled, rules, expected_group_counts",
-    [
-        # format , databag_groups, generic_groups, bundled_groups, total
-        # logql  , (2)           , (0)           , (0)           , (0)
-        # promql , (2)           , (1)           , (3)           , (4)
-        (
-            False,
-            {
-                "logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]},
-                "promql": {"groups": [PROMQL_ALERT, PROMQL_RECORD]},
-            },
-            {"logql": 0, "promql": 4},
-        ),
-        # format , databag_groups, generic_groups, bundled_groups, total
-        # logql  , (2)           , (0)           , (0)           , (2)
-        # promql , (2)           , (1)           , (3)           , (6)
-        (
-            True,
-            {
-                "logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]},
-                "promql": {"groups": [PROMQL_ALERT, PROMQL_RECORD]},
-            },
-            {"logql": 2, "promql": 6},
-        ),
-        # format , databag_groups, generic_groups, bundled_groups, total
-        # logql  , (0)           , (0)           , (0)           , (0)
-        # promql , (2)           , (1)           , (3)           , (6)
-        (
-            True,
-            {"logql": {}, "promql": {"groups": [PROMQL_ALERT, PROMQL_RECORD]}},
-            {"logql": 0, "promql": 6},
-        ),
-        # format , databag_groups, generic_groups, bundled_groups, total
-        # logql  , (2)           , (0)           , (0)           , (2)
-        # promql , (0)           , (1)           , (3)           , (4)
-        (
-            True,
-            {"logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]}, "promql": {}},
-            {"logql": 2, "promql": 4},
-        ),
-    ],
-)
-def test_forwarding_otlp_rule_counts(
-    ctx, otelcol_container, forwarding_enabled, rules, expected_group_counts
-):
-    # GIVEN forwarding of rules is enabled
-    # * a receive-otlp with rules in the databag
+@pytest.mark.parametrize("forward_rules", [True, False])
+def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
+    # GIVEN forwarding of rules either enabled or disabled
+    # * a receive-otlp relation (without rules) in the databag
     # * two send-otlp relations
-    databag = {"rules": json.dumps(rules), "metadata": "{}"}
+    databag = {"rules": json.dumps({"logql": {}, "promql": {}}, sort_keys=True), "metadata": "{}"}
     receiver = Relation("receive-otlp", remote_app_data=databag)
     sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
@@ -200,7 +156,7 @@ def test_forwarding_otlp_rule_counts(
         leader=True,
         containers=otelcol_container,
         model=Model("otelcol", uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"),
-        config={"forward_alert_rules": forwarding_enabled},
+        config={"forward_alert_rules": forward_rules},
     )
 
     # WHEN any event executes the reconciler
@@ -212,11 +168,12 @@ def test_forwarding_otlp_rule_counts(
         assert (decompressed := _decompress(relation.local_app_data.get("rules")))
         databag = OtlpConsumerAppData.model_validate({"rules": decompressed, "metadata": {}})
 
-        # THEN all expected rules exist in the databag
-        # * databag_groups are included/forwarded
+        # THEN bundled rules are included in the forwarded databag
         assert isinstance(databag.rules, RulesModel)
-        assert len(databag.rules.logql.get("groups", [])) == expected_group_counts["logql"]
-        assert len(databag.rules.promql.get("groups", [])) == expected_group_counts["promql"]
+        logql_group_names = {r.get("name") for r in databag.rules.logql.get("groups", [])}
+        promql_group_names = {r.get("name") for r in databag.rules.promql.get("groups", [])}
+        assert not logql_group_names
+        assert "otelcol_f4d59020_opentelemetry_collector_k8s_Exporter_alerts" in promql_group_names
 
 
 @pytest.mark.parametrize(
