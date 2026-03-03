@@ -641,7 +641,13 @@ class ConfigManager:
             self.config.add_component(
                 Component.exporter,
                 "debug/juju-config-enabled",
-                {"verbosity": "normal", "use_internal_logger": False},
+                {
+                    "verbosity": "normal",
+                    "use_internal_logger": False,
+                    # We disable the sending_queue for now, but this is fixed upstream in rocks
+                    # >0.138.0. Remove this config once we bumped our otelcol rock.
+                    "sending_queue": {"enabled": False},
+                },
                 pipelines=[
                     f"{pipeline}/{self._unit_name}"
                     for pipeline, enabled in pipelines.items()
