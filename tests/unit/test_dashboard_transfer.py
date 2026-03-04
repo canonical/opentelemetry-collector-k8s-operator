@@ -26,18 +26,18 @@ def test_dashboard_propagation(ctx, execs):
                 f"file:dashboard-{idx}": {"charm": "some-charm", "content": content_in[idx]}
             }
         }
-        for idx, value in content_in.items()
+        for idx in content_in
     }
     # WHEN they are related to the grafana-dashboards-consumer endpoint
     consumer0 = Relation(
         "grafana-dashboards-consumer",
         remote_app_data={"dashboards": json.dumps(data[0])},
-        id=100
+        id=100,
     )
     consumer1 = Relation(
         "grafana-dashboards-consumer",
         remote_app_data={"dashboards": json.dumps(data[1])},
-        id=101
+        id=101,
     )
     # AND otelcol is related to multiple Grafana instances
     provider0 = Relation("grafana-dashboards-provider")
