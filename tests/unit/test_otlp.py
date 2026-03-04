@@ -11,17 +11,17 @@ import pytest
 from cosl.utils import LZMABase64
 from ops.testing import Model, Relation, State
 
-from src.integrations import cyclic_otlp_relations_exist
+from src.integrations import cyclic_otlp_relations_exist, send_otlp
 from src.otlp import OtlpConsumerAppData, OtlpEndpoint, OtlpProviderAppData, RulesModel
 
-ALL_PROTOCOLS = ["grpc", "http"]
-ALL_TELEMETRIES = ["logs", "metrics", "traces"]
-EMPTY_CONSUMER = {
-    "rules": json.dumps({"logql": {}, "promql": {}}),
-    "metadata": json.dumps({}),
-}
 SEND_OTLP = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
-RECEIVE_OTLP = Relation("receive-otlp", remote_app_data=EMPTY_CONSUMER)
+RECEIVE_OTLP = Relation(
+    "receive-otlp",
+    remote_app_data={
+        "rules": json.dumps({"logql": {}, "promql": {}}),
+        "metadata": json.dumps({}),
+    },
+)
 OTELCOL_METADATA = {
     "application": "opentelemetry-collector-k8s",
     "charm_name": "opentelemetry-collector-k8s",
@@ -102,7 +102,7 @@ def test_send_otlp(ctx, otelcol_container):
 
     # AND WHEN any event executes the reconciler
     with ctx(ctx.on.update_status(), state=state) as mgr:
-        remote_endpoints = mgr.charm.otlp_consumer.endpoints
+        remote_endpoints = send_otlp(mgr.charm)
 
     # THEN the returned endpoints are filtered accordingly
     assert {k: v.model_dump() for k, v in remote_endpoints.items()} == {

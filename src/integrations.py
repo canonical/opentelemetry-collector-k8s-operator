@@ -479,8 +479,6 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     config is enabled.
     """
     otlp_provider = OtlpProvider(charm)
-    # TODO: We can remove this since the lib doesn't observe events
-    charm.__setattr__("otlp_provider", otlp_provider)
     otlp_provider.add_endpoint(
         protocol="http", endpoint=f"{resolved_url}:4318", telemetries=["metrics"]
     )
@@ -527,8 +525,6 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
         loki_rules_path=charm_root.joinpath(LOKI_RULES_DEST_PATH).as_posix(),
         prometheus_rules_path=charm_root.joinpath(METRICS_RULES_DEST_PATH).as_posix(),
     )
-    # TODO: We can remove this since the lib doesn't observe events
-    charm.__setattr__("otlp_consumer", otlp_consumer)
 
     # Rules local to this charm
     shutil.copytree(
