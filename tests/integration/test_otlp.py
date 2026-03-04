@@ -26,7 +26,6 @@ def test_otlp_forwarding_insecure(
 ):
     """Scenario: OTLP forwarding via the OtlpProvider and OtlpConsumer classes."""
     # GIVEN a model with 2 local otel-collector charms
-    # TODO: Add a test: one packed and one from charmhub to test different versions of the OTLP lib
     juju.deploy(charm, "otelcol-one", resources=charm_resources, trust=True)
     juju.deploy(charm, "otelcol-two", resources=charm_resources, trust=True)
     juju.config("otelcol-two", {"debug_exporter_for_metrics": True})

@@ -465,24 +465,6 @@ def forward_dashboards(charm: CharmBase):
     # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
 
-def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
-    """Check if any application is related on both send-otlp and receive-otlp.
-
-    This function only checks relations for the current charm, i.e. one level deep. If there is
-    another charm in between these applications, but is still cyclic, then it will not be caught.
-    """
-    receive_relations = charm.model.relations.get(DEFAULT_PROVIDER_RELATION_NAME, [])
-    send_relations = charm.model.relations.get(DEFAULT_CONSUMER_RELATION_NAME, [])
-
-    if not receive_relations or not send_relations:
-        return False
-
-    receive_apps = {rel.app.name for rel in receive_relations if rel.app}
-    send_apps = {rel.app.name for rel in send_relations if rel.app}
-
-    return not receive_apps.isdisjoint(send_apps)
-
-
 def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     """Instantiate the OtlpProvider.
 
@@ -504,7 +486,6 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     )
 
     charm_root = charm.charm_dir.absolute()
-    # TODO: Rename the config option to forward_rules? This is breaking people, maybe add a new one and deprecate the old one?
     forward_rules = cast(bool, charm.config.get("forward_alert_rules"))
     _add_alerts(
         alerts=otlp_provider.rules("logql") if forward_rules else {},
@@ -563,6 +544,24 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
 
     otlp_consumer.publish()
     return otlp_consumer.endpoints
+
+
+def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
+    """Check if any application is related on both send-otlp and receive-otlp.
+
+    This function only checks relations for the current charm, i.e. one level deep. If there is
+    another charm in between these applications, but is still cyclic, then it will not be caught.
+    """
+    receive_relations = charm.model.relations.get(DEFAULT_PROVIDER_RELATION_NAME, [])
+    send_relations = charm.model.relations.get(DEFAULT_CONSUMER_RELATION_NAME, [])
+
+    if not receive_relations or not send_relations:
+        return False
+
+    receive_apps = {rel.app.name for rel in receive_relations if rel.app}
+    send_apps = {rel.app.name for rel in send_relations if rel.app}
+
+    return not receive_apps.isdisjoint(send_apps)
 
 
 # TODO: Luca: move this into the GrafanCloudIntegrator library

@@ -189,77 +189,6 @@ def test_add_remote_write():
     assert config == expected_config
 
 
-def test_add_otlp_forwarding():
-    # GIVEN an empty config
-    config_manager = ConfigManager(
-        unit_name="otelcol/0",
-        global_scrape_interval="",
-        global_scrape_timeout="",
-        insecure_skip_verify=True,
-    )
-
-    # WHEN the OTLP providers for multiple relations have provided the preferred protocols
-    unit_name = "otelcol/0"
-    config_manager.add_otlp_forwarding(
-        relation_map={
-            0: OtlpEndpoint(
-                **{
-                    "protocol": "grpc",
-                    "endpoint": "https://1.2.3.4:grpc-port",
-                    "telemetries": ["metrics", "traces"],
-                }
-            ),
-            1: OtlpEndpoint(
-                **{
-                    "protocol": "http",
-                    "endpoint": "http://host-1:http-port",
-                    "telemetries": ["logs"],
-                }
-            ),
-            2: OtlpEndpoint(
-                **{
-                    "protocol": "grpc",
-                    "endpoint": "https://host-2:grpc-port",
-                    "telemetries": ["logs", "traces"],
-                }
-            ),
-        }
-    )
-
-    # THEN the exporter config contains appropriate "otlp" and "otlphttp" exporters
-    expected_exporters = {
-        f"otlp/rel-0/{unit_name}": {
-            "endpoint": "https://1.2.3.4:grpc-port",
-            "tls": {"insecure": False, "insecure_skip_verify": True},
-        },
-        f"otlphttp/rel-1/{unit_name}": {
-            "endpoint": "http://host-1:http-port",
-            "tls": {"insecure": True, "insecure_skip_verify": True},
-        },
-        f"otlp/rel-2/{unit_name}": {
-            "endpoint": "https://host-2:grpc-port",
-            "tls": {"insecure": False, "insecure_skip_verify": True},
-        },
-    }
-    # AND the exporters are added to the appropriate pipelines
-    expected_pipelines = {
-        "logs/otelcol/0": {
-            "receivers": ["otlp/otelcol/0"],
-            "exporters": [f"otlphttp/rel-1/{unit_name}", f"otlp/rel-2/{unit_name}"],
-        },
-        "metrics/otelcol/0": {
-            "receivers": ["otlp/otelcol/0"],
-            "exporters": [f"otlp/rel-0/{unit_name}"],
-        },
-        "traces/otelcol/0": {
-            "receivers": ["otlp/otelcol/0"],
-            "exporters": [f"otlp/rel-0/{unit_name}", f"otlp/rel-2/{unit_name}"],
-        },
-    }
-    assert config_manager.config._config["exporters"] == expected_exporters
-    assert config_manager.config._config["service"]["pipelines"] == expected_pipelines
-
-
 @pytest.mark.parametrize(
     "enabled_pipelines,expected_pipelines",
     [
@@ -330,3 +259,74 @@ def test_add_debug_exporters(enabled_pipelines, expected_pipelines):
     # AND the debug exporter is only attached to the enabled pipelines
     # AND there is an OTLP receiver in each pipeline
     assert expected_pipelines == config_manager.config._config["service"]["pipelines"]
+
+
+def test_add_otlp_forwarding():
+    # GIVEN an empty config
+    config_manager = ConfigManager(
+        unit_name="otelcol/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+        insecure_skip_verify=True,
+    )
+
+    # WHEN the OTLP providers for multiple relations have provided the preferred protocols
+    unit_name = "otelcol/0"
+    config_manager.add_otlp_forwarding(
+        relation_map={
+            0: OtlpEndpoint(
+                **{
+                    "protocol": "grpc",
+                    "endpoint": "https://1.2.3.4:grpc-port",
+                    "telemetries": ["metrics", "traces"],
+                }
+            ),
+            1: OtlpEndpoint(
+                **{
+                    "protocol": "http",
+                    "endpoint": "http://host-1:http-port",
+                    "telemetries": ["logs"],
+                }
+            ),
+            2: OtlpEndpoint(
+                **{
+                    "protocol": "grpc",
+                    "endpoint": "https://host-2:grpc-port",
+                    "telemetries": ["logs", "traces"],
+                }
+            ),
+        }
+    )
+
+    # THEN the exporter config contains appropriate "otlp" and "otlphttp" exporters
+    expected_exporters = {
+        f"otlp/rel-0/{unit_name}": {
+            "endpoint": "https://1.2.3.4:grpc-port",
+            "tls": {"insecure": False, "insecure_skip_verify": True},
+        },
+        f"otlphttp/rel-1/{unit_name}": {
+            "endpoint": "http://host-1:http-port",
+            "tls": {"insecure": True, "insecure_skip_verify": True},
+        },
+        f"otlp/rel-2/{unit_name}": {
+            "endpoint": "https://host-2:grpc-port",
+            "tls": {"insecure": False, "insecure_skip_verify": True},
+        },
+    }
+    # AND the exporters are added to the appropriate pipelines
+    expected_pipelines = {
+        "logs/otelcol/0": {
+            "receivers": ["otlp/otelcol/0"],
+            "exporters": [f"otlphttp/rel-1/{unit_name}", f"otlp/rel-2/{unit_name}"],
+        },
+        "metrics/otelcol/0": {
+            "receivers": ["otlp/otelcol/0"],
+            "exporters": [f"otlp/rel-0/{unit_name}"],
+        },
+        "traces/otelcol/0": {
+            "receivers": ["otlp/otelcol/0"],
+            "exporters": [f"otlp/rel-0/{unit_name}", f"otlp/rel-2/{unit_name}"],
+        },
+    }
+    assert config_manager.config._config["exporters"] == expected_exporters
+    assert config_manager.config._config["service"]["pipelines"] == expected_pipelines
