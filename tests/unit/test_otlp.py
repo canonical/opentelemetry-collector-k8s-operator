@@ -12,7 +12,7 @@ from cosl.utils import LZMABase64
 from ops.testing import Model, Relation, State
 
 from src.integrations import cyclic_otlp_relations_exist, send_otlp
-from src.otlp import OtlpConsumerAppData, OtlpEndpoint, OtlpProviderAppData, RulesModel
+from charmlibs.otlp import OtlpConsumerAppData, OtlpEndpoint, OtlpProviderAppData, RulesModel
 
 SEND_OTLP = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
 RECEIVE_OTLP = Relation(
