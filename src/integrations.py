@@ -12,6 +12,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast, get_args
 
 import yaml
+from charmlibs.otlp import (
+    DEFAULT_CONSUMER_RELATION_NAME,
+    DEFAULT_PROVIDER_RELATION_NAME,
+    AlertRules,
+    JujuTopology,
+    OtlpConsumer,
+    OtlpEndpoint,
+    OtlpProvider,
+    RulesInput,
+)
 from charmlibs.pathops import PathProtocol
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
@@ -63,13 +73,6 @@ from constants import (
     METRICS_RULES_SRC_PATH,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
-)
-from charmlibs.otlp import (
-    OtlpConsumer,
-    OtlpEndpoint,
-    OtlpProvider,
-    DEFAULT_PROVIDER_RELATION_NAME,
-    DEFAULT_CONSUMER_RELATION_NAME,
 )
 
 logger = logging.getLogger(__name__)
@@ -517,16 +520,8 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     rules from related OTLP consumer charms are already gathered and saved to
     disk, ready to be published to the databag.
     """
+    # Copy rules local to this charm to aggregation path
     charm_root = charm.charm_dir.absolute()
-    otlp_consumer = OtlpConsumer(
-        charm,
-        protocols=["grpc", "http"],
-        telemetries=["logs", "metrics"],
-        loki_rules_path=charm_root.joinpath(LOKI_RULES_DEST_PATH).as_posix(),
-        prometheus_rules_path=charm_root.joinpath(METRICS_RULES_DEST_PATH).as_posix(),
-    )
-
-    # Rules local to this charm
     shutil.copytree(
         charm_root.joinpath(*LOKI_RULES_SRC_PATH.split("/")),
         charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
@@ -536,6 +531,19 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
         charm_root.joinpath(*METRICS_RULES_SRC_PATH.split("/")),
         charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
         dirs_exist_ok=True,
+    )
+
+    topology = JujuTopology.from_charm(charm)
+    loki_rules = AlertRules(query_type="logql", topology=topology)
+    prom_rules = AlertRules(query_type="promql", topology=topology)
+    loki_rules.add_path(charm_root.joinpath(LOKI_RULES_DEST_PATH), recursive=True)
+    prom_rules.add_path(charm_root.joinpath(METRICS_RULES_DEST_PATH), recursive=True)
+
+    otlp_consumer = OtlpConsumer(
+        charm,
+        protocols=["grpc", "http"],
+        telemetries=["logs", "metrics"],
+        rules=RulesInput(loki=loki_rules, prometheus=prom_rules),
     )
 
     otlp_consumer.publish()
