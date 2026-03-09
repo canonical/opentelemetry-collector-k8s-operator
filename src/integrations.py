@@ -63,14 +63,10 @@ from constants import (
     METRICS_RULES_SRC_PATH,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
+    OTLP_CONSUMER_RELATION_NAME,
+    OTLP_PROVIDER_RELATION_NAME,
 )
-from charmlibs.otlp import (
-    OtlpConsumer,
-    OtlpEndpoint,
-    OtlpProvider,
-    DEFAULT_PROVIDER_RELATION_NAME,
-    DEFAULT_CONSUMER_RELATION_NAME,
-)
+from charmlibs.otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider
 
 logger = logging.getLogger(__name__)
 
@@ -548,8 +544,8 @@ def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
     This function only checks relations for the current charm, i.e. one level deep. If there is
     another charm in between these applications, but is still cyclic, then it will not be caught.
     """
-    receive_relations = charm.model.relations.get(DEFAULT_PROVIDER_RELATION_NAME, [])
-    send_relations = charm.model.relations.get(DEFAULT_CONSUMER_RELATION_NAME, [])
+    receive_relations = charm.model.relations.get(OTLP_PROVIDER_RELATION_NAME, [])
+    send_relations = charm.model.relations.get(OTLP_CONSUMER_RELATION_NAME, [])
 
     if not receive_relations or not send_relations:
         return False
