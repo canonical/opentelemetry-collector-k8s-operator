@@ -20,7 +20,7 @@ Charmed [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetr
 ```bash
 charmcraft pack
 juju deploy ./opentelemetry-collector-k8s_ubuntu@24.04-amd64.charm otelcol \
-  --resource opentelemetry-collector-image=ubuntu/opentelemetry-collector \
+  --resource opentelemetry-collector-image=ubuntu/opentelemetry-collector@sha256:f153750aae4c80bc63093adf433d2e2ba5acdcabc6763d2b0949384944c5b48f \
   --queue_size=500 \
   --extra_alert_labels="environment:dev"
 ```
