@@ -12,7 +12,12 @@ from cosl.utils import LZMABase64
 from ops.testing import Model, Relation, State
 
 from src.integrations import cyclic_otlp_relations_exist, send_otlp
-from charmlibs.otlp import OtlpConsumerAppData, OtlpEndpoint, OtlpProviderAppData, RulesModel
+from charmlibs.interfaces.otlp import (
+    OtlpRequirerAppData,
+    OtlpEndpoint,
+    OtlpProviderAppData,
+    RulesModel,
+)
 
 SEND_OTLP = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
 RECEIVE_OTLP = Relation(
@@ -215,7 +220,7 @@ def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
     for relation in list(state_out.relations):
         if relation.endpoint == "send-otlp":
             assert (decompressed := _decompress(relation.local_app_data.get("rules")))
-            databag = OtlpConsumerAppData.model_validate({"rules": decompressed, "metadata": {}})
+            databag = OtlpRequirerAppData.model_validate({"rules": decompressed, "metadata": {}})
 
             # THEN bundled rules are included in the forwarded databag
             assert isinstance(databag.rules, RulesModel)

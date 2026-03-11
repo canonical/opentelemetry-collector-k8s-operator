@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast, get_args
 
 import yaml
+from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer
 from charmlibs.pathops import PathProtocol
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
@@ -61,12 +62,11 @@ from constants import (
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
+    OTLP_REQUIRER_RELATION_NAME,
+    OTLP_PROVIDER_RELATION_NAME,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
-    OTLP_CONSUMER_RELATION_NAME,
-    OTLP_PROVIDER_RELATION_NAME,
 )
-from charmlibs.otlp import OtlpConsumer, OtlpEndpoint, OtlpProvider
 
 logger = logging.getLogger(__name__)
 
@@ -468,7 +468,7 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     The gRPC protocol is not supported because Traefik (ingress) does not
     support it.
 
-    The otlp_provider.rules are rules gathered from the related OTLP consumer
+    The otlp_provider.rules are rules gathered from the related OTLP requirer
     charms. These rules are saved to a rules aggregation path on disk for their
     respective expression format (logql|promql), including both alerting and
     recording types. This is only applicable if the `forward_alert_rules`
@@ -494,15 +494,15 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
 
 
 def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
-    """Instantiate the OtlpConsumer.
+    """Instantiate the OtlpRequirer.
 
     This provides otelcol with the remote's OTLP endpoint for each relation.
 
     The bundled rule files from the src/*_rules directories are copied to a
     local path (*_RULES_DEST_PATH directories) within the charm's filesystem.
 
-    The `otlp_consumer.publish` then publishes them to the databag. See the
-    publish method's docstring of the otlp_consumer to understand what rules
+    The `otlp_requirer.publish` then publishes them to the databag. See the
+    publish method's docstring of the otlp_ to understand what rules
     are published to the databag and the mechanism to do so.
 
     Since these paths are wiped on every hook, they can be used as a source of
@@ -510,11 +510,11 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     databag.
 
     This function assumes that receive_otlp is called before, so that the
-    rules from related OTLP consumer charms are already gathered and saved to
+    rules from related OTLP requirer charms are already gathered and saved to
     disk, ready to be published to the databag.
     """
     charm_root = charm.charm_dir.absolute()
-    otlp_consumer = OtlpConsumer(
+    otlp_requirer = OtlpRequirer(
         charm,
         protocols=["grpc", "http"],
         telemetries=["logs", "metrics"],
@@ -534,8 +534,8 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
         dirs_exist_ok=True,
     )
 
-    otlp_consumer.publish()
-    return otlp_consumer.endpoints
+    otlp_requirer.publish()
+    return otlp_requirer.endpoints
 
 
 def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
@@ -545,7 +545,7 @@ def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
     another charm in between these applications, but is still cyclic, then it will not be caught.
     """
     receive_relations = charm.model.relations.get(OTLP_PROVIDER_RELATION_NAME, [])
-    send_relations = charm.model.relations.get(OTLP_CONSUMER_RELATION_NAME, [])
+    send_relations = charm.model.relations.get(OTLP_REQUIRER_RELATION_NAME, [])
 
     if not receive_relations or not send_relations:
         return False
