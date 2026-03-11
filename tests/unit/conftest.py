@@ -15,7 +15,7 @@ CHARM_ROOT = Path(__file__).parent.parent.parent
 @pytest.fixture
 def ctx(tmp_path):
     src_dirs = ["grafana_dashboards", "loki_alert_rules", "prometheus_alert_rules"]
-    # Create a virtual charm_root so Scenario respects the `src_dirs`
+    # Create a virtual charm_root so Scenario respects the `src_dirs`.
     # Related to https://github.com/canonical/operator/issues/1673
     for src_dir in src_dirs:
         source_path = CHARM_ROOT / "src" / src_dir
