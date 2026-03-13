@@ -40,7 +40,7 @@ def _decompress(rules: str) -> dict:
 
 
 def test_send_otlp(ctx, otelcol_container):
-    # GIVEN otelcol supports (defined by OtlpProvider) a subset of OTLP protocols and telemetries
+    # GIVEN otelcol supports (defined by OtlpRequirer) a subset of OTLP protocols and telemetries
     # * a remote app provides multiple OtlpEndpoints
     remote_app_data_1 = {
         "endpoints": json.dumps(
@@ -133,7 +133,7 @@ def test_receive_otlp(ctx, otelcol_container):
     state_out = ctx.run(ctx.on.update_status(), state=state)
     local_app_data = list(state_out.relations)[0].local_app_data
 
-    # THEN otelcol offers its supported (defined by OtlpRequirer) OTLP endpoints in the databag
+    # THEN otelcol offers its supported (defined by OtlpProvider) OTLP endpoints in the databag
     assert (actual_endpoints := json.loads(local_app_data.get("endpoints", "[]")))
     assert actual_endpoints == expected_endpoints["endpoints"]
 
