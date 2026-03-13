@@ -25,7 +25,7 @@ The charm uses the OTLP interface library (`OtlpConsumer`/`OtlpProvider`) and Op
 At a high level:
 
 1. The charm builds Juju topology from charm identity (`JujuTopology.from_charm(...)`).
-2. The OTLP relation library publishes topology metadata and topology-aware rules in relation databags.
+2. The OTLP relation library publishes topology metadata and topology-aware rules in relation data bags.
 3. Collector pipelines attach or surface topology labels depending on signal path:
    - logs: topology labels are surfaced as Loki labels
    - metrics: topology labels are attached for self-scraped metrics
