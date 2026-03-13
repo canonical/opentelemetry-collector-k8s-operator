@@ -156,6 +156,8 @@ requires:
     limit: 1
     optional: true
     description: Send charm traces to a charmed Tempo instance.
+  external-config:
+    interface: external-config
   ingress:
     interface: traefik_route
     limit: 1
