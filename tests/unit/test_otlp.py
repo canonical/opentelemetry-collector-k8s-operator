@@ -135,7 +135,7 @@ def test_receive_otlp(ctx, otelcol_container):
 
     # THEN otelcol offers its supported (defined by OtlpProvider) OTLP endpoints in the databag
     assert (actual_endpoints := json.loads(local_app_data.get("endpoints", "[]")))
-    assert (actual_endpoints == expected_endpoints["endpoints"])
+    assert actual_endpoints == expected_endpoints["endpoints"]
 
 
 @pytest.mark.parametrize(
