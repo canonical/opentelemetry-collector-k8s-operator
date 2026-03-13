@@ -8,11 +8,11 @@ import json
 from unittest.mock import patch
 
 import pytest
+from charmlibs.interfaces.otlp import OtlpEndpoint
 from cosl.utils import LZMABase64
 from ops.testing import Model, Relation, State
 
 from src.integrations import cyclic_otlp_relations_exist, send_otlp
-from src.otlp import OtlpConsumerAppData, OtlpEndpoint, OtlpProviderAppData, RulesModel
 
 SEND_OTLP = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
 RECEIVE_OTLP = Relation(
@@ -40,7 +40,7 @@ def _decompress(rules: str) -> dict:
 
 
 def test_send_otlp(ctx, otelcol_container):
-    # GIVEN otelcol supports (defined by OtlpProvider) a subset of OTLP protocols and telemetries
+    # GIVEN otelcol supports (defined by OtlpRequirer) a subset of OTLP protocols and telemetries
     # * a remote app provides multiple OtlpEndpoints
     remote_app_data_1 = {
         "endpoints": json.dumps(
@@ -135,10 +135,7 @@ def test_receive_otlp(ctx, otelcol_container):
 
     # THEN otelcol offers its supported (defined by OtlpProvider) OTLP endpoints in the databag
     assert (actual_endpoints := json.loads(local_app_data.get("endpoints", "[]")))
-    assert (
-        OtlpProviderAppData.model_validate({"endpoints": actual_endpoints}).model_dump()
-        == expected_endpoints
-    )
+    assert actual_endpoints == expected_endpoints["endpoints"]
 
 
 @pytest.mark.parametrize(
@@ -215,12 +212,10 @@ def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
     for relation in list(state_out.relations):
         if relation.endpoint == "send-otlp":
             assert (decompressed := _decompress(relation.local_app_data.get("rules")))
-            databag = OtlpConsumerAppData.model_validate({"rules": decompressed, "metadata": {}})
 
             # THEN bundled rules are included in the forwarded databag
-            assert isinstance(databag.rules, RulesModel)
-            logql_group_names = {r.get("name") for r in databag.rules.logql.get("groups", [])}
-            promql_group_names = {r.get("name") for r in databag.rules.promql.get("groups", [])}
+            logql_group_names = {r.get("name") for r in decompressed["logql"].get("groups", [])}
+            promql_group_names = {r.get("name") for r in decompressed["promql"].get("groups", [])}
             assert not logql_group_names
             assert (
                 "otelcol_f4d59020_opentelemetry_collector_k8s_Exporter_alerts"
@@ -232,9 +227,8 @@ def test_forwarded_rules_have_topology(ctx, otelcol_container):
     """Test that otelcol adds its own topology metadata in the databag.
 
     This test ensures that rules are always labeled even if labels are not
-    present in the upstream rules already. This is easier than checking if
-    rules are labeled in the send-otlp databag since cos-lib tests the rest of
-    the labeling rules feature.
+    present in the upstream rules already. `cos-lib` tests the rest of the
+    labeling rules feature.
     """
     # GIVEN an upstream receive-otlp databag with no metadata
     # * a send-otlp relation
