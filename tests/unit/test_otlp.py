@@ -8,11 +8,11 @@ import json
 from unittest.mock import patch
 
 import pytest
+from charmlibs.interfaces.otlp import OtlpEndpoint
 from cosl.utils import LZMABase64
 from ops.testing import Model, Relation, State
 
 from src.integrations import cyclic_otlp_relations_exist, send_otlp
-from charmlibs.interfaces.otlp import OtlpEndpoint
 
 SEND_OTLP = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
 RECEIVE_OTLP = Relation(
@@ -133,7 +133,7 @@ def test_receive_otlp(ctx, otelcol_container):
     state_out = ctx.run(ctx.on.update_status(), state=state)
     local_app_data = list(state_out.relations)[0].local_app_data
 
-    # THEN otelcol offers its supported (defined by OtlpProvider) OTLP endpoints in the databag
+    # THEN otelcol offers its supported (defined by OtlpRequirer) OTLP endpoints in the databag
     assert (actual_endpoints := json.loads(local_app_data.get("endpoints", "[]")))
     assert actual_endpoints == expected_endpoints["endpoints"]
 
@@ -227,9 +227,8 @@ def test_forwarded_rules_have_topology(ctx, otelcol_container):
     """Test that otelcol adds its own topology metadata in the databag.
 
     This test ensures that rules are always labeled even if labels are not
-    present in the upstream rules already. This is easier than checking if
-    rules are labeled in the send-otlp databag since cos-lib tests the rest of
-    the labeling rules feature.
+    present in the upstream rules already. `cos-lib` tests the rest of the
+    labeling rules feature.
     """
     # GIVEN an upstream receive-otlp databag with no metadata
     # * a send-otlp relation

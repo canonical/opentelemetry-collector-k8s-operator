@@ -502,16 +502,12 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     local path (*_RULES_DEST_PATH directories) within the charm's filesystem.
 
     The `otlp_requirer.publish` then publishes them to the databag. See the
-    publish method's docstring of the otlp_ to understand what rules
+    publish method's docstring of the otlp_requirer to understand what rules
     are published to the databag and the mechanism to do so.
 
     Since these paths are wiped on every hook, they can be used as a source of
     truth for the current state of rules for the library to publish to the
     databag.
-
-    This function assumes that receive_otlp is called before, so that the
-    rules from related OTLP requirer charms are already gathered and saved to
-    disk, ready to be published to the databag.
     """
     charm_root = charm.charm_dir.absolute()
     otlp_requirer = OtlpRequirer(
