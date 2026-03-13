@@ -27,3 +27,13 @@ otelcol 45246 root   17r      REG                8,1       474    3183206 /var/l
 ```
 
 Compare the total size of logs to the available memory.
+
+## Inspect alert rules in relation data bags
+
+In some relations, rules are compressed in the data bag and are not human readable, making troubleshooting difficult. Assuming your unit and endpoint are named `otelcol/0` and `receive-otlp` respectively, then you can troubleshoot the rules with:
+
+```bash
+juju show-unit otelcol/0 --format=json | \
+  jq -r '."otelcol/0"."relation-info"[] | select(.endpoint == "receive-otlp") | ."application-data".rules' | \
+  base64 -d | xz -d | jq
+```
