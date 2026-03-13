@@ -12,7 +12,6 @@ from ops.testing import Relation, State
 
 from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
-from charmlibs.interfaces.otlp import OtlpProviderAppData
 
 FQDN = "otelcol-0.otelcol-endpoints.otel.svc.cluster.local"
 
@@ -192,8 +191,7 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
     # THEN ingress URL is present in receive-otlp relation databag
     receive_otlp_out = out_1.get_relations(receive_otlp.endpoint)[0]
     endpoints = json.loads(receive_otlp_out.local_app_data.get("endpoints", "[]"))
-    databag = OtlpProviderAppData(endpoints=endpoints).model_dump()
-    assert databag["endpoints"] == expected_endpoints(ingress=True)
+    assert endpoints == expected_endpoints(ingress=True)
 
     # AND WHEN the receive-otlp relation is created
     out_2 = ctx.run(ctx.on.relation_created(receive_otlp), state)
@@ -201,16 +199,14 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
     # THEN ingress URL is present in receive-otlp relation databag
     receive_otlp_out = out_2.get_relations(receive_otlp.endpoint)[0]
     endpoints = json.loads(receive_otlp_out.local_app_data.get("endpoints", "[]"))
-    databag = OtlpProviderAppData(endpoints=endpoints).model_dump()
-    assert databag["endpoints"] == expected_endpoints(ingress=True)
+    assert endpoints == expected_endpoints(ingress=True)
 
     # AND WHEN ingress is removed
     out_3 = ctx.run(ctx.on.relation_broken(ingress), state)
     # THEN the internal URL is present in receive-otlp relation databag
     receive_otlp_out = out_3.get_relations(receive_otlp.endpoint)[0]
     endpoints = json.loads(receive_otlp_out.local_app_data.get("endpoints", "[]"))
-    databag = OtlpProviderAppData(endpoints=endpoints).model_dump()
-    assert databag["endpoints"] == expected_endpoints(ingress=False)
+    assert endpoints == expected_endpoints(ingress=False)
 
 
 def test_blocked_status_when_scaled_without_ingress(ctx, otelcol_container):

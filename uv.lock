@@ -151,10 +151,14 @@ wheels = [
 [[package]]
 name = "charmlibs-interfaces-otlp"
 version = "0.1.0"
-source = { git = "https://github.com/sinapah/charmlibs?subdirectory=interfaces%2Fotlp&branch=feat%2Fotlp-lib#7b5d9c6a8ae7888c0ca7d780751e04f75f9df823" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cosl" },
     { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cb/7b/e655137327b1e51916da281d52a59dae80ecbca530788170a86683d0db76/charmlibs_interfaces_otlp-0.1.0.tar.gz", hash = "sha256:300f111ff084de4394df785b800d571ef0a73074a23fca323cd2273047e0b294", size = 51665, upload-time = "2026-03-13T16:38:29.3Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/54/d894f788feefa40e3e09de6affeb6bcb0bb2393d74fea31cfe4990cdc0fa/charmlibs_interfaces_otlp-0.1.0-py3-none-any.whl", hash = "sha256:a4c94dd2a351e7cbd37f5c883a9441a94cb86d03ba924a5e84cf3dfa54c413d8", size = 9733, upload-time = "2026-03-13T16:38:27.963Z" },
 ]
 
 [[package]]
@@ -671,7 +675,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "charmed-service-mesh-helpers", specifier = ">=0.2.0" },
-    { name = "charmlibs-interfaces-otlp", git = "https://github.com/sinapah/charmlibs?subdirectory=interfaces%2Fotlp&branch=feat%2Fotlp-lib" },
+    { name = "charmlibs-interfaces-otlp" },
     { name = "charmlibs-pathops" },
     { name = "codespell", marker = "extra == 'dev'" },
     { name = "cosl" },
