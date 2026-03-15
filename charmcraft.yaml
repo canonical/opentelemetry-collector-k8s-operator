@@ -11,7 +11,7 @@ description: |
   (e.g. Jaeger, Prometheus, etc.) to multiple open-source or commercial back-ends.
 
 links:
-  # documentation: https://discourse.charmhub.io/
+  documentation: https://canonical-charmed-opentelemetry-collector-k8s.readthedocs-hosted.com/
   website: https://charmhub.io/opentelemetry-collector-k8s
   source: https://github.com/canonical/opentelemetry-collector-k8s-operator
   issues: https://github.com/canonical/opentelemetry-collector-k8s-operator/issues
@@ -167,8 +167,9 @@ requires:
     interface: otlp
     optional: true
     description: |
-      Send OTLP data to an OTLP server by agregating all supported OTLP endpoints offered by an
-      OTLP server. If multiple endpoints are supported, then the first supported one is chosen.
+      Send OTLP data to an OTLP server by agregating all supported OTLP endpoints offered by the
+      server. If multiple endpoints are supported, then the one with the most modern protocol is
+      chosen e.g., `gRPC` over `HTTP`.
       
       This endpoint currently supports:
         - gRPC for ["logs", "metrics"]

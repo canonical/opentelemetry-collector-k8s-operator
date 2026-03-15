@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast, get_args
 
 import yaml
+from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer
 from charmlibs.pathops import PathProtocol
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
@@ -61,15 +62,10 @@ from constants import (
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
+    OTLP_REQUIRER_RELATION_NAME,
+    OTLP_PROVIDER_RELATION_NAME,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
-)
-from otlp import (
-    OtlpConsumer,
-    OtlpEndpoint,
-    OtlpProvider,
-    DEFAULT_PROVIDER_RELATION_NAME,
-    DEFAULT_CONSUMER_RELATION_NAME,
 )
 
 logger = logging.getLogger(__name__)
@@ -465,24 +461,6 @@ def forward_dashboards(charm: CharmBase):
     # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
 
-def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
-    """Check if any application is related on both send-otlp and receive-otlp.
-
-    This function only checks relations for the current charm, i.e. one level deep. If there is
-    another charm in between these applications, but is still cyclic, then it will not be caught.
-    """
-    receive_relations = charm.model.relations.get(DEFAULT_PROVIDER_RELATION_NAME, [])
-    send_relations = charm.model.relations.get(DEFAULT_CONSUMER_RELATION_NAME, [])
-
-    if not receive_relations or not send_relations:
-        return False
-
-    receive_apps = {rel.app.name for rel in receive_relations if rel.app}
-    send_apps = {rel.app.name for rel in send_relations if rel.app}
-
-    return not receive_apps.isdisjoint(send_apps)
-
-
 def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     """Instantiate the OtlpProvider.
 
@@ -490,21 +468,18 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     The gRPC protocol is not supported because Traefik (ingress) does not
     support it.
 
-    The otlp_provider.rules are rules gathered from the related OTLP consumer
+    The otlp_provider.rules are rules gathered from the related OTLP requirer
     charms. These rules are saved to a rules aggregation path on disk for their
     respective expression format (logql|promql), including both alerting and
     recording types. This is only applicable if the `forward_alert_rules`
     config is enabled.
     """
     otlp_provider = OtlpProvider(charm)
-    # TODO: We can remove this since the lib doesn't observe events
-    charm.__setattr__("otlp_provider", otlp_provider)
     otlp_provider.add_endpoint(
         protocol="http", endpoint=f"{resolved_url}:4318", telemetries=["metrics"]
     )
 
     charm_root = charm.charm_dir.absolute()
-    # TODO: Rename the config option to forward_rules? This is breaking people, maybe add a new one and deprecate the old one?
     forward_rules = cast(bool, charm.config.get("forward_alert_rules"))
     _add_alerts(
         alerts=otlp_provider.rules("logql") if forward_rules else {},
@@ -519,35 +494,29 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
 
 
 def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
-    """Instantiate the OtlpConsumer.
+    """Instantiate the OtlpRequirer.
 
     This provides otelcol with the remote's OTLP endpoint for each relation.
 
     The bundled rule files from the src/*_rules directories are copied to a
     local path (*_RULES_DEST_PATH directories) within the charm's filesystem.
 
-    The `otlp_consumer.publish` then publishes them to the databag. See the
-    publish method's docstring of the otlp_consumer to understand what rules
+    The `otlp_requirer.publish` then publishes them to the databag. See the
+    publish method's docstring of the otlp_requirer to understand what rules
     are published to the databag and the mechanism to do so.
 
     Since these paths are wiped on every hook, they can be used as a source of
     truth for the current state of rules for the library to publish to the
     databag.
-
-    This function assumes that receive_otlp is called before, so that the
-    rules from related OTLP consumer charms are already gathered and saved to
-    disk, ready to be published to the databag.
     """
     charm_root = charm.charm_dir.absolute()
-    otlp_consumer = OtlpConsumer(
+    otlp_requirer = OtlpRequirer(
         charm,
         protocols=["grpc", "http"],
         telemetries=["logs", "metrics"],
         loki_rules_path=charm_root.joinpath(LOKI_RULES_DEST_PATH).as_posix(),
         prometheus_rules_path=charm_root.joinpath(METRICS_RULES_DEST_PATH).as_posix(),
     )
-    # TODO: We can remove this since the lib doesn't observe events
-    charm.__setattr__("otlp_consumer", otlp_consumer)
 
     # Rules local to this charm
     shutil.copytree(
@@ -561,8 +530,26 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
         dirs_exist_ok=True,
     )
 
-    otlp_consumer.publish()
-    return otlp_consumer.endpoints
+    otlp_requirer.publish()
+    return otlp_requirer.endpoints
+
+
+def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
+    """Check if any application is related on both send-otlp and receive-otlp.
+
+    This function only checks relations for the current charm, i.e. one level deep. If there is
+    another charm in between these applications, but is still cyclic, then it will not be caught.
+    """
+    receive_relations = charm.model.relations.get(OTLP_PROVIDER_RELATION_NAME, [])
+    send_relations = charm.model.relations.get(OTLP_REQUIRER_RELATION_NAME, [])
+
+    if not receive_relations or not send_relations:
+        return False
+
+    receive_apps = {rel.app.name for rel in receive_relations if rel.app}
+    send_apps = {rel.app.name for rel in send_relations if rel.app}
+
+    return not receive_apps.isdisjoint(send_apps)
 
 
 # TODO: Luca: move this into the GrafanCloudIntegrator library
