@@ -1,54 +1,30 @@
 # How JujuTopology labels appear in OTLP telemetry
 
-[This telemetry labels explanation doc](https://documentation.ubuntu.com/observability/track-2/explanation/telemetry-labels/) is outdated, as it does not mention what the telemetry is normalized to in the OTLP data model.
+This document focuses on telemetry labeling in the OTLP data model that is core to the opentelemetry-collector charm's pipelines.
 
-Juju topology labels identify where telemetry comes from in a Juju model.
-In this charm, the labels are represented as the usual keys:
+Juju topology labels identify where telemetry comes from in a Juju model:
 
 - `juju_model`
 - `juju_model_uuid`
 - `juju_application`
-- `juju_unit`
 - `juju_charm`
+- `juju_unit`
 
-This page explains where those labels are injected for OTLP-related flows, and where they are expected to already exist.
+This page explains where those labels are injected into the OTLP data model, and where they are expected to already exist.
 
 ## Why this matters
 
 OTLP data is often centralized and mixed across many applications and models.
 Without topology attributes, logs, metrics, and traces are much harder to filter, route, alert on, and correlate.
+Some applications may already have [telemetry labels](https://documentation.ubuntu.com/observability/track-2/explanation/telemetry-labels/), and knowing the structure within the charm's pipelines is important for Juju admin operations like [filtering](https://documentation.ubuntu.com/observability/latest/how-to/selectively-drop-telemetry-otelcol/), [tiering](https://documentation.ubuntu.com/observability/latest/how-to/tiered-otelcols/), and debugging the pipeline with the `debug_exporter_for_X` [config options in the charm](https://charmhub.io/opentelemetry-collector-k8s/configurations?channel=dev/edge).
 
-## Injection points in this charm
+## Telemetry sources
 
-The charm uses the OTLP interface library (`OtlpConsumer`/`OtlpProvider`) and OpenTelemetry Collector config generation to preserve and propagate Juju topology context.
+If OTLP data enters the pipeline with existing labels, they will be preserved, unless overwritten with processors. In other words, it is the responsibility of charm developers to instrument their applications so that Juju topology labels are present. This is often abstracted by charm libraries which do this internally. For self-monitoring of the collector itself, the `receivers`/`exporters` in the config file are instrumented with the charm's own topology.
 
-At a high level:
+## Logs
 
-1. The charm builds Juju topology from charm identity (`JujuTopology.from_charm(...)`).
-2. The OTLP relation library publishes topology metadata and topology-aware rules in relation data bags.
-3. Collector pipelines attach or surface topology labels depending on signal path:
-   - logs: topology labels are surfaced as Loki labels
-   - metrics: topology labels are attached for self-scraped metrics
-   - traces: topology should be present as OTLP resource attributes from the emitter side
-
-## Logs: how labels are surfaced
-
-For logs forwarded to Loki, the collector uses Loki exporter attribute hints.
-The config adds `loki.attribute.labels` including Juju keys, so those attributes become Loki stream labels.
-
-Conceptually:
-
-- log/resource attributes carry Juju topology values
-- collector sets Loki label hints
-- Loki indexes those values as labels for querying and alerting
-
-### Placeholder: logs screenshot
-
-<!-- TODO: Insert screenshot of logs in OTEL pipeline showing Juju topology attributes -->
-
-`[LOGS_SCREENSHOT_PLACEHOLDER]`
-
-### Placeholder: OTLP logs sample
+### Labels in the OTLP data model
 
 ```json
 {
@@ -77,20 +53,18 @@ Conceptually:
 }
 ```
 
-## Metrics: how labels are attached
+### Logs in the Grafana UI
+
+`[LOGS_SCREENSHOT_PLACEHOLDER]`
+
+## Metrics
 
 For collector self-monitoring metrics, the charm explicitly configures scrape labels with Juju topology (`add_self_scrape(...)`).
 Those labels are then attached to scraped metric series.
 
 For incoming OTLP metrics from related workloads, the collector forwards the OTLP metric payload selected via the OTLP relation endpoint. In that flow, topology is expected to already be present in OTLP resource attributes from the sender side.
 
-### Placeholder: metrics screenshot
-
-<!-- TODO: Insert screenshot of metric series showing juju_* labels -->
-
-`[METRICS_SCREENSHOT_PLACEHOLDER]`
-
-### Placeholder: OTLP metrics sample
+### Labeled metrics in the OTLP data model
 
 ```json
 {
@@ -117,19 +91,17 @@ For incoming OTLP metrics from related workloads, the collector forwards the OTL
 }
 ```
 
+### Metrics in the Grafana UI
+
+`[METRICS_SCREENSHOT_PLACEHOLDER]`
+
 ## Traces: where topology belongs
 
 Trace ingestion/forwarding in this charm is configured through tracing integrations and OTLP HTTP exporters for Tempo paths.
 
 For traces, Juju topology should be represented in OTLP resource attributes (typically on the ResourceSpans). The collector pipeline forwards that context so traces can be filtered and correlated by source in the backend.
 
-### Placeholder: traces screenshot
-
-<!-- TODO: Insert screenshot of trace/resource attributes showing juju_* keys -->
-
-`[TRACES_SCREENSHOT_PLACEHOLDER]`
-
-### Placeholder: OTLP traces sample
+### Labeled spans in the OTLP data model
 
 ```json
 {
@@ -156,14 +128,35 @@ For traces, Juju topology should be represented in OTLP resource attributes (typ
 }
 ```
 
-## What the OTLP relation library injects directly
+### Traces in the Grafana UI
 
-The OTLP relation library injects Juju topology into:
+`[TRACES_SCREENSHOT_PLACEHOLDER]`
 
-- relation metadata (`metadata`) published by the OTLP consumer
-- rule material (LogQL/PromQL) generated or processed with topology context
+## Rules: injecting requirer topology
 
-This enables downstream systems to keep alerting/rule scope aligned with the same origin metadata as telemetry.
+Although, this is technically not a concern of the opentelemetry-collector pipeline, rules are core to the [OTLP charm library](https://github.com/canonical/charmlibs/tree/main/interfaces/otlp) which injects the requirer's Juju topology into the rules. This enables downstream systems to keep alerting/rule scope aligned with the same origin metadata as telemetry. For example, the labeled rules indicate that they are specific to the `send` (`opentelemetry-collector-k8s`) application:
+
+```mermaid
+flowchart LR
+    S["send<br>(otelcol)"] --(send-otlp)--> R["receive<br>(otelcol)"]
+```
+
+```yaml
+groups:
+- name: rules_faf8c6cc_send_Both_alerts
+  rules:
+  - alert: Alerting
+    expr: (count_over_time({job=~".+", juju_application="send", juju_model="rules",
+      juju_model_uuid="faf8c6cc-698e-4c9a-8c14-f5dec651cd62", juju_charm="opentelemetry-collector-k8s"}[30s])
+      > 100)
+    labels:
+      juju_application: send
+      juju_charm: opentelemetry-collector-k8s
+      juju_model: rules
+      juju_model_uuid: faf8c6cc-698e-4c9a-8c14-f5dec651cd62
+      juju_unit: send/0
+      severity: high
+```
 
 ## Practical takeaway
 
