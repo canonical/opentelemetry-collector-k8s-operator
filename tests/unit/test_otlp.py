@@ -15,20 +15,7 @@ from ops.testing import Model, Relation, State
 from src.integrations import cyclic_otlp_relations_exist, send_otlp
 
 SEND_OTLP = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
-RECEIVE_OTLP = Relation(
-    "receive-otlp",
-    remote_app_data={
-        "rules": json.dumps({"logql": {}, "promql": {}}),
-        "metadata": json.dumps({}),
-    },
-)
-OTELCOL_METADATA = {
-    "application": "opentelemetry-collector-k8s",
-    "charm_name": "opentelemetry-collector-k8s",
-    "model": "otelcol",
-    "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-    "unit": "opentelemetry-collector-k8s/0",
-}
+RECEIVE_OTLP = Relation("receive-otlp", remote_app_data={"rules": "{}", "metadata": "{}"})
 
 
 def _replace(*args, **kwargs):
@@ -190,11 +177,18 @@ def test_cyclic_relations(ctx, otelcol_container, relations, is_cyclic):
 
 
 @pytest.mark.parametrize("forward_rules", [True, False])
-def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
+def test_forwarding_otlp_rule_counts(
+    ctx,
+    otelcol_container,
+    forward_rules,
+    all_rules,
+    promql_bundled_rule_count,
+    logql_bundled_rule_count,
+):
     # GIVEN forwarding of rules is either enabled or disabled
     # * a receive-otlp relation (without rules) in the databag
     # * two send-otlp relations
-    databag = {"rules": json.dumps({"logql": {}, "promql": {}}, sort_keys=True), "metadata": "{}"}
+    databag = {"rules": json.dumps(all_rules, sort_keys=True), "metadata": "{}"}
     receiver = Relation("receive-otlp", remote_app_data=databag)
     sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
@@ -213,17 +207,28 @@ def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
         if relation.endpoint == "send-otlp":
             assert (decompressed := _decompress(relation.local_app_data.get("rules")))
 
-            # THEN bundled rules are included in the forwarded databag
-            logql_group_names = {r.get("name") for r in decompressed["logql"].get("groups", [])}
-            promql_group_names = {r.get("name") for r in decompressed["promql"].get("groups", [])}
-            assert not logql_group_names
-            assert (
-                "otelcol_f4d59020_opentelemetry_collector_k8s_Exporter_alerts"
-                in promql_group_names
+            # THEN bundled rules are always included in the forwarded databag
+            # * incoming databag rules are conditionally included in the forwarded databag
+            databag_rule_count = 2
+            logql_generic_rule_count = 0
+            promql_generic_rule_count = 1
+            promql_count = (
+                (databag_rule_count if forward_rules else 0)
+                + promql_bundled_rule_count
+                + promql_generic_rule_count
             )
+            logql_count = (
+                (databag_rule_count if forward_rules else 0)
+                + logql_bundled_rule_count
+                + logql_generic_rule_count
+            )
+            logql_groups = decompressed["logql"].get("groups", [])
+            promql_groups = decompressed["promql"].get("groups", [])
+            assert len(logql_groups) == logql_count
+            assert len(promql_groups) == promql_count
 
 
-def test_forwarded_rules_have_topology(ctx, otelcol_container):
+def test_forwarded_rules_have_topology(ctx, otelcol_container, otelcol_metadata):
     """Test that otelcol adds its own topology metadata in the databag.
 
     This test ensures that rules are always labeled even if labels are not
@@ -232,9 +237,7 @@ def test_forwarded_rules_have_topology(ctx, otelcol_container):
     """
     # GIVEN an upstream receive-otlp databag with no metadata
     # * a send-otlp relation
-    rules = {"logql": {}, "promql": {}}
-    databag = {"rules": json.dumps(rules), "metadata": "{}"}
-    receiver = Relation("receive-otlp", remote_app_data=databag)
+    receiver = Relation("receive-otlp", remote_app_data={"rules": "{}", "metadata": "{}"})
     sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     state = State(
@@ -249,4 +252,4 @@ def test_forwarded_rules_have_topology(ctx, otelcol_container):
     for relation in list(state_out.relations):
         if relation.endpoint == "send-otlp":
             # THEN otelcol adds its own topology metadata to the databag
-            assert json.loads(relation.local_app_data.get("metadata")) == OTELCOL_METADATA
+            assert json.loads(relation.local_app_data.get("metadata")) == otelcol_metadata
