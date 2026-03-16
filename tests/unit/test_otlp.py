@@ -15,19 +15,64 @@ from ops.testing import Model, Relation, State
 from src.integrations import cyclic_otlp_relations_exist, send_otlp
 
 SEND_OTLP = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
-RECEIVE_OTLP = Relation(
-    "receive-otlp",
-    remote_app_data={
-        "rules": json.dumps({"logql": {}, "promql": {}}),
-        "metadata": json.dumps({}),
-    },
-)
+RECEIVE_OTLP = Relation("receive-otlp", remote_app_data={"rules": "{}", "metadata": "{}"})
 OTELCOL_METADATA = {
     "application": "opentelemetry-collector-k8s",
     "charm_name": "opentelemetry-collector-k8s",
     "model": "otelcol",
     "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
     "unit": "opentelemetry-collector-k8s/0",
+}
+OTELCOL_TOPOLOGY = {
+    "juju_application": "opentelemetry-collector-k8s",
+    "charm_name": "opentelemetry-collector-k8s",
+    "model": "otelcol",
+    "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
+}
+LOGQL_ALERT = {
+    "name": "otelcol_f4d59020_charm_x_foo_alerts",
+    "rules": [
+        {
+            "alert": "HighLogVolume",
+            "expr": 'count_over_time({job=~".+"}[30s]) > 100',
+            "labels": {"severity": "high"},
+        },
+    ],
+}
+LOGQL_RECORD = {
+    "name": "otelcol_f4d59020_charm_x_foobar_alerts",
+    "rules": [
+        {
+            "record": "log:error_rate:rate5m",
+            "expr": 'sum by (service) (rate({job=~".+"} | json | level="error" [5m]))',
+            "labels": {"severity": "high"},
+        }
+    ],
+}
+PROMQL_ALERT = {
+    "name": "otelcol_f4d59020_charm_x_bar_alerts",
+    "rules": [
+        {
+            "alert": "Workload Missing",
+            "expr": 'up{job=~".+"} == 0',
+            "for": "0m",
+            "labels": {"severity": "critical"},
+        },
+    ],
+}
+PROMQL_RECORD = {
+    "name": "otelcol_f4d59020_charm_x_barfoo_alerts",
+    "rules": [
+        {
+            "record": "code:prometheus_http_requests_total:sum",
+            "expr": 'sum by (code) (prometheus_http_requests_total{job=~".+"})',
+            "labels": {"severity": "high"},
+        }
+    ],
+}
+ALL_RULES = {
+    "logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]},
+    "promql": {"groups": [PROMQL_ALERT, PROMQL_RECORD]},
 }
 
 
@@ -194,7 +239,7 @@ def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
     # GIVEN forwarding of rules is either enabled or disabled
     # * a receive-otlp relation (without rules) in the databag
     # * two send-otlp relations
-    databag = {"rules": json.dumps({"logql": {}, "promql": {}}, sort_keys=True), "metadata": "{}"}
+    databag = {"rules": json.dumps(ALL_RULES, sort_keys=True), "metadata": "{}"}
     receiver = Relation("receive-otlp", remote_app_data=databag)
     sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
@@ -214,13 +259,25 @@ def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
             assert (decompressed := _decompress(relation.local_app_data.get("rules")))
 
             # THEN bundled rules are included in the forwarded databag
-            logql_group_names = {r.get("name") for r in decompressed["logql"].get("groups", [])}
-            promql_group_names = {r.get("name") for r in decompressed["promql"].get("groups", [])}
-            assert not logql_group_names
-            assert (
-                "otelcol_f4d59020_opentelemetry_collector_k8s_Exporter_alerts"
-                in promql_group_names
+            databag_rule_count = 2
+            logql_generic_rule_count = 0
+            logql_bundled_rule_count = 0
+            promql_generic_rule_count = 1
+            promql_bundled_rule_count = 3
+            promql_count = (
+                (databag_rule_count if forward_rules else 0)
+                + promql_bundled_rule_count
+                + promql_generic_rule_count
             )
+            logql_count = (
+                (databag_rule_count if forward_rules else 0)
+                + logql_bundled_rule_count
+                + logql_generic_rule_count
+            )
+            logql_groups = decompressed["logql"].get("groups", [])
+            promql_groups = decompressed["promql"].get("groups", [])
+            assert len(logql_groups) == logql_count
+            assert len(promql_groups) == promql_count
 
 
 def test_forwarded_rules_have_topology(ctx, otelcol_container):
@@ -232,9 +289,7 @@ def test_forwarded_rules_have_topology(ctx, otelcol_container):
     """
     # GIVEN an upstream receive-otlp databag with no metadata
     # * a send-otlp relation
-    rules = {"logql": {}, "promql": {}}
-    databag = {"rules": json.dumps(rules), "metadata": "{}"}
-    receiver = Relation("receive-otlp", remote_app_data=databag)
+    receiver = Relation("receive-otlp", remote_app_data={"rules": "{}", "metadata": "{}"})
     sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     state = State(
