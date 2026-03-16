@@ -5,6 +5,7 @@
 
 import dataclasses
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -14,6 +15,10 @@ from ops.testing import Model, Relation, State
 
 from src.integrations import cyclic_otlp_relations_exist, send_otlp
 
+_CHARM_SRC = Path(__file__).parent.parent.parent / "src"
+PROMQL_BUNDLED_RULE_COUNT = len(list((_CHARM_SRC / "prometheus_alert_rules").glob("*.rules")))
+LOGQL_BUNDLED_RULE_COUNT = len(list((_CHARM_SRC / "loki_alert_rules").glob("*.rules")))
+
 SEND_OTLP = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
 RECEIVE_OTLP = Relation("receive-otlp", remote_app_data={"rules": "{}", "metadata": "{}"})
 OTELCOL_METADATA = {
@@ -22,12 +27,6 @@ OTELCOL_METADATA = {
     "model": "otelcol",
     "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
     "unit": "opentelemetry-collector-k8s/0",
-}
-OTELCOL_TOPOLOGY = {
-    "juju_application": "opentelemetry-collector-k8s",
-    "charm_name": "opentelemetry-collector-k8s",
-    "model": "otelcol",
-    "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
 }
 LOGQL_ALERT = {
     "name": "otelcol_f4d59020_charm_x_foo_alerts",
@@ -258,12 +257,13 @@ def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
         if relation.endpoint == "send-otlp":
             assert (decompressed := _decompress(relation.local_app_data.get("rules")))
 
-            # THEN bundled rules are included in the forwarded databag
+            # THEN bundled rules are always included in the forwarded databag
+            # * incoming databag rules are conditionally included in the forwarded databag
             databag_rule_count = 2
             logql_generic_rule_count = 0
-            logql_bundled_rule_count = 0
+            logql_bundled_rule_count = LOGQL_BUNDLED_RULE_COUNT
             promql_generic_rule_count = 1
-            promql_bundled_rule_count = 3
+            promql_bundled_rule_count = PROMQL_BUNDLED_RULE_COUNT
             promql_count = (
                 (databag_rule_count if forward_rules else 0)
                 + promql_bundled_rule_count
