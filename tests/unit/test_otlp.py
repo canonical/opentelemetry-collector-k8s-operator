@@ -5,7 +5,6 @@
 
 import dataclasses
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -15,64 +14,8 @@ from ops.testing import Model, Relation, State
 
 from src.integrations import cyclic_otlp_relations_exist, send_otlp
 
-_CHARM_SRC = Path(__file__).parent.parent.parent / "src"
-PROMQL_BUNDLED_RULE_COUNT = len(list((_CHARM_SRC / "prometheus_alert_rules").glob("*.rules")))
-LOGQL_BUNDLED_RULE_COUNT = len(list((_CHARM_SRC / "loki_alert_rules").glob("*.rules")))
-
 SEND_OTLP = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
 RECEIVE_OTLP = Relation("receive-otlp", remote_app_data={"rules": "{}", "metadata": "{}"})
-OTELCOL_METADATA = {
-    "application": "opentelemetry-collector-k8s",
-    "charm_name": "opentelemetry-collector-k8s",
-    "model": "otelcol",
-    "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-    "unit": "opentelemetry-collector-k8s/0",
-}
-LOGQL_ALERT = {
-    "name": "otelcol_f4d59020_charm_x_foo_alerts",
-    "rules": [
-        {
-            "alert": "HighLogVolume",
-            "expr": 'count_over_time({job=~".+"}[30s]) > 100',
-            "labels": {"severity": "high"},
-        },
-    ],
-}
-LOGQL_RECORD = {
-    "name": "otelcol_f4d59020_charm_x_foobar_alerts",
-    "rules": [
-        {
-            "record": "log:error_rate:rate5m",
-            "expr": 'sum by (service) (rate({job=~".+"} | json | level="error" [5m]))',
-            "labels": {"severity": "high"},
-        }
-    ],
-}
-PROMQL_ALERT = {
-    "name": "otelcol_f4d59020_charm_x_bar_alerts",
-    "rules": [
-        {
-            "alert": "Workload Missing",
-            "expr": 'up{job=~".+"} == 0',
-            "for": "0m",
-            "labels": {"severity": "critical"},
-        },
-    ],
-}
-PROMQL_RECORD = {
-    "name": "otelcol_f4d59020_charm_x_barfoo_alerts",
-    "rules": [
-        {
-            "record": "code:prometheus_http_requests_total:sum",
-            "expr": 'sum by (code) (prometheus_http_requests_total{job=~".+"})',
-            "labels": {"severity": "high"},
-        }
-    ],
-}
-ALL_RULES = {
-    "logql": {"groups": [LOGQL_ALERT, LOGQL_RECORD]},
-    "promql": {"groups": [PROMQL_ALERT, PROMQL_RECORD]},
-}
 
 
 def _replace(*args, **kwargs):
@@ -234,11 +177,18 @@ def test_cyclic_relations(ctx, otelcol_container, relations, is_cyclic):
 
 
 @pytest.mark.parametrize("forward_rules", [True, False])
-def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
+def test_forwarding_otlp_rule_counts(
+    ctx,
+    otelcol_container,
+    forward_rules,
+    all_rules,
+    promql_bundled_rule_count,
+    logql_bundled_rule_count,
+):
     # GIVEN forwarding of rules is either enabled or disabled
     # * a receive-otlp relation (without rules) in the databag
     # * two send-otlp relations
-    databag = {"rules": json.dumps(ALL_RULES, sort_keys=True), "metadata": "{}"}
+    databag = {"rules": json.dumps(all_rules, sort_keys=True), "metadata": "{}"}
     receiver = Relation("receive-otlp", remote_app_data=databag)
     sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
@@ -261,9 +211,7 @@ def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
             # * incoming databag rules are conditionally included in the forwarded databag
             databag_rule_count = 2
             logql_generic_rule_count = 0
-            logql_bundled_rule_count = LOGQL_BUNDLED_RULE_COUNT
             promql_generic_rule_count = 1
-            promql_bundled_rule_count = PROMQL_BUNDLED_RULE_COUNT
             promql_count = (
                 (databag_rule_count if forward_rules else 0)
                 + promql_bundled_rule_count
@@ -280,7 +228,7 @@ def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
             assert len(promql_groups) == promql_count
 
 
-def test_forwarded_rules_have_topology(ctx, otelcol_container):
+def test_forwarded_rules_have_topology(ctx, otelcol_container, otelcol_metadata):
     """Test that otelcol adds its own topology metadata in the databag.
 
     This test ensures that rules are always labeled even if labels are not
@@ -304,4 +252,4 @@ def test_forwarded_rules_have_topology(ctx, otelcol_container):
     for relation in list(state_out.relations):
         if relation.endpoint == "send-otlp":
             # THEN otelcol adds its own topology metadata to the databag
-            assert json.loads(relation.local_app_data.get("metadata")) == OTELCOL_METADATA
+            assert json.loads(relation.local_app_data.get("metadata")) == otelcol_metadata
