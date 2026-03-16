@@ -194,8 +194,7 @@ def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
     # GIVEN forwarding of rules is either enabled or disabled
     # * a receive-otlp relation (without rules) in the databag
     # * two send-otlp relations
-    databag = {"rules": json.dumps({"logql": {}, "promql": {}}, sort_keys=True), "metadata": "{}"}
-    receiver = Relation("receive-otlp", remote_app_data=databag)
+    receiver = Relation("receive-otlp", remote_app_data={"rules": "{}", "metadata": "{}"})
     sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     state = State(
@@ -213,6 +212,7 @@ def test_forwarding_otlp_rule_counts(ctx, otelcol_container, forward_rules):
         if relation.endpoint == "send-otlp":
             assert (decompressed := _decompress(relation.local_app_data.get("rules")))
 
+            # TODO: There is an assertion bug here because this should check that forwarding disabled means no rules in databag. Not that our bundled rules are forwarded.
             # THEN bundled rules are included in the forwarded databag
             logql_group_names = {r.get("name") for r in decompressed["logql"].get("groups", [])}
             promql_group_names = {r.get("name") for r in decompressed["promql"].get("groups", [])}
@@ -232,9 +232,7 @@ def test_forwarded_rules_have_topology(ctx, otelcol_container):
     """
     # GIVEN an upstream receive-otlp databag with no metadata
     # * a send-otlp relation
-    rules = {"logql": {}, "promql": {}}
-    databag = {"rules": json.dumps(rules), "metadata": "{}"}
-    receiver = Relation("receive-otlp", remote_app_data=databag)
+    receiver = Relation("receive-otlp", remote_app_data={"rules": "{}", "metadata": "{}"})
     sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
     state = State(
