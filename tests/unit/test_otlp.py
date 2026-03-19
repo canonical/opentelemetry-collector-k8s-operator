@@ -59,9 +59,9 @@ def test_send_otlp(ctx, otelcol_container):
 
     expected_endpoints = {
         456: OtlpEndpoint(
-            protocol="http",
-            endpoint="http://provider-456.endpoint:4318",
-            telemetries=["metrics"],
+            protocol="grpc",
+            endpoint="http://provider-456.endpoint:4317",
+            telemetries=["traces"],
         ),
         123: OtlpEndpoint(
             protocol="http",
@@ -104,7 +104,7 @@ def test_receive_otlp(ctx, otelcol_container):
             {
                 "protocol": "http",
                 "endpoint": "http://fqdn:4318",
-                "telemetries": ["metrics"],
+                "telemetries": ["metrics", "logs", "traces"],
             }
         ],
     }
