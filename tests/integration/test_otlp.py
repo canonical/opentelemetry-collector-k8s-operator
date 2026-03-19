@@ -41,7 +41,8 @@ def test_otlp_forwarding_insecure(
 
     # AND a Grafana which has its metrics scraped by the `requirer` and sends its traces to the `requirer`
     juju.deploy("grafana-k8s", "grafana", channel="dev/edge")
-    juju.integrate("grafana", "requirer")
+    juju.integrate("grafana:metrics-endpoint", "requirer")
+    juju.integrate("grafana:workload-tracing", "requirer")
 
     # WHEN "one" is related to "two" over the OTLP endpoints
     juju.integrate("requirer:send-otlp", "provider:receive-otlp")
