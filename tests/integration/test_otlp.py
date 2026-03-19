@@ -36,11 +36,11 @@ def test_otlp_forwarding_insecure(
         "debug_exporter_for_traces": True})
 
     # AND a `flog` which generates fake logs and sends them to the `requirer`
-    juju.deploy("flog-k8s", "flog", channel="latest/edge")
+    juju.deploy("flog-k8s", "flog", channel="latest/edge", trust=True)
     juju.integrate("flog", "requirer")
 
     # AND a Grafana which has its metrics scraped by the `requirer` and sends its traces to the `requirer`
-    juju.deploy("grafana-k8s", "grafana", channel="dev/edge")
+    juju.deploy("grafana-k8s", "grafana", channel="dev/edge", trust=True)
     juju.integrate("grafana:metrics-endpoint", "requirer")
     juju.integrate("grafana:workload-tracing", "requirer")
 
