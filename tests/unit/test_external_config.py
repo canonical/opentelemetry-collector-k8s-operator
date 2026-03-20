@@ -290,7 +290,7 @@ def test_external_config_invalid_yaml_with_error_handling(config_manager):
     ]
 
     # WHEN external config is added
-    with patch("config_manager.logger") as mock_logger:
+    with patch("src.config_manager.logger") as mock_logger:
         config_manager.add_external_configs(external_configs)
 
         # THEN an error is logged and processing continues
@@ -311,7 +311,7 @@ def test_external_config_missing_config_yaml_key(config_manager):
     ]
 
     # WHEN external config is added
-    with patch("config_manager.logger") as mock_logger:
+    with patch("src.config_manager.logger") as mock_logger:
         config_manager.add_external_configs(external_configs)
 
         # THEN a warning is logged
@@ -337,7 +337,7 @@ def test_external_config_missing_pipelines_key(config_manager):
     ]
 
     # WHEN external config is added
-    with patch("config_manager.logger") as mock_logger:
+    with patch("src.config_manager.logger") as mock_logger:
         config_manager.add_external_configs(external_configs)
 
         # THEN a warning is logged
@@ -370,7 +370,7 @@ def test_external_config_invalid_component_type(config_manager):
     ]
 
     # WHEN external config is added
-    with patch("config_manager.logger") as mock_logger:
+    with patch("src.config_manager.logger") as mock_logger:
         config_manager.add_external_configs(external_configs)
 
         # THEN a warning is logged for the invalid component type

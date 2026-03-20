@@ -684,6 +684,6 @@ class ConfigManager:
                         Component(config_type),
                         comp_name,
                         cnf,
-                        pipelines=[f"{pipeline}/{self._unit_name}" for pipeline in configs["pipelines"]],
+                        pipelines=[f"{getattr(p, 'value', p)}/{self._unit_name}" for p in configs["pipelines"]],
                     )
                     logger.debug("component type: '%s', name: '%s' added to config", config_type, comp_name)
