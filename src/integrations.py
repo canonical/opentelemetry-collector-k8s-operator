@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast, get_args
 
 import yaml
-from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer
+from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer, RuleStore
 from charmlibs.pathops import PathProtocol
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
@@ -49,7 +49,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     TLSCertificatesRequiresV4,
 )
 from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
-from cosl.rules import JujuTopology, Rules
+from cosl.rules import JujuTopology
 from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
 from ops.model import Relation
@@ -63,8 +63,8 @@ from constants import (
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
-    OTLP_REQUIRER_RELATION_NAME,
     OTLP_PROVIDER_RELATION_NAME,
+    OTLP_REQUIRER_RELATION_NAME,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
@@ -475,23 +475,22 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     recording types. This is only applicable if the `forward_alert_rules`
     config is enabled.
     """
-    otlp_provider = OtlpProvider(charm)
-    otlp_provider.add_endpoint(
+    # Publish endpoints for the requirer
+    OtlpProvider(charm).add_endpoint(
         protocol="http", endpoint=f"{resolved_url}:4318", telemetries=["metrics"]
-    )
+    ).publish()
 
+    # Access the requirer's rules
     charm_root = charm.charm_dir.absolute()
     forward_rules = cast(bool, charm.config.get("forward_alert_rules"))
     _add_alerts(
-        alerts=otlp_provider.rules("logql") if forward_rules else {},
+        alerts=OtlpProvider(charm).rules("logql") if forward_rules else {},
         dest_path=charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
     )
     _add_alerts(
-        alerts=otlp_provider.rules("promql") if forward_rules else {},
+        alerts=OtlpProvider(charm).rules("promql") if forward_rules else {},
         dest_path=charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
     )
-
-    otlp_provider.publish()
 
 
 def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
@@ -510,7 +509,7 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     truth for the current state of rules for the library to publish to the
     databag.
     """
-    # Rules local to this charm
+    # Use the paths on disk to coordinate and forward rules
     charm_root = charm.charm_dir.absolute()
     shutil.copytree(
         charm_root.joinpath(*LOKI_RULES_SRC_PATH.split("/")),
@@ -523,20 +522,18 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
         dirs_exist_ok=True,
     )
 
-    topology = JujuTopology.from_charm(charm)
-    loki_rules = Rules(query_type="logql", topology=topology)
-    prom_rules = Rules(query_type="promql", topology=topology)
-    loki_rules.add_path(charm_root.joinpath(LOKI_RULES_DEST_PATH), recursive=True)
-    prom_rules.add_path(charm_root.joinpath(METRICS_RULES_DEST_PATH), recursive=True)
-    otlp_consumer = OtlpRequirer(
-        charm,
-        protocols=["grpc", "http"],
-        telemetries=["logs", "metrics"],
-        rules=RuleStore(loki=loki_rules, prometheus=prom_rules),
+    # Publish rules for the provider
+    rules = (
+        RuleStore(JujuTopology.from_charm(charm))
+        .add_logql_path(charm_root.joinpath(LOKI_RULES_DEST_PATH), recursive=True)
+        .add_promql_path(charm_root.joinpath(METRICS_RULES_DEST_PATH), recursive=True)
     )
+    OtlpRequirer(charm, rules=rules).publish()
 
-    otlp_consumer.publish()
-    return otlp_consumer.endpoints
+    # Access the provider's endpoints
+    return OtlpRequirer(
+        charm, protocols=["grpc", "http"], telemetries=["logs", "metrics"]
+    ).endpoints
 
 
 def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
