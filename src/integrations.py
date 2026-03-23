@@ -12,16 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast, get_args
 
 import yaml
-from charmlibs.otlp import (
-    DEFAULT_CONSUMER_RELATION_NAME,
-    DEFAULT_PROVIDER_RELATION_NAME,
-    AlertRules,
-    JujuTopology,
-    OtlpConsumer,
-    OtlpEndpoint,
-    OtlpProvider,
-    RulesInput,
-)
+from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer
 from charmlibs.pathops import PathProtocol
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
@@ -58,7 +49,8 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     TLSCertificatesRequiresV4,
 )
 from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
-from cosl import LZMABase64
+from cosl.rules import JujuTopology, Rules
+from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
 from ops.model import Relation
 
@@ -534,12 +526,11 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     )
 
     topology = JujuTopology.from_charm(charm)
-    loki_rules = AlertRules(query_type="logql", topology=topology)
-    prom_rules = AlertRules(query_type="promql", topology=topology)
+    loki_rules = Rules(query_type="logql", topology=topology)
+    prom_rules = Rules(query_type="promql", topology=topology)
     loki_rules.add_path(charm_root.joinpath(LOKI_RULES_DEST_PATH), recursive=True)
     prom_rules.add_path(charm_root.joinpath(METRICS_RULES_DEST_PATH), recursive=True)
-
-    otlp_consumer = OtlpConsumer(
+    otlp_consumer = OtlpRequirer(
         charm,
         protocols=["grpc", "http"],
         telemetries=["logs", "metrics"],

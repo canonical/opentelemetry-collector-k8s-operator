@@ -151,7 +151,7 @@ wheels = [
 [[package]]
 name = "charmlibs-interfaces-otlp"
 version = "0.1.0"
-source = { git = "https://github.com/sinapah/charmlibs?subdirectory=interfaces%2Fotlp&branch=feat%2Fno-rules-from-path#8e601b7e0699939a5f55446ee25fffa0b2a9355c" }
+source = { git = "https://github.com/michaelthamm/charmlibs?subdirectory=interfaces%2Fotlp&branch=feat%2Frules-interface#f44fdcdb888c2a3262cca9d1649632018ffbd6bc" }
 dependencies = [
     { name = "cosl" },
     { name = "requests" },
@@ -214,7 +214,7 @@ wheels = [
 
 [[package]]
 name = "cosl"
-version = "1.6.0"
+version = "1.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ops" },
@@ -223,9 +223,9 @@ dependencies = [
     { name = "tenacity" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9c/e7/71ada7c5c0c05867e9dce60a07f804ac427e36dd32a4629fabf400b0f689/cosl-1.6.0.tar.gz", hash = "sha256:6a70aa0b6f87716014ff98f7ef91ffd2617ff52b9a920f7116912ce0cbaf82fe", size = 149492, upload-time = "2026-03-06T13:55:51.25Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8b/86/a1756838edef0bb2e82bbb51d1164dda731334dc0494f3c69d006c7f6429/cosl-1.7.0.tar.gz", hash = "sha256:ab6e1f74a9ddcd8f55fe36b7bedb4c0fe983b5b35776094b31a31e48e63808b6", size = 149830, upload-time = "2026-03-23T17:55:25.872Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/18/44/e70100c97df74daee88d696c21f6729453b3db29f4dcd4b735cddf5ff791/cosl-1.6.0-py3-none-any.whl", hash = "sha256:5a3baa8a5930fc763be0ef093b679f325e1c84b43fd0fdf95df2488a15fa2b6b", size = 37772, upload-time = "2026-03-06T13:55:50.034Z" },
+    { url = "https://files.pythonhosted.org/packages/35/3d/30d2a98fa06c72abb79aceb06f8e6a9848e806d25f86f4f327afa9b13a0b/cosl-1.7.0-py3-none-any.whl", hash = "sha256:a3469c228a0c89418a5d0c9c2c72b520b4f9973fab35ac193b1de9adfac8a4fb", size = 37833, upload-time = "2026-03-23T17:55:24.592Z" },
 ]
 
 [[package]]
@@ -671,7 +671,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "charmed-service-mesh-helpers", specifier = ">=0.2.0" },
-    { name = "charmlibs-interfaces-otlp", git = "https://github.com/sinapah/charmlibs?subdirectory=interfaces%2Fotlp&branch=feat%2Fno-rules-from-path" },
+    { name = "charmlibs-interfaces-otlp", git = "https://github.com/michaelthamm/charmlibs?subdirectory=interfaces%2Fotlp&branch=feat%2Frules-interface" },
     { name = "charmlibs-pathops" },
     { name = "codespell", marker = "extra == 'dev'" },
     { name = "cosl" },
