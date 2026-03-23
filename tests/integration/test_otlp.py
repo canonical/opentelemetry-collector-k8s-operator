@@ -24,7 +24,7 @@ def get_ingress_url(juju: jubilant.Juju) -> str:
 def test_otlp_forwarding_insecure(
     juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]
 ):
-    """Scenario: OTLP forwarding via the OtlpProvider and OtlpConsumer classes."""
+    """Scenario: OTLP forwarding via the OtlpProvider and OtlpRequirer classes."""
     # GIVEN a model with 2 local otel-collector charms
     juju.deploy(charm, "otelcol-one", resources=charm_resources, trust=True)
     juju.deploy(charm, "otelcol-two", resources=charm_resources, trust=True)
