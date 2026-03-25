@@ -95,10 +95,12 @@ def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
             ],
             "receive-loki-logs": [  # must be paired with:
                 {"send-loki-logs"},  # or
+                {"send-otlp"},
                 {"cloud-config"},
             ],
             "receive-traces": [  # must be paired with:
                 {"send-traces"},  # or
+                {"send-otlp"},
                 {"cloud-config"},
             ],
             "grafana-dashboards-consumer": [  # must be paired with:

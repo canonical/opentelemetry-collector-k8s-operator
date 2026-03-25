@@ -64,8 +64,8 @@ def test_otlp_forwarding_insecure(
     time.sleep(lookback_window)
 
     # AND WHEN we check the provider logs for forwarded OTLP data from requirer
-    provider_logs = sh.kubectl.logs(
-        "provider-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
+    provider_logs = juju.ssh(
+        target="provider/0", container="otelcol", command="pebble logs"
     )
 
     # THEN the metrics from requirer are forwarded to provider
@@ -112,11 +112,11 @@ def test_otlp_forwarding_secure(juju: jubilant.Juju, charm: str, charm_resources
     time.sleep(lookback_window)
 
     # THEN OTLP forwarding fails since requirer does not trust provider's cert
-    requirer_logs = sh.kubectl.logs(
-        "requirer-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
+    requirer_logs = juju.ssh(
+        target="requirer/0", container="otelcol", command="pebble logs"
     )
-    provider_logs = sh.kubectl.logs(
-        "provider-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
+    provider_logs = juju.ssh(
+        target="provider/0", container="otelcol", command="pebble logs"
     )
     assert "tls: failed to verify certificate" in requirer_logs
     assert "juju_application=requirer" not in provider_logs
@@ -141,11 +141,11 @@ def test_otlp_forwarding_secure(juju: jubilant.Juju, charm: str, charm_resources
     time.sleep(lookback_window)
 
     # THEN OTLP forwarding succeeds since requirer trusts provider's cert
-    requirer_logs = sh.kubectl.logs(
-        "requirer-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
+    requirer_logs = juju.ssh(
+        target="requirer/0", container="otelcol", command="pebble logs"
     )
-    provider_logs = sh.kubectl.logs(
-        "provider-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
+    provider_logs = juju.ssh(
+        target="provider/0", container="otelcol", command="pebble logs"
     )
     assert "tls: failed to verify certificate" not in requirer_logs
     assert "juju_application=requirer" in provider_logs
