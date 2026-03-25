@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 RETRY = retry(
     retry=retry_if_exception_type(AssertionError),
-    wait=wait_exponential(multiplier=1, min=2, max=30),
+    wait=wait_exponential(multiplier=1, min=2, max=45),
     stop=stop_after_attempt(10),
     after=after_log(logger, logging.INFO),
 )
