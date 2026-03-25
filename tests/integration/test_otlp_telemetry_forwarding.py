@@ -96,7 +96,7 @@ def test_otlp_forwarding_logs(otlp_setup: jubilant.Juju):
     """Scenario: OTLP logs are forwarded from flog to provider."""
     # GIVEN the provider is configured to export logs for debugging
     juju = otlp_setup
-    juju.config("provider", {"debug_exporter_for_logs": True})
+    juju.config("provider", {"debug_exporter_for_metrics": False, "debug_exporter_for_logs": True})
 
     # WHEN we check the provider logs for forwarded flog logs
     @RETRY
@@ -126,7 +126,7 @@ def test_otlp_forwarding_traces(otlp_setup: jubilant.Juju):
     juju.integrate("grafana", "requirer:grafana-dashboards-provider")
 
     # AND the provider is configured to export traces for debugging
-    juju.config("provider", {"debug_exporter_for_traces": True})
+    juju.config("provider", {"debug_exporter_for_logs": False, "debug_exporter_for_traces": True})
 
     # WHEN we check the provider logs for forwarded traces
     @RETRY
