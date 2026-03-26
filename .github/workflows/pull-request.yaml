@@ -5,7 +5,6 @@ on:
     branches:
       - main
       - track/**
-      - feat/logs-tracing-using-otlp
 
 jobs:
   pull-request:
