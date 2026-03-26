@@ -97,7 +97,7 @@ def test_otlp_forwarding_logs(otlp_setup: jubilant.Juju):
     @RETRY
     def check_logs():
         provider_logs = juju.ssh(
-            target="provider/0", container="otelcol", command="pebble logs"
+            target="provider/0", container="otelcol", command="pebble logs -n 250"
         )
         # THEN there must be one log whose Juju Topology belongs to Flog
         # Flog always has these strings in the fake logs it generates
