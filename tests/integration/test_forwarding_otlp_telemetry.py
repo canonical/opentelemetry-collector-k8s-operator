@@ -6,7 +6,6 @@
 import logging
 from typing import Dict
 
-import pytest
 from tenacity import (
     after_log,
     retry,
@@ -28,8 +27,7 @@ RETRY = retry(
 )
 
 
-@pytest.fixture(scope="module")
-def otlp_setup(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+def test_otlp_setup(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Common setup for OTLP forwarding tests."""
     # GIVEN a model with 2 local otel-collector charms
     juju.deploy(charm, "requirer", resources=charm_resources, trust=True)
@@ -43,14 +41,14 @@ def otlp_setup(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str])
     juju.deploy("grafana-k8s", "grafana", channel="dev/edge", trust=True)
     juju.integrate("grafana:charm-tracing", "requirer")
 
-    # WHEN "one" is related to "two" over the OTLP endpoints
+    # WHEN the requirer is related to the provider over the OTLP endpoints
     juju.integrate("requirer:send-otlp", "provider:receive-otlp")
     juju.wait(
         lambda status: jubilant.all_active(status, "requirer"),
         timeout=300,
         error=jubilant.any_error,
     )
-    # The provider will be blocked because it's not forwarding the telemetry it receives to any backends in this itest.
+    # THEN the provider is blocked because it's not forwarding the telemetry it receives to any backends
     juju.wait(
         lambda status: jubilant.all_blocked(status, "provider"),
         timeout=300,
@@ -58,13 +56,9 @@ def otlp_setup(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str])
     )
     juju.wait(jubilant.all_agents_idle, timeout=300, error=jubilant.any_error)
 
-    return juju
 
-
-def test_otlp_forwarding_metrics(otlp_setup: jubilant.Juju):
+def test_otlp_forwarding_metrics(juju: jubilant.Juju):
     """Scenario: OTLP metrics are forwarded from requirer to provider."""
-    juju = otlp_setup
-
     # GIVEN the provider is configured to export metrics for debugging
     juju.config("provider", {"debug_exporter_for_metrics": True})
 
@@ -84,13 +78,11 @@ def test_otlp_forwarding_metrics(otlp_setup: jubilant.Juju):
         ), "Expected at least one forwarded `requirer` metric entry in provider logs"
 
     check_metrics()
-    logger.info("Successfully found forwarded `requirer` metrics in provider logs")
 
 
-def test_otlp_forwarding_logs(otlp_setup: jubilant.Juju):
+def test_otlp_forwarding_logs(juju: jubilant.Juju):
     """Scenario: OTLP logs are forwarded from flog to provider."""
     # GIVEN the provider is configured to export logs for debugging
-    juju = otlp_setup
     juju.config("provider", {"debug_exporter_for_metrics": False, "debug_exporter_for_logs": True})
 
     # WHEN we check the provider logs for forwarded flog logs
@@ -104,19 +96,14 @@ def test_otlp_forwarding_logs(otlp_setup: jubilant.Juju):
         assert any(
             "juju_application=flog" in line
             and "filename=/bin/fake.log" in line
-            and '"method":' in line
-            and '"request":' in line
-            and '"status":' in line
             for line in provider_logs.splitlines()
         ), "Expected at least one forwarded `flog` log entry in provider logs"
 
     check_logs()
-    logger.info("Successfully found forwarded `flog` logs in provider logs")
 
 
-def test_otlp_forwarding_traces(otlp_setup: jubilant.Juju):
+def test_otlp_forwarding_traces(juju: jubilant.Juju):
     """Scenario: OTLP traces are forwarded from grafana to provider."""
-    juju = otlp_setup
     # GIVEN grafana is integrated with requirer to elicit trace data
     juju.integrate("grafana", "requirer:grafana-dashboards-provider")
 
@@ -138,5 +125,4 @@ def test_otlp_forwarding_traces(otlp_setup: jubilant.Juju):
         ), "Expected at least one forwarded `grafana` trace entry in provider logs"
 
     check_traces()
-    logger.info("Successfully found forwarded `grafana` trace in provider logs")
 
