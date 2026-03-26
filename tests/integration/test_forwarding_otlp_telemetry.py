@@ -28,11 +28,6 @@ RETRY = retry(
 )
 
 
-def get_ingress_url(juju: jubilant.Juju) -> str:
-    traefik_status = juju.status().apps["traefik"].units["traefik/0"].workload_status
-    return traefik_status.message.split()[-1]
-
-
 @pytest.fixture(scope="module")
 def otlp_setup(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Common setup for OTLP forwarding tests."""
