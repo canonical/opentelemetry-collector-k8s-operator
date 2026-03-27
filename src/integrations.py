@@ -516,9 +516,7 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
 
     # Access the provider's endpoints
     return OtlpRequirer(
-        charm,
-        protocols=["grpc", "http"],
-        telemetries=["logs", "metrics", "traces"],
+        charm, protocols=["grpc", "http"], telemetries=["logs", "metrics", "traces"]
     ).endpoints
 
 
