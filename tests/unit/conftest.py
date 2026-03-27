@@ -157,17 +157,6 @@ def logql_bundled_rule_count():
 
 
 @pytest.fixture
-def otelcol_metadata():
-    return {
-        "application": "opentelemetry-collector-k8s",
-        "charm_name": "opentelemetry-collector-k8s",
-        "model": "otelcol",
-        "model_uuid": "f4d59020-c8e7-4053-8044-a2c1e5591c7f",
-        "unit": "opentelemetry-collector-k8s/0",
-    }
-
-
-@pytest.fixture
 def logql_alert_rule():
     return {
         "name": "otelcol_f4d59020_charm_x_foo_alerts",
