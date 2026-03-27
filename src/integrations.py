@@ -12,8 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast, get_args
 
 import yaml
-from charmlibs.interfaces.otlp import OtlpRequirer as BaseOtlpRequirer
-from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, RuleStore
+from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer, RuleStore
 from charmlibs.pathops import PathProtocol
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
@@ -74,20 +73,6 @@ from constants import (
 logger = logging.getLogger(__name__)
 
 ProfilingEndpoint = namedtuple("ProfilingEndpoint", "endpoint, insecure")
-
-
-# TODO: Can we enforce this better?
-# TODO: Add a test that the correct generic rules exist in the databag during charm ops
-# TODO: How do we ensure a user doesn't use the BaseOtlpRequirer during tests and makes invalid assertions?
-class AggregatorOtlpRequirer(BaseOtlpRequirer):
-    """An OtlpRequirer that always uses PEERS_RELATION_NAME as the aggregator peer relation.
-
-    It is important that we only use this implementation of the OtlpRequirer since this charm is an aggregator.
-    """
-
-    def __init__(self, *args: Any, **kwargs: Any):
-        kwargs["aggregator_peer_relation_name"] = PEERS_RELATION_NAME
-        super().__init__(*args, **kwargs)
 
 
 def cleanup():
@@ -526,10 +511,11 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
         rules.add(OtlpProvider(charm).rules)
 
     # Publish rules for the provider
-    AggregatorOtlpRequirer(charm, rules=rules).publish()
+    # NOTE: we set aggregator_peer_relation_name to ensure aggregator generic rules are published
+    OtlpRequirer(charm, aggregator_peer_relation_name=PEERS_RELATION_NAME, rules=rules).publish()
 
     # Access the provider's endpoints
-    return AggregatorOtlpRequirer(
+    return OtlpRequirer(
         charm,
         protocols=["grpc", "http"],
         telemetries=["logs", "metrics", "traces"],
