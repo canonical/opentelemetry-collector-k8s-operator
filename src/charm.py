@@ -129,8 +129,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
     _container_name = "otelcol"
-    external_configs: List[Dict[str, Any]] = []
-    external_secret_files: Dict[str, str] = {}
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -138,6 +136,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.unit.status = MaintenanceStatus("Waiting for otelcol to start")
             return
 
+        self.external_configs: List[Dict[str, Any]] = []
+        self.external_secret_files: Dict[str, str] = {}
         self._reconcile()
 
     def _reconcile(self):
@@ -262,10 +262,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # External-config setup
         integrations.receive_external_configs(self)
-        self._ensure_external_configs_secrets_dir(container)
-        self._write_secrets_to_disk(container)
+        self._write_secrets_to_disk(container, self.external_secret_files)
         self._configure_external_configs(config_manager)
-        self._remove_external_configs_secrets_dir(container)
 
         # Profiling setup
         if self._incoming_profiles:
@@ -445,24 +443,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         directory = ContainerPath(CERTS_DIR, container=container)
         directory.mkdir(parents=True, exist_ok=True)
 
-    def _ensure_external_configs_secrets_dir(self, container: Container) -> None:
-        if not container.can_connect():
-            logger.warning("container not accessible, skipping external config secrets directory creation")
-            return
-
-        directory = ContainerPath(EXTERNAL_CONFIG_SECRETS_DIR, container=container)
-        directory.mkdir(parents=True, exist_ok=True)
-
-    def _remove_external_configs_secrets_dir(self, container: Container) -> None:
-        if not container.can_connect():
-            logger.warning("container not accessible, skipping external config secrets directory creation")
-            return
-
-        if self.external_secret_files:
-            return
-
-        container.remove_path(EXTERNAL_CONFIG_SECRETS_DIR, recursive=True)
-
     def _write_ca_certificates_to_disk(
         self, scrape_jobs: List[Dict], container: Container
     ) -> Dict[str, str]:
@@ -490,17 +470,20 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         return cert_paths
 
-    def _write_secrets_to_disk(self, container: Container):
+    def _write_secrets_to_disk(self, container: Container, secret_files: Dict[str, str]) -> None:
         if not container.can_connect():
             logger.warning("Container not accessible, cannot write secrets to disk")
             return
 
-        for filepath, secret in self.external_secret_files.items():
-            filepath = ContainerPath(filepath, container=container)
-            filepath.write_text(secret, mode=0o644)
-            logger.debug("secret written to %s", filepath)
-
-        return
+        if secret_files:
+            directory = ContainerPath(EXTERNAL_CONFIG_SECRETS_DIR, container=container)
+            directory.mkdir(parents=True, exist_ok=True)
+            for filepath, secret in secret_files.items():
+                filepath = ContainerPath(filepath, container=container)
+                filepath.write_text(secret, mode=0o644)
+                logger.debug("secret written to %s", filepath)
+        else:
+            container.remove_path(EXTERNAL_CONFIG_SECRETS_DIR, recursive=True)
 
     def _configure_external_configs(self, config_manager: ConfigManager):
         config_manager.add_external_configs(self.external_configs)

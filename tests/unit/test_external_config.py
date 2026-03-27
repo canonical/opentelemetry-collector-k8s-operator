@@ -388,43 +388,30 @@ def test_external_config_invalid_component_type(config_manager):
 
 
 @pytest.mark.parametrize(
-    "method_name,expected_warning,container_method_to_check",
+    "secret_files,container_method_to_check",
     [
-        (
-            "_remove_external_configs_secrets_dir",
-            "container not accessible, skipping external config secrets directory creation",
-            "remove_path",
-        ),
-        (
-            "_ensure_external_configs_secrets_dir",
-            "container not accessible, skipping external config secrets directory creation",
-            "make_dir",
-        ),
-        (
-            "_write_secrets_to_disk",
-            "Container not accessible, cannot write secrets to disk",
-            None,
-        ),
+        ({"some/path": "secret"}, "make_dir"),
+        ({}, "remove_path"),
     ],
-    ids=["remove_dir", "ensure_dir", "write_secrets"],
+    ids=["write_secrets", "remove_dir"],
 )
 def test_container_operations_when_disconnected(
-    disconnected_container, method_name, expected_warning, container_method_to_check
+    disconnected_container, secret_files, container_method_to_check
 ):
-    """Test that charm operations log warning and skip work when container is disconnected."""
+    """Test that _write_secrets_to_disk logs a warning and skips work when container is disconnected."""
     # GIVEN a mock charm instance and a disconnected container
     with patch('charm.OpenTelemetryCollectorK8sCharm.__init__', lambda *args: None):
         mock_charm = OpenTelemetryCollectorK8sCharm(MagicMock())
 
         with patch('charm.logger') as mock_logger:
-            # WHEN attempting to perform the operation
-            method = getattr(mock_charm, method_name)
-            method(disconnected_container)
+            # WHEN attempting to write secrets
+            mock_charm._write_secrets_to_disk(disconnected_container, secret_files)
 
             # THEN a warning is logged about container not being accessible
-            mock_logger.warning.assert_called_once_with(expected_warning)
+            mock_logger.warning.assert_called_once_with(
+                "Container not accessible, cannot write secrets to disk"
+            )
 
-            # AND no container operations are attempted (if applicable)
-            if container_method_to_check:
-                container_method = getattr(disconnected_container, container_method_to_check)
-                container_method.assert_not_called()
+            # AND no container operations are attempted
+            container_method = getattr(disconnected_container, container_method_to_check)
+            container_method.assert_not_called()
