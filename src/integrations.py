@@ -477,7 +477,7 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     """
     # Publish endpoints for the requirer
     OtlpProvider(charm).add_endpoint(
-        protocol="http", endpoint=f"{resolved_url}:4318", telemetries=["metrics"]
+        protocol="http", endpoint=f"{resolved_url}:4318", telemetries=["metrics", "logs", "traces"]
     ).publish()
 
     # Access the requirer's rules
@@ -532,7 +532,7 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
 
     # Access the provider's endpoints
     return OtlpRequirer(
-        charm, protocols=["grpc", "http"], telemetries=["logs", "metrics"]
+        charm, protocols=["grpc", "http"], telemetries=["logs", "metrics", "traces"],
     ).endpoints
 
 
