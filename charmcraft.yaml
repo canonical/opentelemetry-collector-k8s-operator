@@ -91,7 +91,7 @@ provides:
       `receive-loki-logs` and/or `receive-remote-write`.
 
       This endpoint currently supports:
-        - HTTP for ["metrics"]
+        - HTTP for ["logs", "metrics", "traces"]
 
 requires:
   send-profiles:
@@ -178,8 +178,8 @@ requires:
       chosen e.g., `gRPC` over `HTTP`.
       
       This endpoint currently supports:
-        - gRPC for ["logs", "metrics"]
-        - HTTP for ["logs", "metrics"]
+        - gRPC for ["logs", "metrics", "traces"]
+        - HTTP for ["logs", "metrics", "traces"]
 
 peers:
   peers:
