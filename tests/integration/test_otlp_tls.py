@@ -16,11 +16,6 @@ import sh
 logger = logging.getLogger(__name__)
 
 
-def get_ingress_url(juju: jubilant.Juju) -> str:
-    traefik_status = juju.status().apps["traefik"].units["traefik/0"].workload_status
-    return traefik_status.message.split()[-1]
-
-
 def test_otlp_forwarding_insecure(
     juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]
 ):
