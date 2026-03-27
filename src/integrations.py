@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast, get_args
 
 import yaml
-from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer
+from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer, RuleStore
 from charmlibs.pathops import PathProtocol
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
@@ -49,7 +49,8 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     TLSCertificatesRequiresV4,
 )
 from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
-from cosl import LZMABase64
+from cosl.rules import JujuTopology
+from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
 from ops.model import Relation
 
@@ -62,8 +63,9 @@ from constants import (
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
-    OTLP_REQUIRER_RELATION_NAME,
     OTLP_PROVIDER_RELATION_NAME,
+    OTLP_REQUIRER_RELATION_NAME,
+    PEERS_RELATION_NAME,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
@@ -71,6 +73,14 @@ from constants import (
 logger = logging.getLogger(__name__)
 
 ProfilingEndpoint = namedtuple("ProfilingEndpoint", "endpoint, insecure")
+
+
+class OtelOtlpRequirer(OtlpRequirer):
+    """An OtlpRequirer that always uses PEERS_RELATION_NAME as the aggregator peer relation."""
+
+    def __init__(self, *args: Any, **kwargs: Any):
+        kwargs["aggregator_peer_relation_name"] = PEERS_RELATION_NAME
+        super().__init__(*args, **kwargs)
 
 
 def cleanup():
@@ -247,7 +257,7 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
         extra_alert_labels=key_value_pair_string_to_dict(
             cast(str, charm.model.config.get("extra_alert_labels", ""))
         ),
-        peer_relation_name="peers",
+        peer_relation_name=PEERS_RELATION_NAME,
     )
     charm.__setattr__("remote_write", remote_write)
     # TODO: Luca: probably don't need this anymore
@@ -474,11 +484,12 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     recording types. This is only applicable if the `forward_alert_rules`
     config is enabled.
     """
-    otlp_provider = OtlpProvider(charm)
-    otlp_provider.add_endpoint(
-        protocol="http", endpoint=f"{resolved_url}:4318", telemetries=["metrics"]
-    )
+    # Publish endpoints for the requirer
+    OtlpProvider(charm).add_endpoint(
+        protocol="http", endpoint=f"{resolved_url}:4318", telemetries=["metrics", "logs", "traces"]
+    ).publish()
 
+    # Gather bundled rules
     charm_root = charm.charm_dir.absolute()
     rules = (
         RuleStore(JujuTopology.from_charm(charm))
@@ -486,10 +497,11 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
         .add_promql_path(charm_root.joinpath(METRICS_RULES_SRC_PATH), recursive=True)
     )
 
+    # Gather the requirer's rules from the databag
     if cast(bool, charm.config.get("forward_alert_rules")):
-        rules.add(otlp_provider.rules)
+        rules.add(OtlpProvider(charm).rules)
 
-    otlp_provider.publish()
+    OtelOtlpRequirer(charm, rules=rules).publish()
 
 
 def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
@@ -508,16 +520,8 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     truth for the current state of rules for the library to publish to the
     databag.
     """
+    # Use the paths on disk to coordinate and forward rules
     charm_root = charm.charm_dir.absolute()
-    otlp_requirer = OtlpRequirer(
-        charm,
-        protocols=["grpc", "http"],
-        telemetries=["logs", "metrics"],
-        loki_rules_path=charm_root.joinpath(LOKI_RULES_DEST_PATH).as_posix(),
-        prometheus_rules_path=charm_root.joinpath(METRICS_RULES_DEST_PATH).as_posix(),
-    )
-
-    # Rules local to this charm
     shutil.copytree(
         charm_root.joinpath(*LOKI_RULES_SRC_PATH.split("/")),
         charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
@@ -529,8 +533,20 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
         dirs_exist_ok=True,
     )
 
-    otlp_requirer.publish()
-    return otlp_requirer.endpoints
+    # Publish rules for the provider
+    rules = (
+        RuleStore(JujuTopology.from_charm(charm))
+        .add_logql_path(charm_root.joinpath(LOKI_RULES_DEST_PATH), recursive=True)
+        .add_promql_path(charm_root.joinpath(METRICS_RULES_DEST_PATH), recursive=True)
+    )
+    OtelOtlpRequirer(charm, rules=rules).publish()
+
+    # Access the provider's endpoints
+    return OtelOtlpRequirer(
+        charm,
+        protocols=["grpc", "http"],
+        telemetries=["logs", "metrics", "traces"],
+    ).endpoints
 
 
 def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
