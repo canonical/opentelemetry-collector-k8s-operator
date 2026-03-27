@@ -14,6 +14,16 @@ from ops.testing import Model, Relation, State
 
 from src.integrations import cyclic_otlp_relations_exist, send_otlp
 
+MODEL_NAME = "foo-model"
+MODEL_UUID = "f4d59020-c8e7-4053-8044-a2c1e5591c7f"
+MODEL = Model(MODEL_NAME, uuid=MODEL_UUID)
+OTELCOL_METADATA = {
+    "model": MODEL_NAME,
+    "model_uuid": MODEL_UUID,
+    "application": "opentelemetry-collector-k8s",
+    "unit": "opentelemetry-collector-k8s/0",
+    "charm_name": "opentelemetry-collector-k8s",
+}
 SEND_OTLP = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
 RECEIVE_OTLP = Relation("receive-otlp", remote_app_data={"rules": "{}", "metadata": "{}"})
 
@@ -196,7 +206,7 @@ def test_forwarding_otlp_rule_counts(
         relations=[receiver, sender_1, sender_2],
         leader=True,
         containers=otelcol_container,
-        model=Model("otelcol", uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"),
+        model=MODEL,
         config={"forward_alert_rules": forward_rules},
     )
 
@@ -228,7 +238,7 @@ def test_forwarding_otlp_rule_counts(
             assert len(promql_groups) == promql_count
 
 
-def test_forwarded_rules_have_topology(ctx, otelcol_container, otelcol_metadata):
+def test_forwarded_rules_have_topology(ctx, otelcol_container):
     """Test that otelcol adds its own topology metadata in the databag.
 
     This test ensures that rules are always labeled even if labels are not
@@ -244,7 +254,7 @@ def test_forwarded_rules_have_topology(ctx, otelcol_container, otelcol_metadata)
         relations=[receiver, sender_1, sender_2],
         leader=True,
         containers=otelcol_container,
-        model=Model("otelcol", uuid="f4d59020-c8e7-4053-8044-a2c1e5591c7f"),
+        model=MODEL,
     )
 
     # WHEN any event executes the reconciler
@@ -252,4 +262,4 @@ def test_forwarded_rules_have_topology(ctx, otelcol_container, otelcol_metadata)
     for relation in list(state_out.relations):
         if relation.endpoint == "send-otlp":
             # THEN otelcol adds its own topology metadata to the databag
-            assert json.loads(relation.local_app_data.get("metadata")) == otelcol_metadata
+            assert json.loads(relation.local_app_data.get("metadata")) == OTELCOL_METADATA
