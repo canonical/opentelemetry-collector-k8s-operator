@@ -506,9 +506,10 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
         .add_promql_path(charm_root.joinpath(METRICS_RULES_SRC_PATH), recursive=True)
     )
 
-    # Gather the requirer charm's rules from the databag
+    # Gather the requirer charm's rules from the databag if forwarding is desired
     if cast(bool, charm.config.get("forward_alert_rules")):
-        rules.add(OtlpProvider(charm).rules)
+        for rule_store in OtlpProvider(charm).rules.values():
+            rules.combine(rule_store)
 
     # Publish rules for the provider
     # NOTE: we set aggregator_peer_relation_name to ensure aggregator generic rules are published
