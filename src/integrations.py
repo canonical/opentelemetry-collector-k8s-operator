@@ -485,19 +485,6 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     Conditional to the `forward_alert_rules` config, the rules from related OTLP requirer charms
     are also published to the databag.
     """
-    # Use the paths on disk to coordinate and forward rules
-    charm_root = charm.charm_dir.absolute()
-    shutil.copytree(
-        charm_root.joinpath(*LOKI_RULES_SRC_PATH.split("/")),
-        charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
-        dirs_exist_ok=True,
-    )
-    shutil.copytree(
-        charm_root.joinpath(*METRICS_RULES_SRC_PATH.split("/")),
-        charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
-        dirs_exist_ok=True,
-    )
-
     # Gather our bundled rules
     charm_root = charm.charm_dir.absolute()
     rules = (
