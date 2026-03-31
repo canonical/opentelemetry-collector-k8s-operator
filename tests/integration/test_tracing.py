@@ -18,7 +18,7 @@ import jubilant
     wait=wait_fixed(10),
     retry=retry_if_exception_type((ConnectionError, TimeoutError, KeyError, AssertionError)),
 )
-def check_traces_from_app(tempo_ip: str, app: str):
+async def check_traces_from_app(tempo_ip: str, app: str):
     response = request(
         "GET", f"http://{tempo_ip}:3200/api/search", params={"juju_application": app}
     )
@@ -26,7 +26,7 @@ def check_traces_from_app(tempo_ip: str, app: str):
     assert traces
 
 
-def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: traces ingestion and forwarding."""
     minio_user = "accesskey"
     minio_pass = "secretkey"
@@ -75,7 +75,7 @@ def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[
 
     # Tempo unit change its IP
     tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
-    check_traces_from_app(tempo_ip=tempo_ip, app="otelcol")
+    await check_traces_from_app(tempo_ip=tempo_ip, app="otelcol")
 
     # AND WHEN we add relations to send traces to tempo
     juju.integrate("otelcol:receive-traces", "grafana:charm-tracing")
@@ -89,14 +89,14 @@ def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[
     # Tempo unit change its IP
     tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
     # THEN traces arrive in tempo
-    check_traces_from_app(tempo_ip=tempo_ip, app="grafana")
+    await check_traces_from_app(tempo_ip=tempo_ip, app="grafana")
 
 
 # https://github.com/canonical/cos-coordinated-workers/pull/8
 # Before removing the 'skip', check the 'uv.lock' in Tempo Coordinator
 # to make sure it's actually using the fixed library
 @pytest.mark.skip("currently skipping due to tempo bug")
-def test_traces_with_tls(juju: jubilant.Juju):
+async def test_traces_with_tls(juju: jubilant.Juju):
     """Scenario: TLS is added to the tracing pipeline."""
     # WHEN TLS is added to Tempo and to otelcol
     juju.deploy(charm="grafana-k8s", app="coconut", channel="2/edge", trust=True)
@@ -115,4 +115,4 @@ def test_traces_with_tls(juju: jubilant.Juju):
 
     # THEN traces arrive in tempo
     tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
-    check_traces_from_app(tempo_ip=tempo_ip, app="coconut")
+    await check_traces_from_app(tempo_ip=tempo_ip, app="coconut")

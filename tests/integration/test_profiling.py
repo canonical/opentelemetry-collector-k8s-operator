@@ -10,7 +10,7 @@ import pytest
 import jubilant
 
 
-def test_smoke(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+async def test_smoke(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: profile ingestion and forwarding."""
     minio_user = "accesskey"
     minio_pass = "secretkey"
@@ -60,11 +60,11 @@ def test_smoke(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str])
 
 # https://github.com/canonical/pyroscope-operators/issues/232
 @pytest.mark.skip("currently skipping because we don't have a way to generate profiles yet")
-def test_profile_pipeline(juju: jubilant.Juju):
+async def test_profile_pipeline(juju: jubilant.Juju):
     """Scenario: otelcol can ingest profiles and forward them to pyroscope."""
 
 
 # https://github.com/canonical/pyroscope-operators/issues/231
 @pytest.mark.skip("currently skipping because not implemented in pyroscope")
-def test_profile_pipeline_with_tls(juju: jubilant.Juju):
+async def test_profile_pipeline_with_tls(juju: jubilant.Juju):
     """Scenario: TLS is added to the tracing pipeline."""

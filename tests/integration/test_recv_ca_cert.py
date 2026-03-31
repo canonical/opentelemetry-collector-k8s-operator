@@ -34,7 +34,7 @@ def logs_contain_no_errors(logs):
     assert "unknown authority" not in logs
 
 
-def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+async def test_unknown_authority(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: Otelcol fails to scrape metrics from a server signed by unknown authority."""
     sh.juju.switch(juju.model)
 
