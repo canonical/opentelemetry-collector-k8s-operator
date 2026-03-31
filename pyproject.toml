@@ -38,7 +38,6 @@ dev = [
   "sh",
   "jubilant",
   "tenacity",
-  "pytest-asyncio",
 ]
 
 # Testing tools configuration
@@ -76,8 +75,7 @@ pythonVersion = "3.12"
 pythonPlatform = "All"
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
-addopts = "--tb=native --verbose --capture=no --log-cli-level=INFO"
+addopts = "--tb=native --verbose --capture=no --log-cli-level=INFO -p no:pytest_operator"
 
 [tool.codespell]
 skip = ".git,.tox,build,venv*"

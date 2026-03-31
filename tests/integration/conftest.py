@@ -25,7 +25,7 @@ def timed_memoizer(func):
     """Cache the result of a function."""
 
     @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
+    def wrapper(*args, **kwargs):
         fname = func.__qualname__
         logger.info("Started: %s" % fname)
         start_time = datetime.now()
@@ -33,7 +33,7 @@ def timed_memoizer(func):
             ret = store[fname]
         else:
             logger.info("Return for {} not cached".format(fname))
-            ret = await func(*args, **kwargs)
+            ret = func(*args, **kwargs)
             store[fname] = ret
         logger.info("Finished: {} in: {} seconds".format(fname, datetime.now() - start_time))
         return ret
@@ -43,7 +43,7 @@ def timed_memoizer(func):
 
 @pytest.fixture(scope="module")
 @timed_memoizer
-async def charm() -> str:
+def charm() -> str:
     """Charm used for integration testing."""
     if charm_file := os.environ.get("CHARM_PATH"):
         charm = str(charm_file)
