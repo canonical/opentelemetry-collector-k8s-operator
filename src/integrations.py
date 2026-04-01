@@ -63,9 +63,6 @@ from constants import (
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
-    OTLP_PROVIDER_RELATION_NAME,
-    OTLP_REQUIRER_RELATION_NAME,
-    PEERS_RELATION_NAME,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
@@ -249,7 +246,7 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
         extra_alert_labels=key_value_pair_string_to_dict(
             cast(str, charm.model.config.get("extra_alert_labels", ""))
         ),
-        peer_relation_name=PEERS_RELATION_NAME,
+        peer_relation_name="peers",
     )
     charm.__setattr__("remote_write", remote_write)
     # TODO: Luca: probably don't need this anymore
@@ -500,7 +497,7 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
 
     # Publish rules for the provider
     # NOTE: we set aggregator_peer_relation_name to ensure aggregator generic rules are published
-    OtlpRequirer(charm, aggregator_peer_relation_name=PEERS_RELATION_NAME, rules=rules).publish()
+    OtlpRequirer(charm, aggregator_peer_relation_name="peers", rules=rules).publish()
 
     # Access the provider's endpoints
     return OtlpRequirer(
@@ -514,8 +511,8 @@ def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
     This function only checks relations for the current charm, i.e. one level deep. If there is
     another charm in between these applications, but is still cyclic, then it will not be caught.
     """
-    receive_relations = charm.model.relations.get(OTLP_PROVIDER_RELATION_NAME, [])
-    send_relations = charm.model.relations.get(OTLP_REQUIRER_RELATION_NAME, [])
+    receive_relations = charm.model.relations.get("receive-otlp", [])
+    send_relations = charm.model.relations.get("send-otlp", [])
 
     if not receive_relations or not send_relations:
         return False

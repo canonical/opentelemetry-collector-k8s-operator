@@ -20,6 +20,3 @@ FILE_STORAGE_DIRECTORY: Final[str] = "/otelcol"
 # Certs received from relation data for client-like operations, e.g. scrape_configs are stored here. Certs received from `tls-certificates` and `certificate_transfer` interfaces are stored in the root CA store
 CERTS_DIR: Final[str] = "/etc/otelcol/certs/"
 INGRESS_IP_MATCHER: Final[str] = "ClientIP(`0.0.0.0/0`)"
-PEERS_RELATION_NAME: Final[str] = "peers"
-OTLP_REQUIRER_RELATION_NAME: Final[str] = "send-otlp"
-OTLP_PROVIDER_RELATION_NAME: Final[str] = "receive-otlp"
