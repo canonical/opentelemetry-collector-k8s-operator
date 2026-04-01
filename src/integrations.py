@@ -65,8 +65,6 @@ from constants import (
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
-    OTLP_PROVIDER_RELATION_NAME,
-    OTLP_REQUIRER_RELATION_NAME,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
@@ -475,29 +473,11 @@ def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
     Define the OTLP endpoints which the charm should publish to the databag.
     The gRPC protocol is not supported because Traefik (ingress) does not
     support it.
-
-    The otlp_provider.rules are rules gathered from the related OTLP requirer
-    charms. These rules are saved to a rules aggregation path on disk for their
-    respective expression format (logql|promql), including both alerting and
-    recording types. This is only applicable if the `forward_alert_rules`
-    config is enabled.
     """
     # Publish endpoints for the requirer
     OtlpProvider(charm).add_endpoint(
         protocol="http", endpoint=f"{resolved_url}:4318", telemetries=["metrics", "logs", "traces"]
     ).publish()
-
-    # Access the requirer's rules
-    charm_root = charm.charm_dir.absolute()
-    forward_rules = cast(bool, charm.config.get("forward_alert_rules"))
-    _add_alerts(
-        alerts=OtlpProvider(charm).rules("logql") if forward_rules else {},
-        dest_path=charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
-    )
-    _add_alerts(
-        alerts=OtlpProvider(charm).rules("promql") if forward_rules else {},
-        dest_path=charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
-    )
 
 
 def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
@@ -505,41 +485,30 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
 
     This provides otelcol with the remote's OTLP endpoint for each relation.
 
-    The bundled rule files from the src/*_rules directories are copied to a
-    local path (*_RULES_DEST_PATH directories) within the charm's filesystem.
-
-    The `otlp_requirer.publish` then publishes them to the databag. See the
-    publish method's docstring of the otlp_requirer to understand what rules
-    are published to the databag and the mechanism to do so.
-
-    Since these paths are wiped on every hook, they can be used as a source of
-    truth for the current state of rules for the library to publish to the
-    databag.
+    The bundled rule files (from the src/*_rules directories) are published to the databag.
+    Conditional to the `forward_alert_rules` config, the rules from related OTLP requirer charms
+    are also published to the databag.
     """
-    # Use the paths on disk to coordinate and forward rules
+    # Gather our bundled rules
     charm_root = charm.charm_dir.absolute()
-    shutil.copytree(
-        charm_root.joinpath(*LOKI_RULES_SRC_PATH.split("/")),
-        charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
-        dirs_exist_ok=True,
-    )
-    shutil.copytree(
-        charm_root.joinpath(*METRICS_RULES_SRC_PATH.split("/")),
-        charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
-        dirs_exist_ok=True,
-    )
-
-    # Publish rules for the provider
     rules = (
         RuleStore(JujuTopology.from_charm(charm))
-        .add_logql_path(charm_root.joinpath(LOKI_RULES_DEST_PATH), recursive=True)
-        .add_promql_path(charm_root.joinpath(METRICS_RULES_DEST_PATH), recursive=True)
+        .add_logql_path(charm_root.joinpath(LOKI_RULES_SRC_PATH), recursive=True)
+        .add_promql_path(charm_root.joinpath(METRICS_RULES_SRC_PATH), recursive=True)
     )
-    OtlpRequirer(charm, rules=rules).publish()
+
+    # Gather the requirer charm's rules from the databag if forwarding is desired
+    if cast(bool, charm.config.get("forward_alert_rules")):
+        for rule_store in OtlpProvider(charm).rules.values():
+            rules.combine(rule_store)
+
+    # Publish rules for the provider
+    # NOTE: we set aggregator_peer_relation_name to ensure aggregator generic rules are published
+    OtlpRequirer(charm, aggregator_peer_relation_name="peers", rules=rules).publish()
 
     # Access the provider's endpoints
     return OtlpRequirer(
-        charm, protocols=["grpc", "http"], telemetries=["logs", "metrics", "traces"],
+        charm, protocols=["grpc", "http"], telemetries=["logs", "metrics", "traces"]
     ).endpoints
 
 
@@ -549,8 +518,8 @@ def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
     This function only checks relations for the current charm, i.e. one level deep. If there is
     another charm in between these applications, but is still cyclic, then it will not be caught.
     """
-    receive_relations = charm.model.relations.get(OTLP_PROVIDER_RELATION_NAME, [])
-    send_relations = charm.model.relations.get(OTLP_REQUIRER_RELATION_NAME, [])
+    receive_relations = charm.model.relations.get("receive-otlp", [])
+    send_relations = charm.model.relations.get("send-otlp", [])
 
     if not receive_relations or not send_relations:
         return False
