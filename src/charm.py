@@ -261,7 +261,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         config_manager.add_remote_write(remote_write_endpoints)
 
         # External-config setup
-        integrations.receive_external_configs(self)
+        self.external_configs, self.external_secret_files = integrations.receive_external_configs(self)
         self._write_secrets_to_disk(container, self.external_secret_files)
         self._configure_external_configs(config_manager)
 
@@ -475,15 +475,16 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             logger.warning("Container not accessible, cannot write secrets to disk")
             return
 
-        if secret_files:
-            directory = ContainerPath(EXTERNAL_CONFIG_SECRETS_DIR, container=container)
-            directory.mkdir(parents=True, exist_ok=True)
-            for filepath, secret in secret_files.items():
-                filepath = ContainerPath(filepath, container=container)
-                filepath.write_text(secret, mode=0o644)
-                logger.debug("secret written to %s", filepath)
-        else:
+        if not secret_files:
             container.remove_path(EXTERNAL_CONFIG_SECRETS_DIR, recursive=True)
+            return
+
+        directory = ContainerPath(EXTERNAL_CONFIG_SECRETS_DIR, container=container)
+        directory.mkdir(parents=True, exist_ok=True)
+        for filepath, secret in secret_files.items():
+            filepath = ContainerPath(filepath, container=container)
+            filepath.write_text(secret, mode=0o644)
+            logger.debug("secret written to %s", filepath)
 
     def _configure_external_configs(self, config_manager: ConfigManager):
         config_manager.add_external_configs(self.external_configs)

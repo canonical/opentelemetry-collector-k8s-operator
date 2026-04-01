@@ -9,10 +9,7 @@ import socket
 from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING, cast, get_args
-
-if TYPE_CHECKING:
-    from charm import OpenTelemetryCollectorK8sCharm
+from typing import Any, Dict, List, Optional, Set, cast, get_args
 
 import yaml
 from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer, RuleStore
@@ -104,14 +101,10 @@ def _add_alerts(alerts: Dict, dest_path: Path):
         rule_file.write_text(yaml.safe_dump(rule))
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
 
-def receive_external_configs(charm: "OpenTelemetryCollectorK8sCharm"):
+def receive_external_configs(charm: CharmBase) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """Integrate with otelcol-integrator charm via the external-config relation endpoint."""
     otelcol_requirer = OtelcolIntegratorRequirer(charm.model, "external-config", EXTERNAL_CONFIG_SECRETS_DIR)
-    external_configs = otelcol_requirer.retrieve_external_configs()
-    external_secret_files = otelcol_requirer.secret_files
-
-    charm.external_configs = external_configs
-    charm.external_secret_files = external_secret_files
+    return otelcol_requirer.retrieve_external_configs(), otelcol_requirer.secret_files
 
 
 def receive_loki_logs(charm: CharmBase, address: "Address") -> None:
