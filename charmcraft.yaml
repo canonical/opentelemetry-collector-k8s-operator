@@ -140,7 +140,7 @@ requires:
     interface: tracing
     limit: 1
     optional: true
-    description: Send the workload and charm traces send to this charm by related charms to a charmed Tempo instance.
+    description: Send the workload and charm traces sent to this charm by related charms to a charmed Tempo instance.
   service-mesh:
     limit: 1
     interface: service_mesh
