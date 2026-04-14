@@ -40,8 +40,7 @@ def test_add_prometheus_scrape():
                     "tls_config": {"insecure_skip_verify": True},
                 },
             ],
-        },
-        "trim_metric_suffixes": True,
+        }
     }
     config_manager.add_prometheus_scrape_jobs(first_job)
     # THEN it exists in the prometheus receiver config
