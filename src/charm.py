@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import socket
-
 from typing import Any, Dict, List, Optional, cast
 from urllib.parse import urlparse
 
@@ -40,30 +39,46 @@ logger = logging.getLogger(__name__)
 
 
 def charm_address(
-    container: Container, ingress: integrations.TraefikRouteRequirer
-) -> integrations.Address:
+    container: Container,
+    traefik_ingress: integrations.TraefikRouteRequirer,
+    istio_ingress: integrations.IstioIngressRouteRequirer,
+) -> integrations.Address | integrations.MultipleIngressesConfigured:
     """Return the Address dataclass from charm context.
 
     Args:
         container: An ops.Container where the TLS certificates exist
-        ingress: A TraefikRouteRequirer containing ingress context
+        traefik_ingress: A TraefikRouteRequirer containing ingress context
+        istio_ingress: An IstioIngressRouteRequirer containing ingress context
 
     Returns:
-        the Address dataclass summarizing the charm's networking context
+        the Address dataclass summarizing the charm's networking context or
+        MultipleIngressesConfigured if both Traefik and Istio ingresses are configured.
     """
     tls = integrations.is_tls_ready(container)
     internal_scheme = "https" if tls else "http"
     internal_url = f"{internal_scheme}://{socket.getfqdn()}"
-    external_url = (
-        f"{ingress.scheme}://{ingress.external_host}"
-        if integrations.ingress_ready(ingress)
-        else None
-    )
+
+    istio_ready = integrations.istio_ingress_ready(istio_ingress)
+    traefik_ready = integrations.traefik_ingress_ready(traefik_ingress)
+    if istio_ready and traefik_ready:
+        # TODO: utest this, asserting return types
+        return integrations.MultipleIngressesConfigured(
+            "Multiple ingress relations are active; at most one ingress is supported."
+        )
+
+    if istio_ready:
+        scheme = "https" if istio_ingress.tls_enabled else "http"
+        external_url = f"{scheme}://{istio_ingress.external_host}"
+    if traefik_ready:
+        external_url = f"{traefik_ingress.scheme}://{traefik_ingress.external_host}"
+    else:
+        external_url = None
+
     resolved_url = external_url if external_url else internal_url
     resolved_scheme = urlparse(external_url).scheme if external_url else "https" if tls else "http"
 
     return integrations.Address(
-        ingress=integrations.ingress_ready(ingress),
+        ingress=traefik_ready or istio_ready,
         internal_scheme=internal_scheme,
         internal_url=internal_url,
         resolved_scheme=resolved_scheme,
@@ -171,7 +186,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         integrations.setup_service_mesh(self)
 
         # Ingress integration
-        ingress = integrations.setup_ingress(self, integrations.is_tls_ready(container))
+        traefik_ingress = integrations.setup_traefik_ingress(
+            self, integrations.is_tls_ready(container)
+        )
+        istio_ingress = integrations.setup_istio_ingress(self)
 
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
@@ -191,7 +209,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Address manager
         # NOTE: executed after ingress and TLS events
-        otelcol_address = charm_address(container, ingress)
+        otelcol_address = charm_address(container, traefik_ingress, istio_ingress)
+        match otelcol_address:
+            case integrations.MultipleIngressesConfigured():
+                self.unit.status = BlockedStatus(otelcol_address.message)
+                return
 
         # Global scrape configs
         global_configs = {
@@ -261,7 +283,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         config_manager.add_remote_write(remote_write_endpoints)
 
         # External-config setup
-        self.external_configs, self.external_secret_files = integrations.receive_external_configs(self)
+        self.external_configs, self.external_secret_files = integrations.receive_external_configs(
+            self
+        )
         self._write_secrets_to_disk(container, self.external_secret_files)
         self._configure_external_configs(config_manager)
 
@@ -488,7 +512,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     def _configure_external_configs(self, config_manager: ConfigManager):
         config_manager.add_external_configs(self.external_configs)
-
 
     @property
     def _otelcol_version(self) -> Optional[str]:

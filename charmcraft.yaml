@@ -164,11 +164,21 @@ requires:
       If the received config has secrets that have render=file, the secret files will be stored in /var/snap/opentelemetry-collector/common/external_config_secrets.
   ingress:
     interface: traefik_route
+    # TODO: Tempo has this as no limit
     limit: 1
     optional: true
     description: |
       Ingress integration for the Otelcol server, so that cross-model workloads can send their data
       through the ingress. Uses `traefik_route` to open ports on Traefik host for tracing ingesters.
+  istio-ingress:
+    interface: istio_ingress_route
+    limit: 1
+    optional: true
+    description: |
+      Ingress integration for Opentelemetry-collector endpoints, so that
+      cross-model workloads can send their telemetry to Opentelemetry-collector
+      through the ingress. Uses `istio_ingress_route` to open ports on
+      `istio-ingress-k8s` host for the collector's receivers.
   send-otlp:
     interface: otlp
     optional: true

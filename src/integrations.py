@@ -25,6 +25,15 @@ from charms.istio_beacon_k8s.v0.service_mesh import (
     ServiceMeshConsumer,
     UnitPolicy,
 )
+from lib.charms.istio_ingress_k8s.v0.istio_ingress_route import (
+    BackendRef,
+    HTTPRoute,
+    GRPCRoute,
+    IstioIngressRouteConfig,
+    IstioIngressRouteRequirer,
+    Listener,
+    ProtocolType,
+)
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
 from charms.otelcol_integrator.v0.otelcol_integrator import OtelcolIntegratorRequirer
 from charms.prometheus_k8s.v0.prometheus_scrape import (
@@ -49,7 +58,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     Mode,
     TLSCertificatesRequiresV4,
 )
-from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
+from lib.charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl.rules import JujuTopology
 from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
@@ -99,9 +108,12 @@ def _add_alerts(alerts: Dict, dest_path: Path):
         rule_file.write_text(yaml.safe_dump(rule))
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
 
+
 def receive_external_configs(charm: CharmBase) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """Integrate with otelcol-integrator charm via the external-config relation endpoint."""
-    otelcol_requirer = OtelcolIntegratorRequirer(charm.model, "external-config", EXTERNAL_CONFIG_SECRETS_DIR)
+    otelcol_requirer = OtelcolIntegratorRequirer(
+        charm.model, "external-config", EXTERNAL_CONFIG_SECRETS_DIR
+    )
     return otelcol_requirer.retrieve_external_configs(), otelcol_requirer.secret_files
 
 
@@ -714,6 +726,13 @@ def is_tls_ready(container: Container) -> bool:
     )
 
 
+@dataclass
+class MultipleIngressesConfigured:
+    """Returned when more than one ingress integration is active simultaneously."""
+
+    message: str = "Multiple ingresses are configured at the same time."
+
+
 @dataclass(kw_only=True)
 class Address:
     """Provide address information for the charm.
@@ -730,7 +749,44 @@ class Address:
     resolved_url: str  # TLS & ingress context
 
 
-def _ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> dict:
+def _istio_ingress_config(charm: CharmBase) -> IstioIngressRouteConfig:
+    """Build a K8s Gateway configuration for istio ingress."""
+    listeners: List[Listener] = []
+    http_routes: List[HTTPRoute] = []
+    grpc_routes: List[GRPCRoute] = []
+
+    for port in Port:
+        sanitized_protocol = port.name.replace("_", "-")
+
+        protocol_type = ProtocolType.GRPC if "grpc" in port.name else ProtocolType.HTTP
+        route_cls = GRPCRoute if protocol_type == ProtocolType.GRPC else HTTPRoute
+        routes = grpc_routes if protocol_type == ProtocolType.GRPC else http_routes
+
+        listener = Listener(port=port.value, protocol=protocol_type)
+        route = route_cls(
+            name=f"juju-{charm.model.name}-{charm.model.app.name}-{sanitized_protocol}",
+            listener=listener,
+            backends=[
+                BackendRef(
+                    service=charm.app.name,
+                    port=port.value,
+                    weight=100,  # Let the service take care of load balancing.
+                ),
+            ],
+        )
+
+        listeners.append(listener)
+        routes.append(route)  # type: ignore
+
+    return IstioIngressRouteConfig(
+        model=charm.model.name,
+        listeners=listeners,
+        http_routes=http_routes,
+        grpc_routes=grpc_routes,
+    )
+
+
+def _traefik_ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> dict:
     """Build a raw ingress configuration for Traefik."""
     http_routers = {}
     http_services = {}
@@ -780,28 +836,40 @@ def _ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) 
     }
 
 
-def _update_ingress_relation(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> None:
+def _update_ingress_relation(
+    charm: CharmBase,
+    ingress: TraefikRouteRequirer | IstioIngressRouteRequirer,
+    tls: Optional[bool],
+) -> None:
     """Make sure the traefik route is up-to-date."""
     if not charm.unit.is_leader():
         return
 
-    if ingress.is_ready():
-        ingress.submit_to_traefik(
-            _ingress_config(charm, ingress, tls), static=_static_ingress_config()
-        )
+    match ingress:
+        case TraefikRouteRequirer():
+            if ingress.is_ready() and tls is not None:
+                config = _traefik_ingress_config(charm, ingress, tls)
+                ingress.submit_to_traefik(config, static=_static_ingress_config())
+        case IstioIngressRouteRequirer():
+            if ingress.is_ready():
+                ingress.submit_config(_istio_ingress_config(charm))
 
 
-def ingress_ready(ingress: TraefikRouteRequirer) -> bool:
-    """Check if ingress is ready."""
+def traefik_ingress_ready(ingress: TraefikRouteRequirer) -> bool:
+    """Check if Traefik ingress is ready."""
     return bool(ingress.is_ready() and ingress.scheme and ingress.external_host)
 
 
-def setup_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
-    """Integrate via ingress to enable ingress per app.
+def istio_ingress_ready(ingress: IstioIngressRouteRequirer) -> bool:
+    """Check if Istio ingress is ready."""
+    return bool(ingress.is_ready() and ingress.external_host)
+
+
+def setup_traefik_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
+    """Integrate with Traefik to enable ingress.
 
     Returns:
-        A list of dictionaries where each dictionary provides information about
-        a single remote_write endpoint.
+        A TraefikRouteRequirer instance.
     """
     ingress = TraefikRouteRequirer(
         charm,
@@ -810,5 +878,16 @@ def setup_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
     )
     charm.__setattr__("ingress", ingress)
     _update_ingress_relation(charm, ingress, tls)
+    return ingress
 
+
+def setup_istio_ingress(charm: CharmBase) -> IstioIngressRouteRequirer:
+    """Integrate with Istio to enable ingress.
+
+    Returns:
+        An IstioIngressRouteRequirer instance.
+    """
+    ingress = IstioIngressRouteRequirer(charm, relation_name="istio-ingress")
+    charm.__setattr__("istio_ingress", ingress)
+    _update_ingress_relation(charm, ingress, tls=None)
     return ingress
