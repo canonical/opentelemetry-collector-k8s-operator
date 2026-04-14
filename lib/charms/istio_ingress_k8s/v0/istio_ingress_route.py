@@ -187,7 +187,7 @@ class ProtocolType(str, Enum):
 
     Examples:
         >>> # Consumer specifies HTTP
-        >>> Listener(name="api", port=8080, protocol=ProtocolType.HTTnamespace=self.model.name,  # Same namespace as ingressP)
+        >>> Listener(port=8080, protocol=ProtocolType.HTTP)
         # If TLS available: Gateway serves HTTPS on port 8080
         # If TLS not available: Gateway serves HTTP on port 8080
 
@@ -447,7 +447,7 @@ class URLRewriteFilter(BaseModel):
     """URLRewrite filter for modifying request URL before proxying upstream."""
 
     urlRewrite: URLRewriteSpec = Field(
-        description="URL rewrite spoecification"
+        description="URL rewrite specification"
     )
 
     @computed_field

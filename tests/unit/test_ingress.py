@@ -326,7 +326,7 @@ def test_istio_ingress_url_in_loki_databag(ctx, otelcol_container):
 
 @patch("socket.getfqdn", lambda: "fqdn")
 def test_charm_address_prefers_traefik_over_istio(ctx, otelcol_container):
-    """Scenario: When only Traefik ingress is ready, resolved URL uses the Traefik external host."""
+    """Scenario: When Traefik ingress is ready (without Istio), the resolved URL uses the Traefik external host."""
     # GIVEN only Traefik ingress is related (no Istio ingress)
     receive_logs_endpoint = Relation("receive-loki-logs")
     ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
