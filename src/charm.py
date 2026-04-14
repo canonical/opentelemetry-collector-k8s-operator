@@ -40,13 +40,16 @@ logger = logging.getLogger(__name__)
 
 
 def charm_address(
-    container: Container, ingress: integrations.TraefikRouteRequirer
+    container: Container,
+    ingress: integrations.TraefikRouteRequirer,
+    istio_ingress: integrations.IstioIngressRouteRequirer,
 ) -> integrations.Address:
     """Return the Address dataclass from charm context.
 
     Args:
         container: An ops.Container where the TLS certificates exist
         ingress: A TraefikRouteRequirer containing ingress context
+        istio_ingress: An IstioIngressRouteRequirer containing Istio ingress context
 
     Returns:
         the Address dataclass summarizing the charm's networking context
@@ -54,16 +57,23 @@ def charm_address(
     tls = integrations.is_tls_ready(container)
     internal_scheme = "https" if tls else "http"
     internal_url = f"{internal_scheme}://{socket.getfqdn()}"
-    external_url = (
-        f"{ingress.scheme}://{ingress.external_host}"
-        if integrations.ingress_ready(ingress)
-        else None
-    )
+
+    traefik_ready = integrations.ingress_ready(ingress)
+    istio_ready = integrations.istio_ingress_ready(istio_ingress)
+
+    if traefik_ready:
+        external_url = f"{ingress.scheme}://{ingress.external_host}"
+    elif istio_ready:
+        scheme = "https" if istio_ingress.tls_enabled else "http"
+        external_url = f"{scheme}://{istio_ingress.external_host}"
+    else:
+        external_url = None
+
     resolved_url = external_url if external_url else internal_url
     resolved_scheme = urlparse(external_url).scheme if external_url else "https" if tls else "http"
 
     return integrations.Address(
-        ingress=integrations.ingress_ready(ingress),
+        ingress=traefik_ready or istio_ready,
         internal_scheme=internal_scheme,
         internal_url=internal_url,
         resolved_scheme=resolved_scheme,
@@ -173,6 +183,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Ingress integration
         ingress = integrations.setup_ingress(self, integrations.is_tls_ready(container))
 
+        # Istio ingress integration
+        istio_ingress = integrations.setup_istio_ingress(self, integrations.is_tls_ready(container))
+
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
             self,
@@ -191,7 +204,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Address manager
         # NOTE: executed after ingress and TLS events
-        otelcol_address = charm_address(container, ingress)
+        otelcol_address = charm_address(container, ingress, istio_ingress)
 
         # Global scrape configs
         global_configs = {
@@ -355,6 +368,14 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Cyclic OTLP relations
         if integrations.cyclic_otlp_relations_exist(self):
             self.unit.status = BlockedStatus("cyclic OTLP relations exist")
+
+        # Multiple ingress check
+        traefik_ready = integrations.ingress_ready(ingress)
+        istio_ready = integrations.istio_ingress_ready(istio_ingress)
+        if traefik_ready and istio_ready:
+            self.unit.status = BlockedStatus(
+                "Multiple ingress relations are active ('ingress' and 'istio-ingress'). Remove one of the two."
+            )
 
         # Ingress and scaling status
         if self.model.unit.is_leader():

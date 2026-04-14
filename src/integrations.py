@@ -49,6 +49,15 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     Mode,
     TLSCertificatesRequiresV4,
 )
+from charms.istio_ingress_k8s.v0.istio_ingress_route import (
+    BackendRef,
+    GRPCRoute,
+    HTTPRoute,
+    IstioIngressRouteConfig,
+    IstioIngressRouteRequirer,
+    Listener,
+    ProtocolType,
+)
 from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl.rules import JujuTopology
 from cosl.utils import LZMABase64
@@ -812,3 +821,71 @@ def setup_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
     _update_ingress_relation(charm, ingress, tls)
 
     return ingress
+
+
+def setup_istio_ingress(charm: CharmBase, tls: bool) -> IstioIngressRouteRequirer:
+    """Integrate via Istio ingress to enable ingress per app.
+
+    Returns:
+        An IstioIngressRouteRequirer instance.
+    """
+    istio_ingress = IstioIngressRouteRequirer(
+        charm,
+        relation_name="istio-ingress",
+    )
+    charm.__setattr__("istio_ingress", istio_ingress)
+    _update_istio_ingress_relation(charm, istio_ingress)
+    return istio_ingress
+
+
+def _update_istio_ingress_relation(
+    charm: CharmBase, istio_ingress: IstioIngressRouteRequirer
+) -> None:
+    """Make sure the Istio ingress route is up-to-date."""
+    if not charm.unit.is_leader():
+        return
+
+    if istio_ingress.is_ready():
+        istio_ingress.submit_config(_istio_ingress_config(charm))
+
+
+def _istio_ingress_config(charm: CharmBase) -> IstioIngressRouteConfig:
+    """Build a K8s Gateway API configuration for Istio ingress."""
+    listeners: List[Listener] = []
+    http_routes: List[HTTPRoute] = []
+    grpc_routes: List[GRPCRoute] = []
+
+    for port in Port:
+        sanitized_protocol = port.name.replace("_", "-")
+        is_grpc = port.name in ("otlp_grpc", "jaeger_grpc")
+        protocol_type = ProtocolType.GRPC if is_grpc else ProtocolType.HTTP
+        Route = GRPCRoute if is_grpc else HTTPRoute
+        routes = grpc_routes if is_grpc else http_routes
+
+        listener = Listener(port=port.value, protocol=protocol_type)
+        route = Route(
+            name=f"juju-{charm.model.name}-{charm.model.app.name}-{sanitized_protocol}",
+            listener=listener,
+            backends=[
+                BackendRef(
+                    service=charm.app.name,
+                    port=port.value,
+                    weight=100,
+                )
+            ],
+        )
+
+        listeners.append(listener)
+        routes.append(route)  # type: ignore
+
+    return IstioIngressRouteConfig(
+        model=charm.model.name,
+        listeners=listeners,
+        http_routes=http_routes,
+        grpc_routes=grpc_routes,
+    )
+
+
+def istio_ingress_ready(istio_ingress: IstioIngressRouteRequirer) -> bool:
+    """Check if Istio ingress is ready."""
+    return bool(istio_ingress.is_ready() and istio_ingress.external_host)
