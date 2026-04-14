@@ -35,7 +35,7 @@ def test_otlp_setup(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, 
 
     # AND a `flog` which generates fake logs and sends them to the `requirer`
     juju.deploy("flog-k8s", "flog", channel="latest/edge", trust=True)
-    juju.integrate("flog", "requirer")
+    juju.integrate("flog:log-forwarder", "requirer")
 
     # AND a Grafana which sends its traces to the `requirer`
     juju.deploy("grafana-k8s", "grafana", channel="dev/edge", trust=True)
