@@ -186,9 +186,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         integrations.setup_service_mesh(self)
 
         # Ingress integration
-        traefik_ingress = integrations.setup_traefik_ingress(
-            self, integrations.is_tls_ready(container)
-        )
+        traefik_tls = integrations.is_tls_ready(container)
+        traefik_ingress = integrations.setup_traefik_ingress(self, traefik_tls)
         istio_ingress = integrations.setup_istio_ingress(self)
 
         # Integrate with TLS relations

@@ -25,7 +25,7 @@ from charms.istio_beacon_k8s.v0.service_mesh import (
     ServiceMeshConsumer,
     UnitPolicy,
 )
-from lib.charms.istio_ingress_k8s.v0.istio_ingress_route import (
+from charms.istio_ingress_k8s.v0.istio_ingress_route import (
     BackendRef,
     HTTPRoute,
     GRPCRoute,
@@ -58,7 +58,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     Mode,
     TLSCertificatesRequiresV4,
 )
-from lib.charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
+from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl.rules import JujuTopology
 from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
