@@ -154,6 +154,12 @@ requires:
     limit: 1
     optional: true
     description: Send this charm's own charm traces to a tracing backend. This is useful for debugging and understanding the behavior of the charm itself, as opposed to its workload and the workloads that send it telemetry.
+  external-config:
+    interface: external-config
+    optional: true
+    description: |
+      Process the configs received and merge them into /etc/otelcol/config.d/[unit].yaml
+      If the received config has secrets that have render=file, the secret files will be stored in /var/snap/opentelemetry-collector/common/external_config_secrets.
   ingress:
     interface: traefik_route
     limit: 1

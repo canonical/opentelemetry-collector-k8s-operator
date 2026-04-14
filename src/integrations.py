@@ -26,6 +26,7 @@ from charms.istio_beacon_k8s.v0.service_mesh import (
     UnitPolicy,
 )
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
+from charms.otelcol_integrator.v0.otelcol_integrator import OtelcolIntegratorRequirer
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
 )
@@ -58,6 +59,7 @@ from config_builder import Port, sha256
 from constants import (
     DASHBOARDS_DEST_PATH,
     DASHBOARDS_SRC_PATH,
+    EXTERNAL_CONFIG_SECRETS_DIR,
     INGRESS_IP_MATCHER,
     LOKI_RULES_DEST_PATH,
     LOKI_RULES_SRC_PATH,
@@ -96,6 +98,11 @@ def _add_alerts(alerts: Dict, dest_path: Path):
         rule_file = dest_path.joinpath(f"juju_{topology_identifier}.rules")
         rule_file.write_text(yaml.safe_dump(rule))
         logger.debug(f"updated alert rules file {rule_file.as_posix()}")
+
+def receive_external_configs(charm: CharmBase) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Integrate with otelcol-integrator charm via the external-config relation endpoint."""
+    otelcol_requirer = OtelcolIntegratorRequirer(charm.model, "external-config", EXTERNAL_CONFIG_SECRETS_DIR)
+    return otelcol_requirer.retrieve_external_configs(), otelcol_requirer.secret_files
 
 
 def receive_loki_logs(charm: CharmBase, address: "Address") -> None:
