@@ -4,13 +4,14 @@
 """Feature: Ingested traces are pushed to Tempo."""
 
 import json
-from minio import Minio
 from typing import Dict
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from requests import request
 import pytest
 
 import jubilant
+
+from helpers import deploy_seaweedfs
 
 
 @retry(
@@ -28,10 +29,6 @@ async def check_traces_from_app(tempo_ip: str, app: str):
 
 async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: traces ingestion and forwarding."""
-    minio_user = "accesskey"
-    minio_pass = "secretkey"
-    minio_bucket = "tempo"
-
     # GIVEN a model with grafana, otel-collector, and tempo charms
     juju.deploy(
         charm=charm,
@@ -42,31 +39,7 @@ async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources:
     juju.deploy(charm="grafana-k8s", app="grafana", channel="2/edge", trust=True)
     juju.deploy(charm="tempo-coordinator-k8s", app="tempo", channel="2/edge", trust=True)
     juju.deploy(charm="tempo-worker-k8s", app="tempo-worker", channel="2/edge", trust=True)
-    # Set up minio and s3-integrator
-    juju.deploy(
-        charm="minio",
-        app="minio-tempo",
-        trust=True,
-        config={"access-key": minio_user, "secret-key": minio_pass},
-    )
-    juju.deploy(charm="s3-integrator", app="s3-tempo", channel="edge")
-    juju.wait(lambda status: jubilant.all_active(status, "minio-tempo"), delay=5)
-    minio_address = juju.status().apps["minio-tempo"].units["minio-tempo/0"].address
-    minio_client: Minio = Minio(
-        f"{minio_address}:9000",
-        access_key=minio_user,
-        secret_key=minio_pass,
-        secure=False,
-    )
-    if not minio_client.bucket_exists(minio_bucket):
-        minio_client.make_bucket(minio_bucket)
-    juju.config("s3-tempo", {"endpoint": f"{minio_address}:9000", "bucket": minio_bucket})
-    juju.run(
-        unit="s3-tempo/0",
-        action="sync-s3-credentials",
-        params={"access-key": minio_user, "secret-key": minio_pass},
-    )
-    juju.integrate("tempo:s3", "s3-tempo")
+    deploy_seaweedfs(juju, app="seaweedfs-tempo", s3_requirer_app="tempo")
     juju.integrate("tempo:tempo-cluster", "tempo-worker")
     # WHEN we add relations to send charm traces to tempo
     juju.integrate("otelcol:send-charm-traces", "tempo:tracing")
@@ -90,6 +63,33 @@ async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources:
     tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
     # THEN traces arrive in tempo
     await check_traces_from_app(tempo_ip=tempo_ip, app="grafana")
+
+
+async def test_traces_multiple_backends(
+    juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]
+):
+    """Scenario: traces are forwarded to two Tempo backends simultaneously."""
+    # GIVEN a second Tempo stack is deployed
+    juju.deploy(charm="tempo-coordinator-k8s", app="tempo2", channel="2/edge", trust=True)
+    juju.deploy(charm="tempo-worker-k8s", app="tempo-worker2", channel="2/edge", trust=True)
+    deploy_seaweedfs(juju, app="seaweedfs-tempo2", s3_requirer_app="tempo2")
+    juju.integrate("tempo2:tempo-cluster", "tempo-worker2")
+    juju.wait(lambda status: jubilant.all_active(status, "tempo2"), delay=10, timeout=900)
+
+    # WHEN both Tempo backends are related to otelcol via send-traces
+    # (otelcol:send-traces is already related to tempo from the previous test)
+    juju.integrate("otelcol:send-traces", "tempo2:tracing")
+    juju.wait(jubilant.all_active, delay=10, timeout=900)
+
+    # THEN traces produced by grafana arrive in both Tempo backends
+    tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
+    tempo2_ip = juju.status().apps["tempo2"].units["tempo2/0"].address
+    await check_traces_from_app(tempo_ip=tempo_ip, app="grafana")
+    await check_traces_from_app(tempo_ip=tempo2_ip, app="grafana")
+
+    # WHEN one send-traces relation is removed
+    juju.remove_relation("otelcol:send-traces", "tempo2:tracing")
+    juju.wait(jubilant.all_active, delay=10, timeout=600)
 
 
 # https://github.com/canonical/cos-coordinated-workers/pull/8
@@ -116,3 +116,4 @@ async def test_traces_with_tls(juju: jubilant.Juju):
     # THEN traces arrive in tempo
     tempo_ip = juju.status().apps["tempo"].units["tempo/0"].address
     await check_traces_from_app(tempo_ip=tempo_ip, app="coconut")
+

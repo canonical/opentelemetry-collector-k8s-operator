@@ -203,8 +203,61 @@ def test_traces_exporters(ctx, otelcol_container):
     state_out: State = ctx.run(ctx.on.update_status(), state_in)
     # THEN the config file exists and the pebble service is running
     cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
-    # AND the exporters for tracing exists in the config
-    expected_exporters = {"otlphttp/send-traces"}
-    assert expected_exporters.issubset(set(cfg["exporters"].keys()))
+    # AND exactly one otlphttp/send-traces-* exporter exists in the config
+    send_traces_exporters = [k for k in cfg["exporters"] if k.startswith("otlphttp/send-traces-")]
+    assert len(send_traces_exporters) == 1
+    # AND the pipelines are valid
+    check_valid_pipelines(cfg)
+
+
+def test_traces_exporters_multiple_backends(ctx, otelcol_container):
+    """Scenario: Fan-out tracing architecture to multiple Tempo backends."""
+    # GIVEN two simultaneous send-traces relations (one per Tempo instance)
+    receivers_tempo1 = json.dumps(
+        [
+            {
+                "protocol": {"name": "otlp_http", "type": "http"},
+                "url": "http://tempo1.svc.cluster.local:4318",
+            },
+        ]
+    )
+    receivers_tempo2 = json.dumps(
+        [
+            {
+                "protocol": {"name": "otlp_http", "type": "http"},
+                "url": "http://tempo2.svc.cluster.local:4318",
+            },
+        ]
+    )
+    local_app_data = {"receivers": json.dumps(["otlp_http"])}
+    tempo1_relation = Relation(
+        endpoint="send-traces",
+        interface="tracing",
+        remote_app_data={"receivers": receivers_tempo1},
+        local_app_data=local_app_data,
+    )
+    tempo2_relation = Relation(
+        endpoint="send-traces",
+        interface="tracing",
+        remote_app_data={"receivers": receivers_tempo2},
+        local_app_data=local_app_data,
+    )
+    state_in = State(
+        relations=[tempo1_relation, tempo2_relation],
+        containers=otelcol_container,
+    )
+    # WHEN any event executes the reconciler
+    state_out: State = ctx.run(ctx.on.update_status(), state_in)
+    # THEN the config file exists and the pebble service is running
+    cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
+    # AND two distinct otlphttp/send-traces-* exporters exist — one per backend
+    send_traces_exporters = [k for k in cfg["exporters"] if k.startswith("otlphttp/send-traces-")]
+    assert len(send_traces_exporters) == 2
+    # AND both exporters are wired into the traces pipeline
+    pipeline_exporters = cfg["service"]["pipelines"]["traces/opentelemetry-collector-k8s/0"][
+        "exporters"
+    ]
+    for exporter_name in send_traces_exporters:
+        assert exporter_name in pipeline_exporters
     # AND the pipelines are valid
     check_valid_pipelines(cfg)

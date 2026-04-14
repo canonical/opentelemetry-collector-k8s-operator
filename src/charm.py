@@ -311,9 +311,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 ),
                 sampling_rate_error=cast(bool, self.config.get("tracing_sampling_rate_error")),
             )
-        tracing_otlp_http_endpoint = integrations.send_traces(self)
-        if tracing_otlp_http_endpoint:
-            config_manager.add_traces_forwarding(tracing_otlp_http_endpoint)
+        for idx, endpoint in enumerate(integrations.send_traces(self)):
+            config_manager.add_traces_forwarding(endpoint, identifier=str(idx))
         integrations.send_charm_traces(self)
 
         # Dashboards setup
