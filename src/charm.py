@@ -77,9 +77,7 @@ def charm_address(
     resolved_host = external_host if external_host else internal_host
     return integrations.Address(
         ingress=traefik_ready or istio_ready,
-        internal_tls=internal_tls,
-        external_tls=external_tls,
-        internal_host=internal_host,
+        resolved_tls=external_tls if (traefik_ready or istio_ready) else internal_tls,
         resolved_host=resolved_host,
     )
 

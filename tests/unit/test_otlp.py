@@ -116,6 +116,12 @@ def test_receive_otlp(ctx, otelcol_container):
                 "endpoint": "http://fqdn:4318",
                 "telemetries": ["metrics", "logs", "traces"],
                 "insecure": False,
+            },
+            {
+                "protocol": "grpc",
+                "endpoint": "fqdn:4317",
+                "telemetries": ["metrics", "logs", "traces"],
+                "insecure": False,
             }
         ],
     }

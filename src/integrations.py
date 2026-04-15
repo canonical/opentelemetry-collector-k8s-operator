@@ -127,7 +127,6 @@ def receive_loki_logs(charm: CharmBase, address: "Address") -> None:
 
     Args:
         charm: the otel-collector charm object
-        tls: whether TLS is enabled
         address: a dataclass for determining network addressing
     """
     forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
@@ -492,8 +491,8 @@ def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) ->
     support it.
 
     Args:
-        charm: the otelcol charm object
-        address: the charm's current network status
+        charm: the otel-collector charm object
+        address: a dataclass for determining network addressing
         traefik_ingress: whether or not the charm's receivers are being routed through Traefik
     """
     # Publish endpoints for the requirer
@@ -501,12 +500,14 @@ def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) ->
         protocol="http",
         endpoint=f"{address.http_resolved_url}:4318",
         telemetries=["metrics", "logs", "traces"],
+        insecure=address.resolved_tls,
     )
     if not traefik_ingress:
         provider.add_endpoint(
             protocol="grpc",
             endpoint=f"{address.grpc_resolved_url}:4317",
             telemetries=["metrics", "logs", "traces"],
+            insecure=address.resolved_tls,
         )
     provider.publish()
 
@@ -762,9 +763,7 @@ class Address:
     """
 
     ingress: bool
-    internal_tls: bool
-    external_tls: bool
-    internal_host: str  # Only TLS context
+    resolved_tls: bool  # TLS & ingress context
     resolved_host: str  # TLS & ingress context
 
     @staticmethod
@@ -773,24 +772,14 @@ class Address:
         return "http" if not tls else "https"
 
     @property
-    def grpc_internal_url(self) -> str:
-        """Return the most internal URL for gRPC endpoints."""
-        return self.internal_host
-
-    @property
     def grpc_resolved_url(self) -> str:
         """Return the most external URL for gRPC endpoints."""
         return self.resolved_host
 
     @property
-    def http_internal_url(self) -> str:
-        """Return the most internal URL for HTTP endpoints."""
-        return f"{self._scheme(self.internal_tls)}://{self.internal_host}"
-
-    @property
     def http_resolved_url(self) -> str:
         """Return the most external URL for HTTP endpoints."""
-        return f"{self._scheme(self.external_tls)}://{self.resolved_host}"
+        return f"{self._scheme(self.resolved_tls)}://{self.resolved_host}"
 
 
 def _istio_ingress_config(charm: CharmBase) -> IstioIngressRouteConfig:

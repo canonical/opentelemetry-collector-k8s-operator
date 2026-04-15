@@ -92,6 +92,7 @@ provides:
 
       This endpoint currently supports:
         - HTTP for ["logs", "metrics", "traces"]
+        - gRPC for ["logs", "metrics", "traces"]
 
 requires:
   send-profiles:
