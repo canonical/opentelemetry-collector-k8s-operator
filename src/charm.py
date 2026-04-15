@@ -61,15 +61,14 @@ def charm_address(
     istio_ready = integrations.istio_ingress_ready(istio_ingress)
     traefik_ready = integrations.traefik_ingress_ready(traefik_ingress)
     if istio_ready and traefik_ready:
-        # TODO: utest this, asserting return types
         return integrations.MultipleIngressesConfigured(
-            "Multiple ingress relations are active; at most one ingress is supported."
+            "Multiple ingress relations are active; remove relations until only one remains."
         )
 
     if istio_ready:
         scheme = "https" if istio_ingress.tls_enabled else "http"
         external_url = f"{scheme}://{istio_ingress.external_host}"
-    if traefik_ready:
+    elif traefik_ready:
         external_url = f"{traefik_ingress.scheme}://{traefik_ingress.external_host}"
     else:
         external_url = None

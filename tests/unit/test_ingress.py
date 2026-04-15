@@ -7,6 +7,8 @@ import json
 from typing import Any, List
 from unittest.mock import patch
 
+import pytest
+
 import yaml
 from ops.testing import Relation, State
 
@@ -14,6 +16,94 @@ from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
 
 FQDN = "otelcol-0.otelcol-endpoints.otel.svc.cluster.local"
+
+
+def test_blocked_status_when_scaled_without_ingress(ctx, otelcol_container):
+    # GIVEN otelcol is not scaled and has no ingress relation
+    state = State(planned_units=1, containers=otelcol_container, leader=True)
+
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN the charm is Active
+    assert state_out.unit_status.name != "blocked"
+
+    # AND WHEN otelcol is scaled to 2 units
+    state = State(planned_units=2, containers=otelcol_container, leader=True)
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN the charm is Blocked
+    assert state_out.unit_status.name == "blocked"
+    assert "Ingress missing" in state_out.unit_status.message
+
+    # AND WHEN otelcol is scaled to 2 units with ingress relation
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
+    state = State(
+        planned_units=2,
+        relations=[ingress],
+        containers=otelcol_container,
+        leader=True,
+    )
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN the charm is Active
+    assert state_out.unit_status.name != "blocked"
+    assert not state_out.unit_status.message
+
+
+def test_blocked_when_both_ingresses_active(ctx, otelcol_container):
+    """Scenario: Both Traefik and Istio ingress are active simultaneously."""
+    # GIVEN both ingress and istio-ingress relations with external hosts
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
+    istio_ingress = Relation(
+        "istio-ingress",
+        remote_app_data={"external_host": "5.6.7.8", "tls_enabled": "False"},
+    )
+    state = State(
+        relations=[ingress, istio_ingress], containers=otelcol_container, leader=True
+    )
+
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN the charm is blocked with a multiple-ingress message
+    assert state_out.unit_status.name == "blocked"
+    assert "Multiple ingress" in state_out.unit_status.message
+
+
+def test_istio_sent_config(ctx, otelcol_container):
+    """Scenario: Istio ingress relation is connected and the charm submits a valid config."""
+    # GIVEN an istio-ingress relation with external_host and tls_enabled=False
+    istio_ingress = Relation(
+        "istio-ingress",
+        remote_app_data={"external_host": "5.6.7.8", "tls_enabled": "False"},
+    )
+    state = State(relations=[istio_ingress], containers=otelcol_container, leader=True)
+
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.relation_joined(istio_ingress), state)
+
+    # THEN the charm submitted a config to the istio-ingress relation
+    istio_out = state_out.get_relations(istio_ingress.endpoint)[0]
+    assert istio_out.local_app_data
+    assert "config" in istio_out.local_app_data
+
+    config = json.loads(istio_out.local_app_data["config"])
+
+    # AND the config should contain listeners and routes for all Port entries
+    assert "listeners" in config
+    assert "http_routes" in config
+    assert "grpc_routes" in config
+    assert len(config["listeners"]) == len(list(Port))
+
+    # AND gRPC ports (otlp_grpc, jaeger_grpc) should be in grpc_routes
+    grpc_port_names = {"otlp_grpc", "jaeger_grpc"}
+    grpc_ports = {p.value for p in Port if p.name in grpc_port_names}
+    http_ports = {p.value for p in Port if p.name not in grpc_port_names}
+    grpc_route_ports = {r["backends"][0]["port"] for r in config["grpc_routes"]}
+    http_route_ports = {r["backends"][0]["port"] for r in config["http_routes"]}
+    assert grpc_route_ports == grpc_ports
+    assert http_route_ports == http_ports
 
 
 @patch("socket.getfqdn", lambda: FQDN)
@@ -97,25 +187,25 @@ def test_traefik_sent_config(ctx, otelcol_container):
         },
     }
 
-    out = ctx.run(ctx.on.relation_joined(ingress), state)
+    state_out = ctx.run(ctx.on.relation_joined(ingress), state)
 
     # THEN dynamic config is present in ingress relation
-    ingress_out = out.get_relations(ingress.endpoint)[0]
+    ingress_out = state_out.get_relations(ingress.endpoint)[0]
     assert ingress_out.local_app_data
     assert yaml.safe_load(ingress_out.local_app_data["config"]) == expected_rel_data
 
 
-def test_ingress_config_middleware_tls(ctx, otelcol_container):
+def test_traefik_ingress_config_middleware_tls(ctx, otelcol_container):
     # GIVEN an ingress relation with TLS
     ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "https"})
 
     state = State(relations=[ingress], containers=otelcol_container, leader=True)
 
     # WHEN the ingress relation joins
-    out = ctx.run(ctx.on.relation_joined(ingress), state)
+    state_out = ctx.run(ctx.on.relation_joined(ingress), state)
 
     # THEN middleware config is present in ingress config
-    ingress_out = out.get_relations(ingress.endpoint)[0]
+    ingress_out = state_out.get_relations(ingress.endpoint)[0]
     assert ingress_out.local_app_data
     config = yaml.safe_load(ingress_out.local_app_data["config"])
     middlewares = config["http"]["middlewares"]
@@ -134,21 +224,30 @@ def test_ingress_config_middleware_tls(ctx, otelcol_container):
         }
 
 
-@patch("socket.getfqdn", lambda: "fqdn")
-def test_loki_url_in_databag(ctx, otelcol_container):
-    # WHEN traefik ingress is related to otelcol
+@pytest.mark.parametrize(
+    "ingress_rel_name,ingress_remote_data,external_host",
+    [
+        ("ingress", {"external_host": "1.2.3.4", "scheme": "http"}, "1.2.3.4"),
+        ("istio-ingress", {"external_host": "5.6.7.8", "tls_enabled": "False"}, "5.6.7.8"),
+    ],
+)
+@patch("socket.getfqdn", new=lambda *args: FQDN)
+def test_loki_url_in_databag(
+    ctx, otelcol_container, ingress_rel_name, ingress_remote_data, external_host
+):
+    # GIVEN an ingress is related to otelcol
     receive_logs_endpoint = Relation("receive-loki-logs")
-    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
+    ingress = Relation(ingress_rel_name, remote_app_data=ingress_remote_data)
     state = State(
         relations=[ingress, receive_logs_endpoint], containers=otelcol_container, leader=True
     )
 
-    # AND WHEN the ingress relation is created
+    # WHEN the ingress relation is created
     out_1 = ctx.run(ctx.on.relation_created(ingress), state)
 
     # THEN ingress URL is present in receive-loki-logs relation databag
     receive_logs_out = out_1.get_relations(receive_logs_endpoint.endpoint)[0]
-    expected_data = {"url": f"http://1.2.3.4:{Port.loki_http.value}/loki/api/v1/push"}
+    expected_data = {"url": f"http://{external_host}:{Port.loki_http.value}/loki/api/v1/push"}
     assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data
 
     # AND WHEN the receive-loki-logs relation is created
@@ -156,21 +255,30 @@ def test_loki_url_in_databag(ctx, otelcol_container):
 
     # THEN ingress URL is present in receive-loki-logs relation databag
     receive_logs_out = out_2.get_relations(receive_logs_endpoint.endpoint)[0]
-    expected_data = {"url": f"http://1.2.3.4:{Port.loki_http.value}/loki/api/v1/push"}
+    expected_data = {"url": f"http://{external_host}:{Port.loki_http.value}/loki/api/v1/push"}
     assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data
 
     # AND WHEN ingress is removed
     out_3 = ctx.run(ctx.on.relation_broken(ingress), state)
     # THEN the internal URL is present in receive-loki-logs relation databag
     receive_logs_out = out_3.get_relations(receive_logs_endpoint.endpoint)[0]
-    expected_data = {"url": f"http://fqdn:{Port.loki_http.value}/loki/api/v1/push"}
+    expected_data = {"url": f"http://{FQDN}:{Port.loki_http.value}/loki/api/v1/push"}
     assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data
 
 
-@patch("socket.getfqdn", new=lambda *args: "fqdn")
-def test_otlp_url_in_databag(ctx, otelcol_container):
+@pytest.mark.parametrize(
+    "ingress_rel_name,ingress_remote_data,external_host",
+    [
+        ("ingress", {"external_host": "1.2.3.4", "scheme": "http"}, "1.2.3.4"),
+        ("istio-ingress", {"external_host": "5.6.7.8", "tls_enabled": "False"}, "5.6.7.8"),
+    ],
+)
+@patch("socket.getfqdn", new=lambda *args: FQDN)
+def test_otlp_url_in_databag(
+    ctx, otelcol_container, ingress_rel_name, ingress_remote_data, external_host
+):
     def expected_endpoints(ingress: bool) -> List[dict[str, Any]]:
-        host = "1.2.3.4" if ingress else "fqdn"
+        host = external_host if ingress else FQDN
         return [
             {
                 "protocol": "http",
@@ -180,13 +288,13 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
             },
         ]
 
-    # WHEN traefik ingress is related to otelcol
+    # GIVEN an ingress is related to otelcol
     rules = json.dumps({"logql": {}, "promql": {}})
     receive_otlp = Relation("receive-otlp", remote_app_data={"rules": rules, "metadata": "{}"})
-    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
+    ingress = Relation(ingress_rel_name, remote_app_data=ingress_remote_data)
     state = State(relations=[ingress, receive_otlp], containers=otelcol_container, leader=True)
 
-    # AND WHEN the ingress relation is created
+    # WHEN the ingress relation is created
     out_1 = ctx.run(ctx.on.relation_created(ingress), state)
 
     # THEN ingress URL is present in receive-otlp relation databag
@@ -208,36 +316,3 @@ def test_otlp_url_in_databag(ctx, otelcol_container):
     receive_otlp_out = out_3.get_relations(receive_otlp.endpoint)[0]
     endpoints = json.loads(receive_otlp_out.local_app_data.get("endpoints", "[]"))
     assert endpoints == expected_endpoints(ingress=False)
-
-
-def test_blocked_status_when_scaled_without_ingress(ctx, otelcol_container):
-    # GIVEN otelcol is not scaled and has no ingress relation
-    state = State(planned_units=1, containers=otelcol_container, leader=True)
-
-    # WHEN any event executes the reconciler
-    out = ctx.run(ctx.on.update_status(), state)
-
-    # THEN the charm is Active
-    assert out.unit_status.name != "blocked"
-
-    # AND WHEN otelcol is scaled to 2 units
-    state = State(planned_units=2, containers=otelcol_container, leader=True)
-    out = ctx.run(ctx.on.update_status(), state)
-
-    # THEN the charm is Blocked
-    assert out.unit_status.name == "blocked"
-    assert "Ingress missing" in out.unit_status.message
-
-    # AND WHEN otelcol is scaled to 2 units with ingress relation
-    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
-    state = State(
-        planned_units=2,
-        relations=[ingress],
-        containers=otelcol_container,
-        leader=True,
-    )
-    out = ctx.run(ctx.on.update_status(), state)
-
-    # THEN the charm is Active
-    assert out.unit_status.name != "blocked"
-    assert not out.unit_status.message
