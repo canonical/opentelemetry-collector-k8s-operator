@@ -4,13 +4,17 @@
 """Feature: Otelcol server can operate behind an ingress."""
 
 import json
+import logging
 import time
 from typing import Dict
 from urllib.request import Request, urlopen
 
 import jubilant
+import sh
 
 from src.config_builder import Port
+
+logger = logging.getLogger(__name__)
 
 IDENTIFIER = "+++Testing OTLP ingress+++"
 
@@ -114,7 +118,7 @@ def test_push_logs_through_traefik_ingress(juju: jubilant.Juju):
     """Scenario: receive logs via the LokiPushApiProvider through ingress."""
     # GIVEN a model with otel-collector and traefik
     # AND a receive-loki-logs relation
-    juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="2/edge", trust=True)
+    juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="dev/edge", trust=True)
     juju.integrate("otelcol:receive-loki-logs", "otelcol-push")
     juju.wait(
         lambda status: jubilant.all_active(status, "traefik", "otelcol-push"),
@@ -169,7 +173,9 @@ def test_integrate_istio_ingress(juju: jubilant.Juju):
     # AND integrated with otelcol
     juju.integrate("otelcol:istio-ingress", "istio-ingress-k8s:istio-ingress-route")
     juju.wait(
-        lambda status: jubilant.all_active(status, "traefik", "otelcol-push"),
+        lambda status: jubilant.all_active(
+            status, "istio-k8s", "istio-ingress-k8s", "otelcol-push"
+        ),
         timeout=300,
         error=jubilant.any_error,
     )
@@ -187,3 +193,19 @@ def test_istio_ingress(juju: jubilant.Juju):
     push_logs_through_ingress(juju, "istio-ingress-k8s")
     # THEN OTLP logs are sent through the Istio ingress
     push_otlp_logs_through_ingress(juju, "istio-ingress-k8s")
+
+
+def test_istio_ingress_grpc(juju: jubilant.Juju):
+    juju.integrate("otelcol:receive-otlp", "otelcol-push:send-otlp")
+    juju.config("otelcol", {"debug_exporter_for_metrics": True})
+
+    logger.info("Waiting for scrape interval (1 minute) to elapse...")
+    scrape_interval = 60  # seconds!
+    lookback_window = scrape_interval + 10  # seconds!
+    time.sleep(lookback_window)
+
+    # THEN the metrics from otelcol-push are forwarded to otelcol
+    otelcol_logs = sh.kubectl.logs(
+        "otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
+    )
+    assert "juju_application=otelcol-push" in otelcol_logs
