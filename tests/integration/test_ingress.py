@@ -15,9 +15,13 @@ from src.config_builder import Port
 IDENTIFIER = "+++Testing OTLP ingress+++"
 
 
+def only_otelcol_is_blocked() -> bool:
 def get_ingress_url(juju: jubilant.Juju, app: str) -> str:
     ingress_status = juju.status().apps[app].units[f"{app}/0"].workload_status
-    return ingress_status.message.split()[-1]
+    address = ingress_status.message.split()[-1]
+    if not address.startswith("http://"):
+        address = f"http://{address}"
+    return address
 
 
 def health_check_reachable_via_ingress(juju: jubilant.Juju, ingress_app: str):
@@ -165,8 +169,16 @@ def test_integrate_istio_ingress(juju: jubilant.Juju):
 
     # AND integrated with otelcol
     juju.integrate("otelcol:istio-ingress", "istio-ingress-k8s:istio-ingress-route")
-    # AND the ingress relation can be established
-    juju.wait(jubilant.all_active, timeout=300, error=jubilant.any_error)
+    juju.wait(
+        lambda status: jubilant.all_active(status, "traefik", "otelcol-push"),
+        timeout=300,
+        error=jubilant.any_error,
+    )
+    juju.wait(
+        lambda status: jubilant.all_blocked(status, "otelcol"),
+        timeout=300,
+        error=jubilant.any_error,
+    )
 
 
 def test_istio_ingress(juju: jubilant.Juju):
