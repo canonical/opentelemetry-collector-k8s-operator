@@ -162,7 +162,6 @@ requires:
       If the received config has secrets that have render=file, the secret files will be stored in /var/snap/opentelemetry-collector/common/external_config_secrets.
   ingress:
     interface: traefik_route
-    # TODO: Tempo has this as no limit
     limit: 1
     optional: true
     description: |

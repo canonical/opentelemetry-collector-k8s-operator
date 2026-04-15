@@ -10,6 +10,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast, get_args
+from urllib.parse import urlparse
 
 import yaml
 from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer, RuleStore
@@ -135,10 +136,10 @@ def receive_loki_logs(charm: CharmBase, address: "Address") -> None:
         charm,
         relation_name="receive-loki-logs",
         port=Port.loki_http.value,
-        scheme=address.resolved_scheme,
+        scheme=urlparse(address.http_resolved_url).scheme,
     )
 
-    loki_provider.update_endpoint(f"{address.resolved_url}:{Port.loki_http.value}")
+    loki_provider.update_endpoint(f"{address.http_resolved_url}:{Port.loki_http.value}")
 
     charm.__setattr__("loki_provider", loki_provider)
     shutil.copytree(
@@ -483,17 +484,31 @@ def forward_dashboards(charm: CharmBase):
     # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
 
-def receive_otlp(charm: CharmBase, resolved_url: str) -> None:
+def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) -> None:
     """Instantiate the OtlpProvider.
 
     Define the OTLP endpoints which the charm should publish to the databag.
     The gRPC protocol is not supported because Traefik (ingress) does not
     support it.
+
+    Args:
+        charm: the otelcol charm object
+        address: the charm's current network status
+        traefik_ingress: whether or not the charm's receivers are being routed through Traefik
     """
     # Publish endpoints for the requirer
-    OtlpProvider(charm).add_endpoint(
-        protocol="http", endpoint=f"{resolved_url}:4318", telemetries=["metrics", "logs", "traces"]
-    ).publish()
+    provider = OtlpProvider(charm).add_endpoint(
+        protocol="http",
+        endpoint=f"{address.http_resolved_url}:4318",
+        telemetries=["metrics", "logs", "traces"],
+    )
+    if not traefik_ingress:
+        provider.add_endpoint(
+            protocol="grpc",
+            endpoint=f"{address.grpc_resolved_url}:4317",
+            telemetries=["metrics", "logs", "traces"],
+        )
+    provider.publish()
 
 
 def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
@@ -747,10 +762,35 @@ class Address:
     """
 
     ingress: bool
-    internal_scheme: str  # Only TLS context
-    internal_url: str  # Only TLS context
-    resolved_scheme: str  # TLS & ingress context
-    resolved_url: str  # TLS & ingress context
+    internal_tls: bool
+    external_tls: bool
+    internal_host: str  # Only TLS context
+    resolved_host: str  # TLS & ingress context
+
+    @staticmethod
+    def _scheme(tls: bool) -> str:
+        """Return the scheme to use based on the TLS status of the context."""
+        return "http" if not tls else "https"
+
+    @property
+    def grpc_internal_url(self) -> str:
+        """Return the most internal URL for gRPC endpoints."""
+        return self.internal_host
+
+    @property
+    def grpc_resolved_url(self) -> str:
+        """Return the most external URL for gRPC endpoints."""
+        return self.resolved_host
+
+    @property
+    def http_internal_url(self) -> str:
+        """Return the most internal URL for HTTP endpoints."""
+        return f"{self._scheme(self.internal_tls)}://{self.internal_host}"
+
+    @property
+    def http_resolved_url(self) -> str:
+        """Return the most external URL for HTTP endpoints."""
+        return f"{self._scheme(self.external_tls)}://{self.resolved_host}"
 
 
 def _istio_ingress_config(charm: CharmBase) -> IstioIngressRouteConfig:
@@ -771,11 +811,7 @@ def _istio_ingress_config(charm: CharmBase) -> IstioIngressRouteConfig:
             name=f"juju-{charm.model.name}-{charm.model.app.name}-{sanitized_protocol}",
             listener=listener,
             backends=[
-                BackendRef(
-                    service=charm.app.name,
-                    port=port.value,
-                    weight=100,  # Let the service take care of load balancing.
-                ),
+                BackendRef(service=charm.app.name, port=port.value),
             ],
         )
 

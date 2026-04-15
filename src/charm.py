@@ -8,7 +8,6 @@ import os
 import re
 import socket
 from typing import Any, Dict, List, Optional, cast
-from urllib.parse import urlparse
 
 from charmlibs.pathops import ContainerPath
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
@@ -55,8 +54,8 @@ def charm_address(
         MultipleIngressesConfigured if both Traefik and Istio ingresses are configured.
     """
     tls = integrations.is_tls_ready(container)
-    internal_scheme = "https" if tls else "http"
-    internal_url = f"{internal_scheme}://{socket.getfqdn()}"
+    internal_tls = tls
+    internal_host = socket.getfqdn()
 
     istio_ready = integrations.istio_ingress_ready(istio_ingress)
     traefik_ready = integrations.traefik_ingress_ready(traefik_ingress)
@@ -66,22 +65,22 @@ def charm_address(
         )
 
     if istio_ready:
-        scheme = "https" if istio_ingress.tls_enabled else "http"
-        external_url = f"{scheme}://{istio_ingress.external_host}"
+        external_tls = istio_ingress.tls_enabled
+        external_host = istio_ingress.external_host
     elif traefik_ready:
-        external_url = f"{traefik_ingress.scheme}://{traefik_ingress.external_host}"
+        external_tls = traefik_ingress.scheme == "https"
+        external_host = traefik_ingress.external_host
     else:
-        external_url = None
+        external_tls = False
+        external_host = None
 
-    resolved_url = external_url if external_url else internal_url
-    resolved_scheme = urlparse(external_url).scheme if external_url else "https" if tls else "http"
-
+    resolved_host = external_host if external_host else internal_host
     return integrations.Address(
         ingress=traefik_ready or istio_ready,
-        internal_scheme=internal_scheme,
-        internal_url=internal_url,
-        resolved_scheme=resolved_scheme,
-        resolved_url=resolved_url,
+        internal_tls=internal_tls,
+        external_tls=external_tls,
+        internal_host=internal_host,
+        resolved_host=resolved_host,
     )
 
 
@@ -244,7 +243,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         feature_gates: Optional[str] = None
 
         # OTLP setup
-        integrations.receive_otlp(self, otelcol_address.resolved_url)
+        traefik_ingress = integrations.traefik_ingress_ready(traefik_ingress)
+        integrations.receive_otlp(self, otelcol_address, traefik_ingress)
         otlp_endpoints = integrations.send_otlp(self)
         config_manager.add_otlp_forwarding(otlp_endpoints)
 

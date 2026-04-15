@@ -388,6 +388,7 @@ class ConfigManager:
 
         # Exporter config
         for rel_id, otlp_endpoint in relation_map.items():
+            # TODO: We should use of the insecure field from the OtlpEndpoint: https://github.com/canonical/charmlibs/pull/378
             insecure = urlparse(otlp_endpoint.endpoint).scheme == "http"
             tls_config: Dict[str, Any] = {
                 "insecure": insecure,

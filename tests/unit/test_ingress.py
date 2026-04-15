@@ -59,9 +59,7 @@ def test_blocked_when_both_ingresses_active(ctx, otelcol_container):
         "istio-ingress",
         remote_app_data={"external_host": "5.6.7.8", "tls_enabled": "False"},
     )
-    state = State(
-        relations=[ingress, istio_ingress], containers=otelcol_container, leader=True
-    )
+    state = State(relations=[ingress, istio_ingress], containers=otelcol_container, leader=True)
 
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state)
@@ -277,16 +275,26 @@ def test_loki_url_in_databag(
 def test_otlp_url_in_databag(
     ctx, otelcol_container, ingress_rel_name, ingress_remote_data, external_host
 ):
-    def expected_endpoints(ingress: bool) -> List[dict[str, Any]]:
-        host = external_host if ingress else FQDN
-        return [
+    def expected_endpoints(traefik: bool, istio: bool) -> List[dict[str, Any]]:
+        host = external_host if (traefik or istio) else FQDN
+        endpoints = [
             {
                 "protocol": "http",
                 "endpoint": f"http://{host}:{Port.otlp_http.value}",
                 "telemetries": ["metrics", "logs", "traces"],
                 "insecure": False,
-            },
+            }
         ]
+        if not traefik:
+            endpoints.append(
+                {
+                    "protocol": "grpc",
+                    "endpoint": f"{host}:{Port.otlp_grpc.value}",
+                    "telemetries": ["metrics", "logs", "traces"],
+                    "insecure": False,
+                },
+            )
+        return endpoints
 
     # GIVEN an ingress is related to otelcol
     rules = json.dumps({"logql": {}, "promql": {}})
@@ -300,7 +308,9 @@ def test_otlp_url_in_databag(
     # THEN ingress URL is present in receive-otlp relation databag
     receive_otlp_out = out_1.get_relations(receive_otlp.endpoint)[0]
     endpoints = json.loads(receive_otlp_out.local_app_data.get("endpoints", "[]"))
-    assert endpoints == expected_endpoints(ingress=True)
+    assert endpoints == expected_endpoints(
+        traefik=ingress_rel_name == "ingress", istio=ingress_rel_name == "istio-ingress"
+    )
 
     # AND WHEN the receive-otlp relation is created
     out_2 = ctx.run(ctx.on.relation_created(receive_otlp), state)
@@ -308,11 +318,13 @@ def test_otlp_url_in_databag(
     # THEN ingress URL is present in receive-otlp relation databag
     receive_otlp_out = out_2.get_relations(receive_otlp.endpoint)[0]
     endpoints = json.loads(receive_otlp_out.local_app_data.get("endpoints", "[]"))
-    assert endpoints == expected_endpoints(ingress=True)
+    assert endpoints == expected_endpoints(
+        traefik=ingress_rel_name == "ingress", istio=ingress_rel_name == "istio-ingress"
+    )
 
     # AND WHEN ingress is removed
     out_3 = ctx.run(ctx.on.relation_broken(ingress), state)
     # THEN the internal URL is present in receive-otlp relation databag
     receive_otlp_out = out_3.get_relations(receive_otlp.endpoint)[0]
     endpoints = json.loads(receive_otlp_out.local_app_data.get("endpoints", "[]"))
-    assert endpoints == expected_endpoints(ingress=False)
+    assert endpoints == expected_endpoints(traefik=False, istio=False)
