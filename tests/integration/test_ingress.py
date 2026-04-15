@@ -15,7 +15,6 @@ from src.config_builder import Port
 IDENTIFIER = "+++Testing OTLP ingress+++"
 
 
-def only_otelcol_is_blocked() -> bool:
 def get_ingress_url(juju: jubilant.Juju, app: str) -> str:
     ingress_status = juju.status().apps[app].units[f"{app}/0"].workload_status
     address = ingress_status.message.split()[-1]
