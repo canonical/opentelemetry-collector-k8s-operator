@@ -11,8 +11,10 @@ from urllib.request import Request, urlopen
 
 import jubilant
 import sh
+import yaml
 
 from src.config_builder import Port
+from src.constants import CONFIG_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -114,11 +116,16 @@ def test_health_through_traefik_ingress(
     health_check_reachable_via_ingress(juju, "traefik")
 
 
-def test_push_logs_through_traefik_ingress(juju: jubilant.Juju):
+def test_push_logs_through_traefik_ingress(
+    juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]
+):
     """Scenario: receive logs via the LokiPushApiProvider through ingress."""
     # GIVEN a model with otel-collector and traefik
     # AND a receive-loki-logs relation
-    juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="dev/edge", trust=True)
+
+    # TODO: Replace this with a CharmHub otelcol
+    # juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="dev/edge", trust=True)
+    juju.deploy(charm, "otelcol-push", resources=charm_resources, trust=True)
     juju.integrate("otelcol:receive-loki-logs", "otelcol-push")
     juju.wait(
         lambda status: jubilant.all_active(status, "traefik", "otelcol-push"),
@@ -177,7 +184,6 @@ def test_integrate_istio_ingress(juju: jubilant.Juju):
             status, "istio-k8s", "istio-ingress-k8s", "otelcol-push"
         ),
         timeout=300,
-        error=jubilant.any_error,
     )
     juju.wait(
         lambda status: jubilant.all_blocked(status, "otelcol"),
@@ -196,15 +202,24 @@ def test_istio_ingress(juju: jubilant.Juju):
 
 
 def test_istio_ingress_grpc(juju: jubilant.Juju):
+    # GIVEN the otelcol-push application is related to otelcol for sending OTLP data
     juju.integrate("otelcol:receive-otlp", "otelcol-push:send-otlp")
     juju.config("otelcol", {"debug_exporter_for_metrics": True})
+    juju.wait(lambda status: jubilant.all_active(status, "otelcol-push"), timeout=300)
 
+    # WHEN the OTLP exporter configured uses the gRPC protocol
+    config_raw = juju.ssh("otelcol-push/leader", command=f"cat {CONFIG_PATH}", container="otelcol")
+    exporters = yaml.safe_load(config_raw)["exporters"]
+    assert exporters, "No exporters found in otelcol-push config"
+    otlp_exporters = [e for name, e in exporters.items() if "otlp" in name]
+    assert otlp_exporters, "No OTLP exporters found in otelcol-push config"
+    assert ":4317" in otlp_exporters[0].get("endpoint", ""), "gRPC is not being used for OTLP"
+
+    # THEN the metrics from otelcol-push are forwarded to otelcol
     logger.info("Waiting for scrape interval (1 minute) to elapse...")
     scrape_interval = 60  # seconds!
     lookback_window = scrape_interval + 10  # seconds!
     time.sleep(lookback_window)
-
-    # THEN the metrics from otelcol-push are forwarded to otelcol
     otelcol_logs = sh.kubectl.logs(
         "otelcol-0", container="otelcol", n=juju.model, since=f"{lookback_window}s"
     )

@@ -71,7 +71,7 @@ def test_blocked_when_both_ingresses_active(ctx, otelcol_container):
 
 def test_istio_sent_config(ctx, otelcol_container):
     """Scenario: Istio ingress relation is connected and the charm submits a valid config."""
-    # GIVEN an istio-ingress relation with external_host and tls_enabled=False
+    # GIVEN an istio-ingress relation with external_host
     istio_ingress = Relation(
         "istio-ingress",
         remote_app_data={"external_host": "5.6.7.8", "tls_enabled": "False"},
@@ -110,7 +110,6 @@ def test_traefik_sent_config(ctx, otelcol_container):
     # GIVEN otelcol deployed in isolation
     ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
     state = State(relations=[ingress], containers=otelcol_container, leader=True)
-
     charm_name = "opentelemetry-collector-k8s"
     expected_rel_data = {
         "http": {
@@ -185,6 +184,7 @@ def test_traefik_sent_config(ctx, otelcol_container):
         },
     }
 
+    # WHEN the ingress relation joins
     state_out = ctx.run(ctx.on.relation_joined(ingress), state)
 
     # THEN dynamic config is present in ingress relation
@@ -194,7 +194,7 @@ def test_traefik_sent_config(ctx, otelcol_container):
 
 
 def test_traefik_ingress_config_middleware_tls(ctx, otelcol_container):
-    # GIVEN an ingress relation with TLS
+    # GIVEN a Traefik ingress relation with TLS
     ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "https"})
 
     state = State(relations=[ingress], containers=otelcol_container, leader=True)
@@ -265,24 +265,30 @@ def test_loki_url_in_databag(
 
 
 @pytest.mark.parametrize(
-    "ingress_rel_name,ingress_remote_data,external_host",
+    "ingress_rel_name,ingress_remote_data,external_host,tls",
     [
-        ("ingress", {"external_host": "1.2.3.4", "scheme": "http"}, "1.2.3.4"),
-        ("istio-ingress", {"external_host": "5.6.7.8", "tls_enabled": "False"}, "5.6.7.8"),
+        ("ingress", {"external_host": "1.2.3.4", "scheme": "http"}, "1.2.3.4", False),
+        ("ingress", {"external_host": "1.2.3.4", "scheme": "https"}, "1.2.3.4", True),
+        ("istio-ingress", {"external_host": "5.6.7.8", "tls_enabled": "False"}, "5.6.7.8", False),
+        ("istio-ingress", {"external_host": "5.6.7.8", "tls_enabled": "True"}, "5.6.7.8", True),
     ],
 )
 @patch("socket.getfqdn", new=lambda *args: FQDN)
 def test_otlp_url_in_databag(
-    ctx, otelcol_container, ingress_rel_name, ingress_remote_data, external_host
+    ctx, otelcol_container, ingress_rel_name, ingress_remote_data, external_host, tls
 ):
     def expected_endpoints(traefik: bool, istio: bool) -> List[dict[str, Any]]:
-        host = external_host if (traefik or istio) else FQDN
+        has_ingress = traefik or istio
+        host = external_host if has_ingress else FQDN
+        # since we do not patch integrations.is_tls_ready(container), internal TLS will be False
+        insecure = not (tls if has_ingress else False)
+        scheme = "http" if insecure else "https"
         endpoints = [
             {
                 "protocol": "http",
-                "endpoint": f"http://{host}:{Port.otlp_http.value}",
+                "endpoint": f"{scheme}://{host}:{Port.otlp_http.value}",
                 "telemetries": ["metrics", "logs", "traces"],
-                "insecure": False,
+                "insecure": insecure,
             }
         ]
         if not traefik:
@@ -291,7 +297,7 @@ def test_otlp_url_in_databag(
                     "protocol": "grpc",
                     "endpoint": f"{host}:{Port.otlp_grpc.value}",
                     "telemetries": ["metrics", "logs", "traces"],
-                    "insecure": False,
+                    "insecure": insecure,
                 },
             )
         return endpoints

@@ -500,14 +500,14 @@ def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) ->
         protocol="http",
         endpoint=f"{address.http_resolved_url}:4318",
         telemetries=["metrics", "logs", "traces"],
-        insecure=address.resolved_tls,
+        insecure=not address.resolved_tls,
     )
     if not traefik_ingress:
         provider.add_endpoint(
             protocol="grpc",
             endpoint=f"{address.grpc_resolved_url}:4317",
             telemetries=["metrics", "logs", "traces"],
-            insecure=address.resolved_tls,
+            insecure=not address.resolved_tls,
         )
     provider.publish()
 
@@ -746,11 +746,12 @@ def is_tls_ready(container: Container) -> bool:
     )
 
 
-@dataclass
 class MultipleIngressesConfigured:
     """Returned when more than one ingress integration is active simultaneously."""
 
-    message: str = "Multiple ingresses are configured at the same time."
+    message: str = (
+        "Multiple ingress relations are active; remove relations until only one remains."
+    )
 
 
 @dataclass(kw_only=True)
@@ -763,11 +764,11 @@ class Address:
     """
 
     ingress: bool
-    resolved_tls: bool  # TLS & ingress context
-    resolved_host: str  # TLS & ingress context
+    resolved_tls: bool  # determined with TLS & ingress context
+    resolved_host: str  # determined with TLS & ingress context
 
-    @staticmethod
-    def _scheme(tls: bool) -> str:
+    @classmethod
+    def _scheme(cls, tls: bool) -> str:
         """Return the scheme to use based on the TLS status of the context."""
         return "http" if not tls else "https"
 
@@ -799,9 +800,7 @@ def _istio_ingress_config(charm: CharmBase) -> IstioIngressRouteConfig:
         route = route_cls(
             name=f"juju-{charm.model.name}-{charm.model.app.name}-{sanitized_protocol}",
             listener=listener,
-            backends=[
-                BackendRef(service=charm.app.name, port=port.value),
-            ],
+            backends=[BackendRef(service=charm.app.name, port=port.value)],
         )
 
         listeners.append(listener)
@@ -870,7 +869,7 @@ def _update_ingress_relation(
     ingress: TraefikRouteRequirer | IstioIngressRouteRequirer,
     tls: Optional[bool],
 ) -> None:
-    """Make sure the traefik route is up-to-date."""
+    """Make sure the ingress routes are up-to-date."""
     if not charm.unit.is_leader():
         return
 

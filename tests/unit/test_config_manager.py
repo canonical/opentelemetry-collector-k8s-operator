@@ -323,6 +323,7 @@ def test_add_otlp_forwarding():
                     "protocol": "http",
                     "endpoint": "http://host-1:http-port",
                     "telemetries": ["logs"],
+                    "insecure": True,
                 }
             ),
             2: OtlpEndpoint(

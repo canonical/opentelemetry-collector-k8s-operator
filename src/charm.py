@@ -50,19 +50,13 @@ def charm_address(
         istio_ingress: An IstioIngressRouteRequirer containing ingress context
 
     Returns:
-        the Address dataclass summarizing the charm's networking context or
+        The Address dataclass summarizing the charm's networking context or
         MultipleIngressesConfigured if both Traefik and Istio ingresses are configured.
     """
-    tls = integrations.is_tls_ready(container)
-    internal_tls = tls
-    internal_host = socket.getfqdn()
-
     istio_ready = integrations.istio_ingress_ready(istio_ingress)
     traefik_ready = integrations.traefik_ingress_ready(traefik_ingress)
     if istio_ready and traefik_ready:
-        return integrations.MultipleIngressesConfigured(
-            "Multiple ingress relations are active; remove relations until only one remains."
-        )
+        return integrations.MultipleIngressesConfigured()
 
     if istio_ready:
         external_tls = istio_ingress.tls_enabled
@@ -74,6 +68,8 @@ def charm_address(
         external_tls = False
         external_host = None
 
+    internal_host = socket.getfqdn()
+    internal_tls = integrations.is_tls_ready(container)
     resolved_host = external_host if external_host else internal_host
     return integrations.Address(
         ingress=traefik_ready or istio_ready,
