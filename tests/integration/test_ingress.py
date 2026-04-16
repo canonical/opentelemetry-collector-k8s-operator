@@ -16,6 +16,9 @@ import yaml
 from src.config_builder import Port
 from src.constants import CONFIG_PATH
 
+# This is needed for sh.kubectl
+# pyright: reportAttributeAccessIssue = false
+
 logger = logging.getLogger(__name__)
 
 IDENTIFIER = "+++Testing OTLP ingress+++"

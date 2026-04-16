@@ -345,7 +345,7 @@ def test_add_otlp_forwarding():
         },
         f"otlphttp/rel-1/{unit_name}": {
             "endpoint": "http://host-1:http-port",
-            "tls": {"insecure": False, "insecure_skip_verify": True},
+            "tls": {"insecure": True, "insecure_skip_verify": True},
         },
         f"otlp/rel-2/{unit_name}": {
             "endpoint": "host-2:grpc-port",

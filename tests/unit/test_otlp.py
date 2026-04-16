@@ -115,18 +115,18 @@ def test_receive_otlp(ctx, otelcol_container):
                 "protocol": "http",
                 "endpoint": "http://fqdn:4318",
                 "telemetries": ["metrics", "logs", "traces"],
-                "insecure": False,
+                "insecure": True,
             },
             {
                 "protocol": "grpc",
                 "endpoint": "fqdn:4317",
                 "telemetries": ["metrics", "logs", "traces"],
-                "insecure": False,
+                "insecure": True,
             }
         ],
     }
 
-    # GIVEN a receive-otlp relation
+    # GIVEN a receive-otlp relation and no TLS relations
     state = State(
         leader=True,
         containers=otelcol_container,
@@ -137,7 +137,7 @@ def test_receive_otlp(ctx, otelcol_container):
     state_out = ctx.run(ctx.on.update_status(), state=state)
     local_app_data = list(state_out.relations)[0].local_app_data
 
-    # THEN otelcol offers its supported (defined by OtlpProvider) OTLP endpoints in the databag
+    # THEN otelcol offers its supported OTLP endpoints in the databag as "insecure"
     assert (actual_endpoints := json.loads(local_app_data.get("endpoints", "[]")))
     assert actual_endpoints == expected_endpoints["endpoints"]
 
