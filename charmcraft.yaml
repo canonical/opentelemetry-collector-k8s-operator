@@ -5,10 +5,32 @@ name: opentelemetry-collector-k8s
 type: charm
 summary: Vendor-agnostic way to receive, process and export telemetry data.
 description: |
-  The OpenTelemetry Collector offers a vendor-agnostic implementation on how to receive,
-  process and export telemetry data. In addition, it removes the need to run, operate and
-  maintain multiple agents/collectors in order to support open-source telemetry data formats
-  (e.g. Jaeger, Prometheus, etc.) to multiple open-source or commercial back-ends.
+  OpenTelemetry Collector K8s is a Juju charm that deploys and manages the OpenTelemetry
+  Collector on Kubernetes, providing a vendor-agnostic telemetry pipeline for receiving,
+  processing, and exporting metrics, logs, traces, and profiles. It is a component of the
+  Canonical Observability Stack (COS):
+  https://documentation.ubuntu.com/observability
+
+  The collector aggregates telemetry from related charms and forwards it to the appropriate
+  backends such as Prometheus, Loki, and Tempo through Juju relations.
+
+  Key features:
+
+  - Vendor-agnostic telemetry collection covering metrics, logs, traces, and profiles in a
+    single workload.
+  - Native OTLP ingestion (gRPC/HTTP) as the primary protocol, with additional support for
+    Jaeger and Zipkin.
+  - Automatic scraping of Prometheus metrics endpoints from related charms.
+  - Forwarding of telemetry to COS backends — Prometheus (remote write), Mimir, Loki, and Tempo —
+    through Juju relations.
+  - Built-in Grafana dashboards for self-monitoring.
+  - TLS support with configurable CA trust via the receive-ca-cert and receive-server-cert
+    relations.
+  - Ingress support for cross-model telemetry collection through Traefik.
+  - Configurable processors, sampling rates, and scrape intervals.
+  - Grafana Cloud integration via the cloud-config relation.
+  - Persistent storage for telemetry data durability across container restarts.
+  - Configurable Kubernetes resource limits for CPU and memory.
 
 links:
   documentation: https://canonical-charmed-opentelemetry-collector-k8s.readthedocs-hosted.com/
