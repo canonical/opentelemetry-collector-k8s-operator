@@ -215,7 +215,7 @@ def test_istio_ingress_grpc(juju: jubilant.Juju):
     config_raw = juju.ssh("otelcol-push/leader", command=f"cat {CONFIG_PATH}", container="otelcol")
     exporters = yaml.safe_load(config_raw)["exporters"]
     assert exporters, "No exporters found in otelcol-push config"
-    otlp_exporters = [e for name, e in exporters.items() if "otlp" in name]
+    otlp_exporters = [e for name, e in exporters.items() if name.startswith("otlp/")]
     assert otlp_exporters, "No OTLP exporters found in otelcol-push config"
     assert ":4317" in otlp_exporters[0].get("endpoint", ""), "gRPC is not being used for OTLP"
 
