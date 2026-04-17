@@ -109,7 +109,12 @@ requires:
   send-remote-write:
     interface: prometheus_remote_write
     optional: true
-    description: To forward collected metrics to a Prometheus backend.
+    description: |
+      To forward collected metrics to a Prometheus backend.
+
+      The prometheus receiver config has ``trim_metric_suffixes`` set to
+      ``true`` to restore the original metric names used in OpenTelemetry
+      instrumentation. This maintains parity with grafana-agent.
   send-loki-logs:
     interface: loki_push_api
     optional: true
