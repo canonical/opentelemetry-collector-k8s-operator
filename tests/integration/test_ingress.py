@@ -171,23 +171,36 @@ def test_remove_traefik_ingress(juju: jubilant.Juju):
     )
 
 
-def test_integrate_istio_ingress(juju: jubilant.Juju):
+def test_integrate_istio_ingress(juju: jubilant.Juju, preset: str):
     # GIVEN otelcol is not ingressed
     # WHEN Istio applications are deployed
     juju.deploy("istio-ingress-k8s", channel="dev/edge", trust=True)
     juju.deploy("istio-k8s", channel="dev/edge", trust=True)
 
-    # For devs using Canonical Kubernetes, set `juju config istio-k8s platform=""`
-    # https://canonical-service-mesh-documentation.readthedocs-hosted.com/latest/how-to/use-charmed-istio-with-canonical-kubernetes/
+    if preset == "ck8s":
+        # https://canonical-service-mesh-documentation.readthedocs-hosted.com/latest/how-to/use-charmed-istio-with-canonical-kubernetes/
+        juju.config("istio-k8s", {"platform": ""})
 
     # AND integrated with otelcol
     juju.integrate("otelcol:istio-ingress", "istio-ingress-k8s:istio-ingress-route")
-    juju.wait(
-        lambda status: jubilant.all_active(
-            status, "istio-k8s", "istio-ingress-k8s", "otelcol-push"
-        ),
-        timeout=300,
-    )
+    try:
+        juju.wait(
+            lambda status: jubilant.all_active(
+                status, "istio-k8s", "istio-ingress-k8s", "otelcol-push"
+            ),
+            timeout=300,
+        )
+    except TimeoutError:
+        status = juju.status()
+        for unit in status.apps["istio-k8s"].units.values():
+            if "platform mismatch" in unit.workload_status.message.lower():
+                raise AssertionError(
+                    f"istio-k8s unit reports: '{unit.workload_status.message}'. "
+                    "If running on Canonical Kubernetes, re-run with the following pytest flag: "
+                    "--preset ck8s"
+                ) from None
+        raise
+
     juju.wait(
         lambda status: jubilant.all_blocked(status, "otelcol"),
         timeout=300,
