@@ -209,6 +209,7 @@ def test_istio_ingress_grpc(juju: jubilant.Juju):
     juju.integrate("otelcol:receive-otlp", "otelcol-push:send-otlp")
     juju.config("otelcol", {"debug_exporter_for_metrics": True})
     juju.wait(lambda status: jubilant.all_active(status, "otelcol-push"), timeout=300)
+    juju.wait(lambda status: jubilant.all_agents_idle(status, "otelcol-push"), timeout=300)
 
     # WHEN the OTLP exporter configured uses the gRPC protocol
     config_raw = juju.ssh("otelcol-push/leader", command=f"cat {CONFIG_PATH}", container="otelcol")
