@@ -17,7 +17,7 @@ dependencies = [
   "charmlibs-pathops",
   "charmed-service-mesh-helpers>=0.2.0", # istio-beacon lib requirement"lightkube-extensions@git+https://github.com/canonical/lightkube-extensions.git@main", # istio-beacon lib requirement,
   "lightkube-extensions", # istio-beacon lib requirement
-  "charmlibs-interfaces-otlp",
+  "charmlibs-interfaces-otlp @ git+https://github.com/swetha1654/charmlibs.git@feat/update-to-generic-rules#subdirectory=interfaces/otlp",
 ]
 
 [project.optional-dependencies]
