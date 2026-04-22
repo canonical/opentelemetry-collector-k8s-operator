@@ -12,3 +12,7 @@ sqlite-static
 
 # Charm-specific
 ./version
+
+# Terraform
+**/.terraform/*
+**/.terraform.lock.hcl
