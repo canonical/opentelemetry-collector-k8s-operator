@@ -4,11 +4,11 @@ import logging
 from typing import Any, Dict, List, Literal, Optional, Set
 
 import yaml
+from charmlibs.interfaces.otlp import OtlpEndpoint
 
 from config_builder import Component, ConfigBuilder, Port
-from constants import FILE_STORAGE_DIRECTORY
+from constants import CUSTOM_COMPONENT_ID, FILE_STORAGE_DIRECTORY
 from integrations import ProfilingEndpoint
-from charmlibs.interfaces.otlp import OtlpEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -589,7 +589,7 @@ class ConfigManager:
         for processor_name, processor_config in yaml.safe_load(processors_raw).items():
             self.config.add_component(
                 Component.processor,
-                f"{processor_name}/{self._unit_name}/_custom",
+                f"{processor_name}/{self._unit_name}/{CUSTOM_COMPONENT_ID}",
                 processor_config,
                 pipelines=[
                     f"metrics/{self._unit_name}",
@@ -675,7 +675,9 @@ class ConfigManager:
 
             for config_type, config in config_block.items():
                 if config_type not in Component:
-                    logger.warning("wrong component type '%s' in external config, skipping", config_type)
+                    logger.warning(
+                        "wrong component type '%s' in external config, skipping", config_type
+                    )
                     continue
 
                 for name, cnf in config.items():
@@ -684,6 +686,11 @@ class ConfigManager:
                         Component(config_type),
                         comp_name,
                         cnf,
-                        pipelines=[f"{getattr(p, 'value', p)}/{self._unit_name}" for p in configs["pipelines"]],
+                        pipelines=[
+                            f"{getattr(p, 'value', p)}/{self._unit_name}"
+                            for p in configs["pipelines"]
+                        ],
                     )
-                    logger.debug("component type: '%s', name: '%s' added to config", config_type, comp_name)
+                    logger.debug(
+                        "component type: '%s', name: '%s' added to config", config_type, comp_name
+                    )
