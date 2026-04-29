@@ -675,9 +675,7 @@ class ConfigManager:
 
             for config_type, config in config_block.items():
                 if config_type not in Component:
-                    logger.warning(
-                        "wrong component type '%s' in external config, skipping", config_type
-                    )
+                    logger.warning("wrong component type '%s' in external config, skipping", config_type)
                     continue
 
                 for name, cnf in config.items():
@@ -686,11 +684,6 @@ class ConfigManager:
                         Component(config_type),
                         comp_name,
                         cnf,
-                        pipelines=[
-                            f"{getattr(p, 'value', p)}/{self._unit_name}"
-                            for p in configs["pipelines"]
-                        ],
+                        pipelines=[f"{getattr(p, 'value', p)}/{self._unit_name}" for p in configs["pipelines"]],
                     )
-                    logger.debug(
-                        "component type: '%s', name: '%s' added to config", config_type, comp_name
-                    )
+                    logger.debug("component type: '%s', name: '%s' added to config", config_type, comp_name)
