@@ -104,6 +104,7 @@ def test_extra_metrics_alerts_config(ctx, otelcol_container):
         out_1.get_relation(remote_write_relation.id).local_app_data["alert_rules"]
     )
     _assert_extra_labels(alert_rules, extra_labels, present=True)
+
     # GIVEN the config option for extra alert labels is unset
     config2: ConfigDict = {"extra_alert_labels": ""}
     next_state = State(
@@ -198,6 +199,7 @@ def test_extra_otlp_alerts_config(ctx, otelcol_container, all_rules):
     assert decompressed.get("logql") or decompressed.get("promql")
     for groups in decompressed.get("logql", {}), decompressed.get("promql", {}):
         _assert_extra_labels(groups, extra_labels, present=True)
+
     # GIVEN the config option for extra alert labels is unset
     config2: ConfigDict = {"extra_alert_labels": ""}
     next_state = State(
