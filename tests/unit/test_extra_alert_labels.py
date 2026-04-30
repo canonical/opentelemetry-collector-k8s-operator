@@ -52,8 +52,10 @@ zinc_alerts = {
 }
 
 
-def _assert_extra_labels_present(alert_rules: Dict[str, Any], extra_labels: Dict[str, str]):
-    """Assert that all rules contain the expected extra alert labels and topology labels."""
+def _assert_extra_labels(
+    alert_rules: Dict[str, Any], extra_labels: Dict[str, str], *, present: bool
+):
+    """Assert extra alert labels are present/absent and topology labels are always present."""
     assert alert_rules.get("groups"), "No groups found in alert rules"
     for group in alert_rules["groups"]:
         common_labels = (
@@ -62,20 +64,12 @@ def _assert_extra_labels_present(alert_rules: Dict[str, Any], extra_labels: Dict
             else OTLP_TOPOLOGY_LABELS
         )
         for rule in group["rules"]:
-            for key, value in extra_labels.items():
-                assert rule["labels"][key] == value
-            for key, value in common_labels.items():
-                assert rule["labels"][key] == value
-
-
-def _assert_extra_labels_absent(alert_rules: Dict[str, Any], extra_labels: Dict[str, str]):
-    """Assert that none of the rules contain the extra alert labels, but topology is preserved."""
-    assert alert_rules.get("groups"), "No groups found in alert rules"
-    for group in alert_rules["groups"]:
-        common_labels = ZINC_TOPOLOGY_LABELS if ZINC_GROUP_NAME_SUBSTR in group["name"] else OTLP_TOPOLOGY_LABELS
-        for rule in group["rules"]:
-            for key in extra_labels:
-                assert key not in rule["labels"]
+            if present:
+                for key, value in extra_labels.items():
+                    assert rule["labels"][key] == value
+            else:
+                for key in extra_labels:
+                    assert key not in rule["labels"]
             for key, value in common_labels.items():
                 assert rule["labels"][key] == value
 
@@ -107,7 +101,7 @@ def test_extra_metrics_alerts_config(ctx, otelcol_container):
     alert_rules = json.loads(
         out_1.get_relation(remote_write_relation.id).local_app_data["alert_rules"]
     )
-    _assert_extra_labels_present(alert_rules, extra_labels)
+    _assert_extra_labels(alert_rules, extra_labels, present=True)
 
     # GIVEN the config option for extra alert labels is unset
     config2: ConfigDict = {"extra_alert_labels": ""}
@@ -124,10 +118,9 @@ def test_extra_metrics_alerts_config(ctx, otelcol_container):
     alert_rules_mod = json.loads(
         out_2.get_relation(remote_write_relation.id).local_app_data["alert_rules"]
     )
-    _assert_extra_labels_absent(alert_rules_mod, extra_labels)
+    _assert_extra_labels(alert_rules_mod, extra_labels, present=False)
 
 
-# TODO: I am getting CosTool validation errors in the logs, check to see if this happens on main as well
 def test_extra_loki_alerts_config(ctx, otelcol_container):
     # GIVEN a new key-value pair of extra alerts labels, for instance:
     # juju config otelcol extra_alerts_labels="environment: PRODUCTION, zone=Mars"
@@ -153,7 +146,7 @@ def test_extra_loki_alerts_config(ctx, otelcol_container):
     alert_rules = json.loads(
         out_1.get_relation(send_loki_logs_relation.id).local_app_data["alert_rules"]
     )
-    _assert_extra_labels_present(alert_rules, extra_labels)
+    _assert_extra_labels(alert_rules, extra_labels, present=True)
 
     # GIVEN the config option for extra alert labels is unset
     config2: ConfigDict = {"extra_alert_labels": ""}
@@ -170,7 +163,7 @@ def test_extra_loki_alerts_config(ctx, otelcol_container):
     alert_rules_mod = json.loads(
         out_2.get_relation(send_loki_logs_relation.id).local_app_data["alert_rules"]
     )
-    _assert_extra_labels_absent(alert_rules_mod, extra_labels)
+    _assert_extra_labels(alert_rules_mod, extra_labels, present=False)
 
 
 def test_extra_otlp_alerts_config(ctx, otelcol_container, all_rules):
@@ -200,7 +193,7 @@ def test_extra_otlp_alerts_config(ctx, otelcol_container, all_rules):
     decompressed = json.loads(LZMABase64.decompress(json.loads(compressed_rules)))
     # Check promql rules have extra labels
     for groups in decompressed.get("logql", {}), decompressed.get("promql", {}):
-        _assert_extra_labels_present(groups, extra_labels)
+        _assert_extra_labels(groups, extra_labels, present=True)
 
     # GIVEN the config option for extra alert labels is unset
     config2: ConfigDict = {"extra_alert_labels": ""}
@@ -218,4 +211,4 @@ def test_extra_otlp_alerts_config(ctx, otelcol_container, all_rules):
     assert compressed_rules_mod
     decompressed_mod = json.loads(LZMABase64.decompress(json.loads(compressed_rules_mod)))
     for groups in decompressed_mod.get("logql", {}), decompressed_mod.get("promql", {}):
-        _assert_extra_labels_absent(groups, extra_labels)
+        _assert_extra_labels(groups, extra_labels, present=False)
