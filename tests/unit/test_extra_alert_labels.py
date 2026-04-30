@@ -12,6 +12,7 @@ ConfigDict = Dict[str, Union[str, int, float, bool]]
 MODEL_NAME = "my_model"
 MODEL_UUID = "74a5690b-89c9-44dd-984b-f69f26a6b751"
 MODEL = Model(MODEL_NAME, uuid=MODEL_UUID)
+ZINC_GROUP_NAME_SUBSTR = "I_AM_A_ZINC_GROUP"
 ZINC_TOPOLOGY_LABELS = {
     "juju_application": "zinc",
     "juju_charm": "zinc-k8s",
@@ -30,7 +31,7 @@ zinc_alerts = {
         {
             "groups": [
                 {
-                    "name": "alertgroup",
+                    "name": ZINC_GROUP_NAME_SUBSTR,
                     "rules": [
                         {
                             "alert": "Missing",
@@ -51,17 +52,15 @@ zinc_alerts = {
 }
 
 
-def _assert_extra_labels_present(
-    alert_rules: Dict[str, Any],
-    extra_labels: Dict[str, str],
-    databag_group_substr: str = "_alertgroup_",  # from Zinc rules group name
-    databag_labels: Dict[str, str] = ZINC_TOPOLOGY_LABELS,
-    default_labels: Dict[str, str] = OTLP_TOPOLOGY_LABELS,
-):
+def _assert_extra_labels_present(alert_rules: Dict[str, Any], extra_labels: Dict[str, str]):
     """Assert that all rules contain the expected extra alert labels and topology labels."""
     assert alert_rules.get("groups"), "No groups found in alert rules"
     for group in alert_rules["groups"]:
-        common_labels = databag_labels if databag_group_substr in group["name"] else default_labels
+        common_labels = (
+            ZINC_TOPOLOGY_LABELS
+            if ZINC_GROUP_NAME_SUBSTR in group["name"]
+            else OTLP_TOPOLOGY_LABELS
+        )
         for rule in group["rules"]:
             for key, value in extra_labels.items():
                 assert rule["labels"][key] == value
@@ -69,17 +68,11 @@ def _assert_extra_labels_present(
                 assert rule["labels"][key] == value
 
 
-def _assert_extra_labels_absent(
-    alert_rules: Dict[str, Any],
-    extra_labels: Dict[str, str],
-    databag_group_substr: str = "_alertgroup_",  # from Zinc rules group name
-    databag_labels: Dict[str, str] = ZINC_TOPOLOGY_LABELS,
-    default_labels: Dict[str, str] = OTLP_TOPOLOGY_LABELS,
-):
+def _assert_extra_labels_absent(alert_rules: Dict[str, Any], extra_labels: Dict[str, str]):
     """Assert that none of the rules contain the extra alert labels, but topology is preserved."""
     assert alert_rules.get("groups"), "No groups found in alert rules"
     for group in alert_rules["groups"]:
-        common_labels = databag_labels if databag_group_substr in group["name"] else default_labels
+        common_labels = ZINC_TOPOLOGY_LABELS if ZINC_GROUP_NAME_SUBSTR in group["name"] else OTLP_TOPOLOGY_LABELS
         for rule in group["rules"]:
             for key in extra_labels:
                 assert key not in rule["labels"]
