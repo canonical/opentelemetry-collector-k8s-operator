@@ -25,7 +25,7 @@ def pytest_addoption(parser):
     parser.addoption(
         "--preset",
         action="store",
-        default="microk8s",  # defaults to microk8s as CI runs on microk8s at the moment.
+        default="ck8s",  # defaults to ck8s as CI runs on ck8s at the moment.
         choices=VALID_PRESETS,
         help="Substrate preset for substrate-specific test configuration. "
         f"Valid values: {', '.join(VALID_PRESETS)}",
