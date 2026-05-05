@@ -126,9 +126,7 @@ def test_push_logs_through_traefik_ingress(
     # GIVEN a model with otel-collector and traefik
     # AND a receive-loki-logs relation
 
-    # TODO: Replace this with a CharmHub otelcol
-    # juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="dev/edge", trust=True)
-    juju.deploy(charm, "otelcol-push", resources=charm_resources, trust=True)
+    juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="dev/edge", trust=True)
     juju.integrate("otelcol:receive-loki-logs", "otelcol-push")
     juju.wait(
         lambda status: jubilant.all_active(status, "traefik", "otelcol-push"),
@@ -177,7 +175,7 @@ def test_integrate_istio_ingress(juju: jubilant.Juju, preset: str):
     juju.deploy("istio-ingress-k8s", channel="dev/edge", trust=True)
     juju.deploy("istio-k8s", channel="dev/edge", trust=True)
 
-    if preset == "ck8s":
+    if preset == "k8s":
         # https://canonical-service-mesh-documentation.readthedocs-hosted.com/latest/how-to/use-charmed-istio-with-canonical-kubernetes/
         juju.config("istio-k8s", {"platform": ""})
 
@@ -196,8 +194,8 @@ def test_integrate_istio_ingress(juju: jubilant.Juju, preset: str):
             if "platform mismatch" in unit.workload_status.message.lower():
                 raise AssertionError(
                     f"istio-k8s unit reports: '{unit.workload_status.message}'. "
-                    "If running on Canonical Kubernetes, re-run with the following pytest flag: "
-                    "--preset ck8s"
+                    "If running on Microk8s, re-run with the following pytest flag: "
+                    "--preset microk8s"
                 ) from None
         raise
 
