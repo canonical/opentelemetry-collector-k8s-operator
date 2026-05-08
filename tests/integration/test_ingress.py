@@ -104,8 +104,6 @@ def push_otlp_logs_through_ingress(juju: jubilant.Juju, ingress_app: str):
     assert IDENTIFIER in logs_pipeline
 
 
-# https://warthogs.atlassian.net/browse/OBC-2053
-@pytest.mark.xfail(date.today() < date(2026, 6, 8), reason="expected to fail until 2026-06-08", strict=True)
 def test_health_through_traefik_ingress(
     juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]
 ):
