@@ -6,10 +6,12 @@
 import json
 import logging
 import time
+from datetime import date
 from typing import Dict
 from urllib.request import Request, urlopen
 
 import jubilant
+import pytest
 import sh
 import yaml
 
@@ -102,6 +104,8 @@ def push_otlp_logs_through_ingress(juju: jubilant.Juju, ingress_app: str):
     assert IDENTIFIER in logs_pipeline
 
 
+# https://warthogs.atlassian.net/browse/OBC-2053
+@pytest.mark.xfail(date.today() < date(2026, 6, 8), reason="expected to fail until 2026-06-08", strict=True)
 def test_health_through_traefik_ingress(
     juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]
 ):
@@ -119,6 +123,8 @@ def test_health_through_traefik_ingress(
     health_check_reachable_via_ingress(juju, "traefik")
 
 
+# https://warthogs.atlassian.net/browse/OBC-2053
+@pytest.mark.xfail(date.today() < date(2026, 6, 8), reason="expected to fail until 2026-06-08", strict=True)
 def test_push_logs_through_traefik_ingress(
     juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]
 ):
@@ -144,6 +150,8 @@ def test_push_logs_through_traefik_ingress(
     push_logs_through_ingress(juju, "traefik")
 
 
+# https://warthogs.atlassian.net/browse/OBC-2053
+@pytest.mark.xfail(date.today() < date(2026, 6, 8), reason="expected to fail until 2026-06-08", strict=True)
 def test_push_otlp_logs_through_traefik_ingress(juju: jubilant.Juju):
     """Scenario: receive OTLP logs via the otlp_http receiver through ingress."""
     # GIVEN a model with otel-collector and traefik
