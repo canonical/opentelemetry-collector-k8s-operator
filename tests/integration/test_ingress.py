@@ -34,7 +34,7 @@ def get_ingress_url(juju: jubilant.Juju, app: str) -> str:
 
 
 @retry(wait=wait_fixed(15), stop=stop_after_attempt(10))
-def fetch_with_retry(
+def request_with_retry(
     url: str,
     expected_status: int,
     method: str = "GET",
@@ -65,7 +65,7 @@ def fetch_with_retry(
 def health_check_reachable_via_ingress(juju: jubilant.Juju, ingress_app: str):
     """Check that the health endpoint is reachable through the ingress."""
     health_service = f"{get_ingress_url(juju, ingress_app)}:{Port.health.value}"
-    response = fetch_with_retry(health_service, expected_status=200)
+    response = request_with_retry(health_service, expected_status=200)
     assert '{"status":"Server available"' in response.text, (
         f"{health_service} did not return expected health response"
     )
@@ -86,7 +86,7 @@ def push_logs_through_ingress(juju: jubilant.Juju, ingress_app: str):
         ]
     }
     # THEN the logs arrive in the otelcol pipeline
-    fetch_with_retry(
+    request_with_retry(
         push_api_url,
         expected_status=204,
         method="POST",
@@ -121,7 +121,7 @@ def push_otlp_logs_through_ingress(juju: jubilant.Juju, ingress_app: str):
         ]
     }
     # THEN the logs arrive in the otelcol pipeline
-    fetch_with_retry(
+    request_with_retry(
         otlp_http_url,
         expected_status=200,
         method="POST",
