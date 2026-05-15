@@ -3,15 +3,15 @@
 
 """Feature: Otelcol server can operate behind an ingress."""
 
-import json
 import logging
 import time
-from typing import Dict
-from urllib.request import Request, urlopen
+from typing import Dict, Optional
 
 import jubilant
+import requests
 import sh
 import yaml
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from src.config_builder import Port
 from src.constants import CONFIG_PATH
@@ -25,6 +25,7 @@ IDENTIFIER = "+++Testing OTLP ingress+++"
 
 
 def get_ingress_url(juju: jubilant.Juju, app: str) -> str:
+    """Get the ingress URL from the ingress app's workload status message."""
     ingress_status = juju.status().apps[app].units[f"{app}/0"].workload_status
     address = ingress_status.message.split()[-1]
     if not address.startswith("http://"):
@@ -32,16 +33,46 @@ def get_ingress_url(juju: jubilant.Juju, app: str) -> str:
     return address
 
 
+@retry(wait=wait_fixed(15), stop=stop_after_attempt(10))
+def request_with_retry(
+    url: str,
+    expected_status: int,
+    method: str = "GET",
+    data: Optional[dict] = None,
+    headers: Optional[dict] = None,
+) -> requests.Response:
+    """Make an HTTP request with retry logic.
+
+    This follows the pattern used by grafana-k8s-operator for ingress tests.
+    Retries help handle transient network issues and timing problems in CI.
+    """
+    if method == "GET":
+        response = requests.get(url, timeout=10, verify=False)
+    else:
+        response = requests.request(
+            method,
+            url,
+            json=data,
+            headers=headers,
+            timeout=10,
+            verify=False,
+        )
+    if response.status_code != expected_status:
+        raise AssertionError(f"Expected status {expected_status}, got {response.status_code}")
+    return response
+
+
 def health_check_reachable_via_ingress(juju: jubilant.Juju, ingress_app: str):
+    """Check that the health endpoint is reachable through the ingress."""
     health_service = f"{get_ingress_url(juju, ingress_app)}:{Port.health.value}"
-    response = urlopen(health_service, timeout=2.0)
-    assert response.code == 200, f"{health_service} was not reachable"
-    assert '{"status":"Server available"' in response.read().decode(), (
-        f"{health_service} did not return expected metrics"
+    response = request_with_retry(health_service, expected_status=200)
+    assert '{"status":"Server available"' in response.text, (
+        f"{health_service} did not return expected health response"
     )
 
 
 def push_logs_through_ingress(juju: jubilant.Juju, ingress_app: str):
+    """Push Loki-format logs through the ingress."""
     push_api_url = f"{get_ingress_url(juju, ingress_app)}:{Port.loki_http.value}/loki/api/v1/push"
     data = {
         "streams": [
@@ -54,18 +85,18 @@ def push_logs_through_ingress(juju: jubilant.Juju, ingress_app: str):
             }
         ]
     }
-    req = Request(
+    # THEN the logs arrive in the otelcol pipeline
+    request_with_retry(
         push_api_url,
-        data=json.dumps(data).encode("utf-8"),
+        expected_status=204,
+        method="POST",
+        data=data,
         headers={"Content-Type": "application/json"},
     )
-    response = urlopen(req, timeout=2.0)
-
-    # THEN the logs arrive in the otelcol pipeline
-    assert response.getcode() == 204
 
 
 def push_otlp_logs_through_ingress(juju: jubilant.Juju, ingress_app: str):
+    """Push OTLP-format logs through the ingress."""
     otlp_http_url = f"{get_ingress_url(juju, ingress_app)}:{Port.otlp_http.value}/v1/logs"
     data = {
         "resourceLogs": [
@@ -89,15 +120,14 @@ def push_otlp_logs_through_ingress(juju: jubilant.Juju, ingress_app: str):
             }
         ]
     }
-    req = Request(
+    # THEN the logs arrive in the otelcol pipeline
+    request_with_retry(
         otlp_http_url,
-        data=json.dumps(data).encode("utf-8"),
+        expected_status=200,
+        method="POST",
+        data=data,
         headers={"Content-Type": "application/json"},
     )
-    response = urlopen(req, timeout=2.0)
-
-    # THEN the logs arrive in the otelcol pipeline
-    assert response.getcode() == 200
     logs_pipeline = juju.ssh("otelcol/leader", command="pebble logs", container="otelcol")
     assert IDENTIFIER in logs_pipeline
 
@@ -126,9 +156,7 @@ def test_push_logs_through_traefik_ingress(
     # GIVEN a model with otel-collector and traefik
     # AND a receive-loki-logs relation
 
-    # TODO: Replace this with a CharmHub otelcol
-    # juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="dev/edge", trust=True)
-    juju.deploy(charm, "otelcol-push", resources=charm_resources, trust=True)
+    juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="dev/edge", trust=True)
     juju.integrate("otelcol:receive-loki-logs", "otelcol-push")
     juju.wait(
         lambda status: jubilant.all_active(status, "traefik", "otelcol-push"),
@@ -177,7 +205,7 @@ def test_integrate_istio_ingress(juju: jubilant.Juju, preset: str):
     juju.deploy("istio-ingress-k8s", channel="dev/edge", trust=True)
     juju.deploy("istio-k8s", channel="dev/edge", trust=True)
 
-    if preset == "ck8s":
+    if preset == "k8s":
         # https://canonical-service-mesh-documentation.readthedocs-hosted.com/latest/how-to/use-charmed-istio-with-canonical-kubernetes/
         juju.config("istio-k8s", {"platform": ""})
 
@@ -196,8 +224,8 @@ def test_integrate_istio_ingress(juju: jubilant.Juju, preset: str):
             if "platform mismatch" in unit.workload_status.message.lower():
                 raise AssertionError(
                     f"istio-k8s unit reports: '{unit.workload_status.message}'. "
-                    "If running on Canonical Kubernetes, re-run with the following pytest flag: "
-                    "--preset ck8s"
+                    "If running on Microk8s, re-run with the following pytest flag: "
+                    "--preset microk8s"
                 ) from None
         raise
 
