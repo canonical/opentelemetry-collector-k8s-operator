@@ -36,7 +36,7 @@ from charms.istio_ingress_k8s.v0.istio_ingress_route import (
     ProtocolType,
 )
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
-from charms.otelcol_integrator.v0.otelcol_integrator import OtelcolIntegratorRequirer
+from charms.opentelemetry_collector_integrator.v0.opentelemetry_collector_integrator import OtelcolIntegratorRequirer
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
 )
@@ -535,8 +535,14 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
             rules.combine(rule_store)
 
     # Publish rules for the provider
-    # NOTE: we set aggregator_peer_relation_name to ensure aggregator generic rules are published
-    OtlpRequirer(charm, aggregator_peer_relation_name="peers", rules=rules).publish()
+    extra_alert_labels = cast(str, charm.model.config.get("extra_alert_labels", ""))
+    OtlpRequirer(
+        charm,
+        # NOTE: we set aggregator_peer_relation_name to ensure aggregator generic rules are published
+        aggregator_peer_relation_name="peers",
+        rules=rules,
+        extra_alert_labels=key_value_pair_string_to_dict(extra_alert_labels),
+    ).publish()
 
     # Access the provider's endpoints
     return OtlpRequirer(

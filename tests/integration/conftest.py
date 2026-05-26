@@ -18,14 +18,14 @@ import jubilant
 
 logger = logging.getLogger(__name__)
 
-VALID_PRESETS = ("microk8s", "ck8s")
+VALID_PRESETS = ("microk8s", "k8s")
 
 
 def pytest_addoption(parser):
     parser.addoption(
         "--preset",
         action="store",
-        default="microk8s",  # defaults to microk8s as CI runs on microk8s at the moment.
+        default="k8s",  # defaults to k8s as CI runs on k8s at the moment.
         choices=VALID_PRESETS,
         help="Substrate preset for substrate-specific test configuration. "
         f"Valid values: {', '.join(VALID_PRESETS)}",
