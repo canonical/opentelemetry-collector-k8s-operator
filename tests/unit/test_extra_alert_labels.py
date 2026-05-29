@@ -26,7 +26,7 @@ OTLP_TOPOLOGY_LABELS = {
     "juju_model_uuid": MODEL_UUID,
 }
 
-zinc_alerts = {
+zinc_prometheus_alerts = {
     "alert_rules": json.dumps(
         {
             "groups": [
@@ -36,6 +36,31 @@ zinc_alerts = {
                         {
                             "alert": "Missing",
                             "expr": "up == 0",
+                            "for": "0m",
+                            "labels": {
+                                "juju_model": MODEL_NAME,
+                                "juju_model_uuid": MODEL_UUID,
+                                "juju_application": "zinc",
+                                "juju_charm": "zinc-k8s",
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+}
+
+zinc_loki_alerts = {
+    "alert_rules": json.dumps(
+        {
+            "groups": [
+                {
+                    "name": ZINC_GROUP_NAME_SUBSTR,
+                    "rules": [
+                        {
+                            "alert": "HighErrorRate",
+                            "expr": 'sum(rate({job="varlogs"} |= "error" [5m])) > 0',
                             "for": "0m",
                             "labels": {
                                 "juju_model": MODEL_NAME,
@@ -84,7 +109,7 @@ def test_extra_metrics_alerts_config(ctx, otelcol_container):
     extra_labels = {"environment": "PRODUCTION", "zone": "Mars"}
     config1: ConfigDict = {"extra_alert_labels": "environment: PRODUCTION, zone=Mars"}
     metrics_endpoint_relation = Relation(
-        "metrics-endpoint", remote_app_name="zinc", remote_app_data=zinc_alerts
+        "metrics-endpoint", remote_app_name="zinc", remote_app_data=zinc_prometheus_alerts
     )
     remote_write_relation = Relation("send-remote-write", remote_app_name="prometheus")
     state = State(
@@ -130,7 +155,7 @@ def test_extra_loki_alerts_config(ctx, otelcol_container):
     extra_labels = {"environment": "PRODUCTION", "zone": "Mars"}
     config1: ConfigDict = {"extra_alert_labels": "environment: PRODUCTION, zone=Mars"}
     receive_loki_logs_relation = Relation(
-        "receive-loki-logs", remote_app_name="zinc", remote_app_data=zinc_alerts
+        "receive-loki-logs", remote_app_name="zinc", remote_app_data=zinc_loki_alerts
     )
     send_loki_logs_relation = Relation("send-loki-logs", remote_app_name="loki")
     state = State(
