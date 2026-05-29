@@ -8,7 +8,7 @@ from ops.testing import Relation, State
 
 ConfigDict = Dict[str, Union[str, int, float, bool]]
 
-zinc_alerts = {
+zinc_prometheus_alerts = {
     "alert_rules": json.dumps(
         {
             "groups": [
@@ -18,6 +18,31 @@ zinc_alerts = {
                         {
                             "alert": "Missing",
                             "expr": "up == 0",
+                            "for": "0m",
+                            "labels": {
+                                "juju_model": "my_model",
+                                "juju_model_uuid": "74a5690b-89c9-44dd-984b-f69f26a6b751",
+                                "juju_application": "zinc",
+                                "juju_charm": "zinc-k8s",
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+}
+
+zinc_loki_alerts = {
+    "alert_rules": json.dumps(
+        {
+            "groups": [
+                {
+                    "name": "alertgroup",
+                    "rules": [
+                        {
+                            "alert": "HighErrorRate",
+                            "expr": 'sum(rate({job="varlogs"} |= "error" [5m])) > 0',
                             "for": "0m",
                             "labels": {
                                 "juju_model": "my_model",
@@ -43,7 +68,7 @@ def test_extra_alerts_config(ctx, otelcol_container):
 
     # THEN The extra_alert_labels MUST be added to the alert rules.
     metrics_endpoint_relation = Relation(
-        "metrics-endpoint", remote_app_name="zinc", remote_app_data=zinc_alerts
+        "metrics-endpoint", remote_app_name="zinc", remote_app_data=zinc_prometheus_alerts
     )
     remote_write_relation = Relation("send-remote-write", remote_app_name="prometheus")
     state = State(
@@ -108,7 +133,7 @@ def test_extra_loki_alerts_config(ctx, otelcol_container):
 
     # THEN The extra_alert_labels MUST be added to the alert rules.
     receive_loki_logs_relation = Relation(
-        "receive-loki-logs", remote_app_name="zinc", remote_app_data=zinc_alerts
+        "receive-loki-logs", remote_app_name="zinc", remote_app_data=zinc_loki_alerts
     )
     send_loki_logs_relation = Relation("send-loki-logs", remote_app_name="loki")
     state = State(
