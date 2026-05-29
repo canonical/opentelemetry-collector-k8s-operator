@@ -205,19 +205,6 @@ wheels = [
 ]
 
 [[package]]
-name = "charmlibs-interfaces-otlp"
-version = "0.5.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cosl" },
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/3f/52/42f01198ae391dfffbcd27cc4dc031e6189d2be299e37b18f56e16d237e8/charmlibs_interfaces_otlp-0.5.0.tar.gz", hash = "sha256:a2a963f32235afe8ffac17f04ad15e6da6dadd0f00aeaf687387214e33fde987", size = 55341, upload-time = "2026-04-30T20:57:28.407Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/aa/4d/a2b6398e3072f452ee7e247e093a3bcc3483147a408e78c2f5d562df2a8e/charmlibs_interfaces_otlp-0.5.0-py3-none-any.whl", hash = "sha256:9719475bd8cc8b1a7f9a14c8565686c77e8b9c643ca7759cb63ef8783d964e06", size = 12562, upload-time = "2026-04-30T20:57:26.836Z" },
-]
-
-[[package]]
 name = "charmlibs-pathops"
 version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -751,7 +738,6 @@ version = "0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "charmed-service-mesh-helpers" },
-    { name = "charmlibs-interfaces-otlp" },
     { name = "charmlibs-pathops" },
     { name = "cosl" },
     { name = "cryptography" },
@@ -784,7 +770,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "charmed-service-mesh-helpers", specifier = ">=0.2.0" },
-    { name = "charmlibs-interfaces-otlp" },
     { name = "charmlibs-pathops" },
     { name = "codespell", marker = "extra == 'dev'" },
     { name = "cosl" },
