@@ -5,6 +5,7 @@
 
 import dataclasses
 import json
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import pytest
@@ -194,23 +195,25 @@ def test_cyclic_relations(ctx, otelcol_container, relations, is_cyclic):
 
 
 @pytest.mark.parametrize("forward_rules", [True, False])
-def test_forwarding_otlp_rule_counts(
-    ctx,
-    otelcol_container,
-    forward_rules,
-    all_rules,
-    promql_bundled_rule_count,
-    logql_bundled_rule_count,
+def test_received_otlp_rules_forwarded_to_remote_write(
+    ctx, otelcol_container, all_rules, forward_rules
 ):
-    # GIVEN forwarding of rules is either enabled or disabled
-    # * a receive-otlp relation (without rules) in the databag
-    # * two send-otlp relations
-    databag = {"rules": json.dumps(all_rules, sort_keys=True), "metadata": "{}"}
+    """Regression test for https://github.com/canonical/opentelemetry-collector-operator/issues/297.
+
+    Alert rules received over `receive-otlp` must be staged to disk by `stage_received_otlp_rules`
+    so that `send_remote_write` forwards them to Prometheus. The OTLP interface only exposes
+    received rules via relation data and does not persist them, so without staging them the rules
+    would never reach Prometheus.
+    """
+    # GIVEN a receive-otlp relation carrying (compressed) alert rules AND a send-remote-write relation
+    databag = {
+        "rules": json.dumps(LZMABase64.compress(json.dumps(all_rules))),
+        "metadata": json.dumps(OTELCOL_METADATA),
+    }
     receiver = Relation("receive-otlp", remote_app_data=databag)
-    sender_1 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
-    sender_2 = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
+    remote_write = Relation("send-remote-write", remote_app_name="prometheus")
     state = State(
-        relations=[receiver, sender_1, sender_2],
+        relations=[receiver, remote_write],
         leader=True,
         containers=otelcol_container,
         model=MODEL,
@@ -220,29 +223,81 @@ def test_forwarding_otlp_rule_counts(
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state=state)
 
-    for relation in list(state_out.relations):
-        if relation.endpoint == "send-otlp":
-            assert (decompressed := _decompress(relation.local_app_data.get("rules")))
+    # THEN the received alert rule is forwarded to Prometheus iff forwarding is enabled
+    rw_out = state_out.get_relation(remote_write.id)
+    alert_rules = json.loads(rw_out.local_app_data.get("alert_rules", '{"groups": []}'))
+    forwarded_alerts = {
+        rule.get("alert")
+        for group in alert_rules.get("groups", [])
+        for rule in group.get("rules", [])
+        if "alert" in rule
+    }
+    # "Workload Missing" is the promql alert defined in the `all_rules` fixture (received over otlp)
+    if forward_rules:
+        assert "Workload Missing" in forwarded_alerts
+    else:
+        assert "Workload Missing" not in forwarded_alerts
 
-            # THEN bundled rules are always included in the forwarded databag
-            # * incoming databag rules are conditionally included in the forwarded databag
-            databag_rule_count = 2
-            logql_generic_rule_count = 0
-            promql_generic_rule_count = 1
-            promql_count = (
-                (databag_rule_count if forward_rules else 0)
-                + promql_bundled_rule_count
-                + promql_generic_rule_count
-            )
-            logql_count = (
-                (databag_rule_count if forward_rules else 0)
-                + logql_bundled_rule_count
-                + logql_generic_rule_count
-            )
-            logql_groups = decompressed["logql"].get("groups", [])
-            promql_groups = decompressed["promql"].get("groups", [])
-            assert len(logql_groups) == logql_count
-            assert len(promql_groups) == promql_count
+
+def test_reconcile_stages_otlp_rules_in_correct_order(ctx, otelcol_container, all_rules):
+    """Guard the temporal ordering contract that makes OTLP rule forwarding work.
+
+    Staging the received OTLP rules to disk (`stage_received_otlp_rules`) only forwards them to
+    Prometheus/Loki if it runs:
+      * AFTER `cleanup` (which wipes the rule directories), and
+      * BEFORE the integrations that read those directories: `receive_loki_logs`/`scrape_metrics`
+        (which copy the bundled rules in) and `send_loki_logs`/`send_remote_write` (which forward).
+
+    This ordering lives in `charm._reconcile` and is otherwise only enforced by a comment, so a
+    future reorder would silently regress https://github.com/canonical/opentelemetry-collector-operator/issues/297.
+    This test spies on the reconcile call order to fail fast if that contract is broken.
+    """
+    # `charm.py` does `import integrations`, so spy on that same module object
+    import integrations
+
+    call_order: list[str] = []
+    spied = [
+        "cleanup",
+        "stage_received_otlp_rules",
+        "receive_loki_logs",
+        "send_loki_logs",
+        "scrape_metrics",
+        "send_remote_write",
+    ]
+    real = {name: getattr(integrations, name) for name in spied}
+
+    def make_spy(name):
+        def spy(*args, **kwargs):
+            call_order.append(name)
+            return real[name](*args, **kwargs)
+
+        return spy
+
+    # GIVEN a receive-otlp relation carrying alert rules, with forwarding enabled
+    databag = {
+        "rules": json.dumps(LZMABase64.compress(json.dumps(all_rules))),
+        "metadata": json.dumps(OTELCOL_METADATA),
+    }
+    state = State(
+        relations=[Relation("receive-otlp", remote_app_data=databag)],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+        config={"forward_alert_rules": True},
+    )
+
+    # WHEN any event executes the reconciler
+    with ExitStack() as stack:
+        for name in spied:
+            stack.enter_context(patch.object(integrations, name, make_spy(name)))
+        ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN staging runs after the cleanup and before every integration that reads the rule dirs
+    assert call_order.index("cleanup") < call_order.index("stage_received_otlp_rules")
+    for reader in ("receive_loki_logs", "send_loki_logs", "scrape_metrics", "send_remote_write"):
+        assert call_order.index("stage_received_otlp_rules") < call_order.index(reader), (
+            f"stage_received_otlp_rules must run before {reader}"
+        )
 
 
 def test_forwarded_rules_have_topology(ctx, otelcol_container):

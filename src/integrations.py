@@ -512,6 +512,47 @@ def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) ->
     provider.publish()
 
 
+def stage_received_otlp_rules(charm: CharmBase) -> None:
+    """Stage the alert rules received over `receive-otlp` to disk.
+
+    This is required because the OTLP interface only exposes received rules via relation data and
+    does not persist them. The downstream `send_remote_write` and `send_loki_logs` integrations
+    forward alert rules by reading the rule directories on disk, so without staging the received
+    rules here, alert rules from upstream applications (e.g. postgresql) would be dropped and never
+    reach Prometheus/Loki.
+    See https://github.com/canonical/opentelemetry-collector-operator/issues/297
+
+    NOTE: This function must be called after `cleanup` (which wipes the rule directories) and
+    before `receive_loki_logs`/`scrape_metrics` (which copy the bundled rules into the same
+    directories with ``dirs_exist_ok=True``) and before `send_loki_logs`/`send_remote_write`
+    (which read those directories).
+
+    Args:
+        charm: the otel-collector charm object
+    """
+    if not cast(bool, charm.config.get("forward_alert_rules")):
+        return
+    charm_root = charm.charm_dir.absolute()
+    metrics_dest = charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/"))
+    loki_dest = charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/"))
+    promql_alerts: Dict[str, Dict] = {}
+    logql_alerts: Dict[str, Dict] = {}
+    for rel_id, rule_store in OtlpProvider(charm).rules.items():
+        if (promql := rule_store.promql.as_dict()).get("groups"):
+            promql_alerts[f"otlp_{rel_id}"] = promql
+        if (logql := rule_store.logql.as_dict()).get("groups"):
+            logql_alerts[f"otlp_{rel_id}"] = logql
+    if promql_alerts:
+        _add_alerts(promql_alerts, metrics_dest)
+    if logql_alerts:
+        _add_alerts(logql_alerts, loki_dest)
+    logger.info(
+        "Staged alert rules received over receive-otlp: %d promql and %d logql relation(s)",
+        len(promql_alerts),
+        len(logql_alerts),
+    )
+
+
 def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     """Instantiate the OtlpRequirer.
 
