@@ -84,14 +84,17 @@ logger = logging.getLogger(__name__)
 ProfilingEndpoint = namedtuple("ProfilingEndpoint", "endpoint, insecure")
 
 
-def cleanup():
+def cleanup(charm_root: Path):
     """Cleanup folders for alerts and dashboards.
 
     This function should be called before all integrations to ensure the charm works holistically.
+    The DEST directories are resolved against ``charm_root`` (an absolute path) so that cleanup
+    targets the very same folders that `receive_loki_logs`/`scrape_metrics`/`send_otlp` read and
+    write, regardless of the process' current working directory.
     """
-    shutil.rmtree(METRICS_RULES_DEST_PATH, ignore_errors=True)
-    shutil.rmtree(LOKI_RULES_DEST_PATH, ignore_errors=True)
-    shutil.rmtree(DASHBOARDS_DEST_PATH, ignore_errors=True)
+    shutil.rmtree(charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")), ignore_errors=True)
+    shutil.rmtree(charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")), ignore_errors=True)
+    shutil.rmtree(charm_root.joinpath(*DASHBOARDS_DEST_PATH.split("/")), ignore_errors=True)
 
 
 def _add_alerts(alerts: Dict, dest_path: Path):
