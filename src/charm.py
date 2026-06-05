@@ -238,12 +238,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # OTLP setup
         traefik_ingress = integrations.traefik_ingress_ready(traefik_ingress)
-        integrations.receive_otlp(self, otelcol_address, traefik_ingress)
-        # Stage rules received over receive-otlp to disk so that the metrics/logs forwarding
-        # integrations (which read the on-disk rule directories) propagate them downstream.
-        # Must run after `cleanup` and before `receive_loki_logs`/`scrape_metrics`/`send_*`.
-        integrations.stage_received_otlp_rules(self)
-        otlp_endpoints = integrations.send_otlp(self)
+        otlp_provider = integrations.receive_otlp(self, otelcol_address, traefik_ingress)
+        # See `stage_received_otlp_rules` for the ordering contract it depends on.
+        # Ref: https://github.com/canonical/opentelemetry-collector-operator/issues/297
+        integrations.stage_received_otlp_rules(self, otlp_provider)
+        otlp_endpoints = integrations.send_otlp(self, otlp_provider)
         config_manager.add_otlp_forwarding(otlp_endpoints)
 
         # Logs setup

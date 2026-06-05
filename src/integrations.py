@@ -483,7 +483,7 @@ def forward_dashboards(charm: CharmBase):
     # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
 
-def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) -> None:
+def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) -> OtlpProvider:
     """Instantiate the OtlpProvider.
 
     Define the OTLP endpoints which the charm should publish to the databag.
@@ -494,6 +494,10 @@ def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) ->
         charm: the otel-collector charm object
         address: a dataclass for determining network addressing
         traefik_ingress: whether or not the charm's receivers are being routed through Traefik
+
+    Returns:
+        The instantiated ``OtlpProvider``, so that callers can reuse it (e.g. to read the
+        received alert rules) without re-instantiating it.
     """
     # Publish endpoints for the requirer
     provider = OtlpProvider(charm).add_endpoint(
@@ -510,9 +514,10 @@ def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) ->
             insecure=not address.resolved_tls,
         )
     provider.publish()
+    return provider
 
 
-def stage_received_otlp_rules(charm: CharmBase) -> None:
+def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
     """Stage the alert rules received over `receive-otlp` to disk.
 
     This is required because the OTLP interface only exposes received rules via relation data and
@@ -529,6 +534,8 @@ def stage_received_otlp_rules(charm: CharmBase) -> None:
 
     Args:
         charm: the otel-collector charm object
+        provider: the ``OtlpProvider`` instantiated in `receive_otlp`, reused here to read the
+            received alert rules without re-instantiating it.
     """
     if not cast(bool, charm.config.get("forward_alert_rules")):
         return
@@ -537,7 +544,7 @@ def stage_received_otlp_rules(charm: CharmBase) -> None:
     loki_dest = charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/"))
     promql_alerts: Dict[str, Dict] = {}
     logql_alerts: Dict[str, Dict] = {}
-    for rel_id, rule_store in OtlpProvider(charm).rules.items():
+    for rel_id, rule_store in provider.rules.items():
         if (promql := rule_store.promql.as_dict()).get("groups"):
             promql_alerts[f"otlp_{rel_id}"] = promql
         if (logql := rule_store.logql.as_dict()).get("groups"):
@@ -553,7 +560,7 @@ def stage_received_otlp_rules(charm: CharmBase) -> None:
     )
 
 
-def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
+def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoint]:
     """Instantiate the OtlpRequirer.
 
     This provides otelcol with the remote's OTLP endpoint for each relation.
@@ -561,6 +568,11 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     The bundled rule files (from the src/*_rules directories) are published to the databag.
     Conditional to the `forward_alert_rules` config, the rules from related OTLP requirer charms
     are also published to the databag.
+
+    Args:
+        charm: the otel-collector charm object
+        provider: the ``OtlpProvider`` instantiated in `receive_otlp`, reused here to read the
+            received alert rules without re-instantiating it.
     """
     # Gather our bundled rules
     charm_root = charm.charm_dir.absolute()
@@ -572,7 +584,7 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
 
     # Gather the requirer charm's rules from the databag if forwarding is desired
     if cast(bool, charm.config.get("forward_alert_rules")):
-        for rule_store in OtlpProvider(charm).rules.values():
+        for rule_store in provider.rules.values():
             rules.combine(rule_store)
 
     # Publish rules for the provider

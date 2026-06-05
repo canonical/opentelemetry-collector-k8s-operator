@@ -9,7 +9,7 @@ from typing import Mapping
 from unittest.mock import patch
 
 import pytest
-from charmlibs.interfaces.otlp import OtlpEndpoint
+from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider
 from cosl.utils import LZMABase64
 from ops.testing import Model, Relation, State
 
@@ -100,7 +100,7 @@ def test_send_otlp(ctx, otelcol_container):
 
     # AND WHEN any event executes the reconciler
     with ctx(ctx.on.update_status(), state=state) as mgr:
-        remote_endpoints = send_otlp(mgr.charm)
+        remote_endpoints = send_otlp(mgr.charm, OtlpProvider(mgr.charm))
 
     # THEN the returned endpoints are filtered accordingly
     assert {k: v.model_dump() for k, v in remote_endpoints.items()} == {
