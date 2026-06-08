@@ -172,7 +172,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             return
 
         insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
-        integrations.cleanup()
+        integrations.cleanup(self.charm_dir.absolute())
 
         # Service mesh integration
         integrations.setup_service_mesh(self)
@@ -238,8 +238,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # OTLP setup
         traefik_ingress = integrations.traefik_ingress_ready(traefik_ingress)
-        integrations.receive_otlp(self, otelcol_address, traefik_ingress)
-        otlp_endpoints = integrations.send_otlp(self)
+        otlp_provider = integrations.receive_otlp(self, otelcol_address, traefik_ingress)
+        # See `stage_received_otlp_rules` for the ordering contract it depends on.
+        # Ref: https://github.com/canonical/opentelemetry-collector-operator/issues/297
+        integrations.stage_received_otlp_rules(self, otlp_provider)
+        otlp_endpoints = integrations.send_otlp(self, otlp_provider)
         config_manager.add_otlp_forwarding(otlp_endpoints)
 
         # Logs setup
