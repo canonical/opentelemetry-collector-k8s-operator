@@ -2,7 +2,7 @@ groups:
   - name: Exporter
     rules:
       - alert: failed-logs
-        expr: sum(rate(otelcol_exporter_send_failed_log_records_total{}[5m])) > 0
+        expr: sum(rate(otelcol_exporter_send_failed_log_records{}[5m])) > 0
         for: 5m
         labels:
           severity: critical
@@ -10,7 +10,7 @@ groups:
           summary: Some log points failed to send by exporter
           description: Destination may have a problem or payload is incorrect
       - alert: failed-metrics
-        expr: sum(rate(otelcol_exporter_send_failed_metric_points_total{}[5m])) > 0
+        expr: sum(rate(otelcol_exporter_send_failed_metric_points{}[5m])) > 0
         for: 5m
         labels:
           severity: critical
@@ -18,7 +18,7 @@ groups:
           summary: Some metric points failed to send by exporter
           description: Destination may have a problem or payload is incorrect
       - alert: failed-traces
-        expr: sum(rate(otelcol_exporter_send_failed_spans_total{}[5m])) > 0
+        expr: sum(rate(otelcol_exporter_send_failed_spans{}[5m])) > 0
         for: 5m
         labels:
           severity: critical
@@ -27,7 +27,7 @@ groups:
           description: Destination may have a problem or payload is incorrect
       - alert: queue-near-capacity
         expr: otelcol_exporter_queue_size / otelcol_exporter_queue_capacity > 0.8
-        for: 2m
+        for: 5m
         labels:
           severity: warning
         annotations:
@@ -40,9 +40,9 @@ groups:
             after which it is dropped.
       - alert: queue-overflow
         expr: >
-          sum(rate(otelcol_exporter_enqueue_failed_spans_total{}[5m])) > 0
-          or sum(rate(otelcol_exporter_enqueue_failed_log_records_total{}[5m])) > 0
-          or sum(rate(otelcol_exporter_enqueue_failed_metric_points_total{}[5m])) > 0
+          sum(rate(otelcol_exporter_enqueue_failed_spans{}[5m])) > 0
+          or sum(rate(otelcol_exporter_enqueue_failed_log_records{}[5m])) > 0
+          or sum(rate(otelcol_exporter_enqueue_failed_metric_points{}[5m])) > 0
         for: 0m
         labels:
           severity: critical

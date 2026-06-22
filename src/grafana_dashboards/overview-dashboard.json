@@ -1557,6 +1557,7 @@
         "type": "prometheus",
         "uid": "${prometheusds}"
       },
+      "description": "Monitor the saturation level of each exporter queue by calculating the ratio of the current queue size against its maximum configured capacity, representing how \"full\" the buffer is from 0% (empty) to 100% (full).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1618,7 +1619,7 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 24,
+        "w": 8,
         "x": 0,
         "y": 30
       },
