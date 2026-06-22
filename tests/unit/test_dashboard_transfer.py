@@ -58,3 +58,41 @@ def test_dashboard_propagation(ctx, execs):
                 assert "file:juju_file:dashboard-0-some-charm-100" in dashboard_str
                 assert "file:juju_file:dashboard-1-some-charm-101" in dashboard_str
                 assert "file:overview-dashboard" in dashboard_str
+
+
+def test_missing_dashboard_relation_does_not_block(ctx, execs):
+    """Scenario: the charm is not blocking when the aggregated dashboards are not consumed."""
+    # GIVEN multiple remote charms with dashboards
+    content_in = {
+        0: encode_as_dashboard({"whoami": "0"}),
+        1: encode_as_dashboard({"whoami": "1"}),
+    }
+    data = {
+        idx: {
+            "templates": {
+                f"file:dashboard-{idx}": {"charm": "some-charm", "content": content_in[idx]}
+            }
+        }
+        for idx in content_in
+    }
+    # WHEN they are related to the grafana-dashboards-consumer endpoint
+    consumer0 = Relation(
+        "grafana-dashboards-consumer",
+        remote_app_data={"dashboards": json.dumps(data[0])},
+        id=100,
+    )
+    consumer1 = Relation(
+        "grafana-dashboards-consumer",
+        remote_app_data={"dashboards": json.dumps(data[1])},
+        id=101,
+    )
+    state = State(
+        relations=[consumer0, consumer1],
+        leader=True,
+        containers=[Container("otelcol", can_connect=True, execs=execs)],
+    )
+    # WHEN any event executes the reconciler
+    with ctx(ctx.on.update_status(), state=state) as mgr:
+        state_out = mgr.run()
+        # THEN the charm state is NOT blocked
+        assert state_out.unit_status.name == "active"

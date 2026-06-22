@@ -112,10 +112,6 @@ def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
                 {"send-otlp"},
                 {"cloud-config"},
             ],
-            "grafana-dashboards-consumer": [  # must be paired with:
-                {"grafana-dashboards-provider"},  # or
-                {"cloud-config"},
-            ],
             "receive-otlp": [  # must be paired with:
                 {"send-otlp"},  # or
                 # Technically, this would depend on databag contents for enabled pipelines,
