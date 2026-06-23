@@ -2301,8 +2301,9 @@
     "list": [
       {
         "current": {
-          "text": "juju_cos_64d5ca20-55c6-4501-86d6-c57300ea722b_loki_0",
-          "value": "P1494C279C2231687"
+          "selected": false,
+          "text": "default",
+          "value": "default"
         },
         "includeAll": false,
         "label": "Loki datasource",
@@ -2315,8 +2316,9 @@
       },
       {
         "current": {
-          "text": "juju_cos_64d5ca20-55c6-4501-86d6-c57300ea722b_mimir_0",
-          "value": "P2E4268B6405C071E"
+          "selected": false,
+          "text": "default",
+          "value": "default"
         },
         "includeAll": false,
         "label": "Prometheus datasource",
@@ -2648,9 +2650,8 @@
     "to": "now"
   },
   "timepicker": {},
-  "timezone": "browser",
+  "timezone": "",
   "title": "OpenTelemetry Collector K8s",
-  "uid": "05775fac1e3b861e844385eb61d15dd603f912a6",
   "version": 2,
   "weekStart": ""
 }
