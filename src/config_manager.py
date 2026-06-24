@@ -124,7 +124,8 @@ class ConfigManager:
             global_scrape_interval: set a global scrape interval for all prometheus receivers on build
             global_scrape_timeout: set a global scrape timeout for all prometheus receivers on build
             receiver_tls: whether to inject TLS config in all receivers on build
-            insecure_skip_verify: value for `insecure_skip_verify` in all exporters
+            insecure_skip_verify: default value for `insecure_skip_verify` in all exporters
+                and prometheus scrape jobs (per-exporter and per-job settings take precedence)
             queue_size: size of the sending queue for exporters
             max_elapsed_time_min: maximum elapsed time for retrying failed requests in minutes
         """
@@ -336,7 +337,8 @@ class ConfigManager:
 
         Note:
             The scrape jobs will be added to the Prometheus receiver configuration
-            with TLS verification settings inherited from the ConfigManager instance.
+            with TLS verification settings inherited from the ConfigManager instance
+            if they are not specified at the job level.
         """
         if not jobs:
             return
@@ -344,7 +346,7 @@ class ConfigManager:
             scrape_job.setdefault("tls_config", {})
             # Otelcol acts as a client and scrapes the metrics-generating server, so we enable
             # toggling of skipping the validation of the server certificate
-            scrape_job["tls_config"].update({"insecure_skip_verify": self._insecure_skip_verify})
+            scrape_job["tls_config"].setdefault("insecure_skip_verify", self._insecure_skip_verify)
 
         self.config.add_component(
             Component.receiver,

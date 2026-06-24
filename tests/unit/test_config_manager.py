@@ -72,6 +72,50 @@ def test_add_prometheus_scrape():
     assert job_names == ["second_job", "third_job"]
 
 
+@pytest.mark.parametrize(
+    "global_skip_verify, job_tls_config, expected",
+    [
+        (True, {"insecure_skip_verify": True}, True),
+        (True, {"insecure_skip_verify": False}, False),
+        (True, None, True),
+        (True, {}, True),
+        (False, {"insecure_skip_verify": True}, True),
+        (False, {"insecure_skip_verify": False}, False),
+        (False, None, False),
+        (False, {}, False),
+    ],
+)
+def test_add_prometheus_scrape_insecure_skip_verify_precedence(
+    global_skip_verify, job_tls_config, expected
+):
+    """Per-job insecure_skip_verify takes priority over the global setting."""
+    # GIVEN a config manager with global insecure_skip_verify
+    config_manager = ConfigManager(
+        unit_name="otelcol/0",
+        global_scrape_interval="15s",
+        global_scrape_timeout="",
+        insecure_skip_verify=global_skip_verify,
+    )
+
+    # AND a prometheus job with a possible tls_config value
+    job = {
+        "metrics_path": "/metrics",
+        "static_configs": [{"targets": ["*:9001"]}],
+        "job_name": "test_job",
+    }
+    if job_tls_config is not None:
+        job["tls_config"] = job_tls_config
+
+    # WHEN the job is added
+    config_manager.add_prometheus_scrape_jobs([job])
+
+    # THEN the resulting insecure_skip_verify matches expected
+    scrape = config_manager.config._config["receivers"][
+        "prometheus/metrics-endpoint/otelcol/0"
+    ]["config"]["scrape_configs"][0]
+    assert scrape["tls_config"]["insecure_skip_verify"] is expected
+
+
 def test_add_log_ingestion():
     # GIVEN an empty config
     config_manager = ConfigManager(
