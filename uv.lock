@@ -150,15 +150,11 @@ wheels = [
 
 [[package]]
 name = "charmlibs-interfaces-otlp"
-version = "0.4.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.5.0"
+source = { git = "https://github.com/canonical/charmlibs.git?subdirectory=interfaces%2Fotlp&rev=feat%2Fsigma-rules-2#555c567682121dc584ffc50a107cf9aa7bef1341" }
 dependencies = [
     { name = "cosl" },
     { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/8e/ab06cdd353244b3787a5aac2b3a7e8911ce6a3f79dd63d31bfb691eee069/charmlibs_interfaces_otlp-0.4.0.tar.gz", hash = "sha256:0c96863b06f3c36421366b92de6c7c42925648cf0bf4151c01cf053203e4f712", size = 54361, upload-time = "2026-03-31T16:43:08.173Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4f/29/f3dd30821137adf1f421bfd06cd92feae0ffcfe5cad20fa8db4046c331e8/charmlibs_interfaces_otlp-0.4.0-py3-none-any.whl", hash = "sha256:c116ddacf8f66269d9b3e9fecf8daa2d8a95e90e9489e9fc4fc305fd3d7f17cf", size = 11123, upload-time = "2026-03-31T16:43:06.816Z" },
 ]
 
 [[package]]
@@ -218,18 +214,14 @@ wheels = [
 
 [[package]]
 name = "cosl"
-version = "1.9.1"
-source = { registry = "https://pypi.org/simple" }
+version = "1.10.0"
+source = { git = "https://github.com/canonical/cos-lib?rev=feat%2Fsigma-rules-3#f800b02f985f1f3efb8539c6af5d6e5ac0a94900" }
 dependencies = [
     { name = "ops" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "tenacity" },
     { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/f1/6bc646976c499e9bb7a048ef17b6295f23b145f11f1cee4207ce10494342/cosl-1.9.1.tar.gz", hash = "sha256:80d899b5f278bf64252eb94bfb1bbd03dade5073c2cbc0ea43e9abc68be9ee1e", size = 150395, upload-time = "2026-03-31T12:50:20.064Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/be/1d/558af69f639d6772be034b13417a7bbeb92a56939f891493d1546e724213/cosl-1.9.1-py3-none-any.whl", hash = "sha256:201107a68f398b8a5f5e91f6dcaeb1777e7b2816a1592c8eea4a491d1750e1a6", size = 38217, upload-time = "2026-03-31T12:50:18.87Z" },
 ]
 
 [[package]]
@@ -675,10 +667,10 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "charmed-service-mesh-helpers", specifier = ">=0.2.0" },
-    { name = "charmlibs-interfaces-otlp" },
+    { name = "charmlibs-interfaces-otlp", git = "https://github.com/canonical/charmlibs.git?subdirectory=interfaces%2Fotlp&rev=feat%2Fsigma-rules-2" },
     { name = "charmlibs-pathops" },
     { name = "codespell", marker = "extra == 'dev'" },
-    { name = "cosl" },
+    { name = "cosl", git = "https://github.com/canonical/cos-lib?rev=feat%2Fsigma-rules-3" },
     { name = "coverage", extras = ["toml"], marker = "extra == 'dev'" },
     { name = "cryptography" },
     { name = "jsonschema" },

@@ -14,6 +14,17 @@ from ops.testing import Model, Relation, State
 
 from src.integrations import cyclic_otlp_relations_exist, send_otlp
 
+SINGLE_SIGMA_RULE = {
+    'title': 'Failed SSH Login',
+    'id': '096fc2b2-3a62-4f4b-98dc-0ced2d59b0a6',
+    'status': 'stable',
+    'description': 'Detects failed SSH login attempts via auth log',
+    'logsource': {'product': 'linux', 'category': 'process_creation'},
+    'detection': {'selection': {'EventID': 4688}},
+    'level': 'high',
+    'tags': ['attack.initial_access'],
+}
+
 MODEL_NAME = "foo-model"
 MODEL_UUID = "f4d59020-c8e7-4053-8044-a2c1e5591c7f"
 MODEL = Model(MODEL_NAME, uuid=MODEL_UUID)
@@ -30,6 +41,10 @@ RECEIVE_OTLP = Relation("receive-otlp", remote_app_data={"rules": "{}", "metadat
 
 def _replace(*args, **kwargs):
     return dataclasses.replace(*args, **kwargs)
+
+
+def _compress(rules: dict) -> str:
+    return LZMABase64.compress(json.dumps(rules, sort_keys=True))
 
 
 def _decompress(rules: str) -> dict:
@@ -243,6 +258,39 @@ def test_forwarding_otlp_rule_counts(
             promql_groups = decompressed["promql"].get("groups", [])
             assert len(logql_groups) == logql_count
             assert len(promql_groups) == promql_count
+
+
+def test_forwarded_sigma_rules(ctx, otelcol_container):
+    """Test that sigma rules are forwarded from receive-otlp to send-otlp."""
+    sigma_rules = {'rules': [SINGLE_SIGMA_RULE]}
+    # relation.load() JSON-decodes all databag values, so the compressed rules
+    # string must be JSON-encoded (double-wrapped) to survive the round-trip.
+    compressed = _compress({'logql': {}, 'promql': {}, 'sigma': sigma_rules})
+    databag = {
+        'rules': json.dumps(compressed),
+        'metadata': json.dumps({'model': 'foo', 'model_uuid': 'abc'}),
+    }
+    receiver = Relation('receive-otlp', remote_app_data=databag)
+    sender_1 = Relation('send-otlp', remote_app_data={'endpoints': '[]'})
+    state = State(
+        relations=[receiver, sender_1],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+        config={'forward_alert_rules': True},
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state=state)
+
+    for relation in list(state_out.relations):
+        if relation.endpoint == 'send-otlp':
+            decompressed = _decompress(relation.local_app_data.get('rules'))
+            assert 'sigma' in decompressed
+            sigma = decompressed['sigma']
+            assert sigma.get('rules')
+            assert sigma['rules'][0].get('title') == SINGLE_SIGMA_RULE['title']
+            # Sigma rules are enriched with Juju topology labels
+            assert any('juju_model.' in tag for tag in sigma['rules'][0].get('tags', []))
 
 
 def test_forwarded_rules_have_topology(ctx, otelcol_container):

@@ -445,7 +445,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 exec=ExecDict(
                     command=" ".join(filter(None, ("otelcol", "validate", *otelcol_args)))
                 ),
-                threshold=3,
+                timeout="10s",
+                threshold=10,
             ),
         }
         return checks
