@@ -43,8 +43,8 @@ assumes:
   - juju >= 3.6
 
 platforms:
-  ubuntu@24.04:amd64:
-  ubuntu@24.04:arm64:
+  ubuntu@26.04:amd64:
+  ubuntu@26.04:arm64:
 
 parts:
   charm:
@@ -79,7 +79,7 @@ resources:
   opentelemetry-collector-image:
     type: oci-image
     description: OCI image for opentelemetry-collector
-    upstream-source: ubuntu/opentelemetry-collector@sha256:f153750aae4c80bc63093adf433d2e2ba5acdcabc6763d2b0949384944c5b48f  # renovate: oci-image tag: 0.130-24.04
+    upstream-source: ubuntu/opentelemetry-collector@sha256:6df3cad7e93ef008014e85caf66765a69859f4507f1356fdb968f17e68b5766c  # renovate: oci-image tag: 0.130-26.04
 
 provides:
   grafana-dashboards-provider:

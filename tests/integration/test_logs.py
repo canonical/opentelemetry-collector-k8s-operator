@@ -26,13 +26,17 @@ def test_logs_pipeline_promtail(juju: jubilant.Juju, charm: str, charm_resources
     juju.integrate("otelcol:send-loki-logs", "loki")
     juju.wait(jubilant.all_active, delay=10, timeout=600)
 
-    # THEN logs arrive in loki
+    # THEN logs arrive in loki with juju topology labels preserved
+    # Ref: https://github.com/canonical/opentelemetry-collector-k8s-operator/issues/172
     labels = juju.ssh(
         target="loki/leader",
         command="/usr/bin/logcli labels",
         container="loki",
     )
-    assert "juju_application" in labels
+    topology = {"juju_application", "juju_charm", "juju_unit", "juju_model", "juju_model_uuid"}
+
+    for label in topology:
+        assert label in labels, f"Expected '{label}' label in Loki, got: {labels}"
 
 
 def test_logs_pipeline_pebble(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):

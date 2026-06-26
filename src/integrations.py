@@ -36,7 +36,7 @@ from charms.istio_ingress_k8s.v0.istio_ingress_route import (
     ProtocolType,
 )
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
-from charms.otelcol_integrator.v0.otelcol_integrator import OtelcolIntegratorRequirer
+from charms.opentelemetry_collector_integrator.v0.opentelemetry_collector_integrator import OtelcolIntegratorRequirer
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
 )
@@ -84,14 +84,17 @@ logger = logging.getLogger(__name__)
 ProfilingEndpoint = namedtuple("ProfilingEndpoint", "endpoint, insecure")
 
 
-def cleanup():
+def cleanup(charm_root: Path):
     """Cleanup folders for alerts and dashboards.
 
     This function should be called before all integrations to ensure the charm works holistically.
+    The DEST directories are resolved against ``charm_root`` (an absolute path) so that cleanup
+    targets the very same folders that `receive_loki_logs`/`scrape_metrics`/`send_otlp` read and
+    write, regardless of the process' current working directory.
     """
-    shutil.rmtree(METRICS_RULES_DEST_PATH, ignore_errors=True)
-    shutil.rmtree(LOKI_RULES_DEST_PATH, ignore_errors=True)
-    shutil.rmtree(DASHBOARDS_DEST_PATH, ignore_errors=True)
+    shutil.rmtree(charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")), ignore_errors=True)
+    shutil.rmtree(charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")), ignore_errors=True)
+    shutil.rmtree(charm_root.joinpath(*DASHBOARDS_DEST_PATH.split("/")), ignore_errors=True)
 
 
 def _add_alerts(alerts: Dict, dest_path: Path):
@@ -483,7 +486,7 @@ def forward_dashboards(charm: CharmBase):
     # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
 
-def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) -> None:
+def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) -> OtlpProvider:
     """Instantiate the OtlpProvider.
 
     Define the OTLP endpoints which the charm should publish to the databag.
@@ -494,6 +497,10 @@ def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) ->
         charm: the otel-collector charm object
         address: a dataclass for determining network addressing
         traefik_ingress: whether or not the charm's receivers are being routed through Traefik
+
+    Returns:
+        The instantiated ``OtlpProvider``, so that callers can reuse it (e.g. to read the
+        received alert rules) without re-instantiating it.
     """
     # Publish endpoints for the requirer
     provider = OtlpProvider(charm).add_endpoint(
@@ -510,9 +517,53 @@ def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) ->
             insecure=not address.resolved_tls,
         )
     provider.publish()
+    return provider
 
 
-def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
+def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
+    """Stage the alert rules received over `receive-otlp` to disk.
+
+    This is required because the OTLP interface only exposes received rules via relation data and
+    does not persist them. The downstream `send_remote_write` and `send_loki_logs` integrations
+    forward alert rules by reading the rule directories on disk, so without staging the received
+    rules here, alert rules from upstream applications (e.g. postgresql) would be dropped and never
+    reach Prometheus/Loki.
+    See https://github.com/canonical/opentelemetry-collector-operator/issues/297
+
+    NOTE: This function must be called after `cleanup` (which wipes the rule directories) and
+    before `receive_loki_logs`/`scrape_metrics` (which copy the bundled rules into the same
+    directories with ``dirs_exist_ok=True``) and before `send_loki_logs`/`send_remote_write`
+    (which read those directories).
+
+    Args:
+        charm: the otel-collector charm object
+        provider: the ``OtlpProvider`` instantiated in `receive_otlp`, reused here to read the
+            received alert rules without re-instantiating it.
+    """
+    if not cast(bool, charm.config.get("forward_alert_rules")):
+        return
+    charm_root = charm.charm_dir.absolute()
+    metrics_dest = charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/"))
+    loki_dest = charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/"))
+    promql_alerts: Dict[str, Dict] = {}
+    logql_alerts: Dict[str, Dict] = {}
+    for rel_id, rule_store in provider.rules.items():
+        if (promql := rule_store.promql.as_dict()).get("groups"):
+            promql_alerts[f"otlp_{rel_id}"] = promql
+        if (logql := rule_store.logql.as_dict()).get("groups"):
+            logql_alerts[f"otlp_{rel_id}"] = logql
+    if promql_alerts:
+        _add_alerts(promql_alerts, metrics_dest)
+    if logql_alerts:
+        _add_alerts(logql_alerts, loki_dest)
+    logger.info(
+        "Staged alert rules received over receive-otlp: %d promql and %d logql relation(s)",
+        len(promql_alerts),
+        len(logql_alerts),
+    )
+
+
+def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoint]:
     """Instantiate the OtlpRequirer.
 
     This provides otelcol with the remote's OTLP endpoint for each relation.
@@ -520,6 +571,11 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
     The bundled rule files (from the src/*_rules directories) are published to the databag.
     Conditional to the `forward_alert_rules` config, the rules from related OTLP requirer charms
     are also published to the databag.
+
+    Args:
+        charm: the otel-collector charm object
+        provider: the ``OtlpProvider`` instantiated in `receive_otlp`, reused here to read the
+            received alert rules without re-instantiating it.
     """
     # Gather our bundled rules
     charm_root = charm.charm_dir.absolute()
@@ -531,12 +587,18 @@ def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
 
     # Gather the requirer charm's rules from the databag if forwarding is desired
     if cast(bool, charm.config.get("forward_alert_rules")):
-        for rule_store in OtlpProvider(charm).rules.values():
+        for rule_store in provider.rules.values():
             rules.combine(rule_store)
 
     # Publish rules for the provider
-    # NOTE: we set aggregator_peer_relation_name to ensure aggregator generic rules are published
-    OtlpRequirer(charm, aggregator_peer_relation_name="peers", rules=rules).publish()
+    extra_alert_labels = cast(str, charm.model.config.get("extra_alert_labels", ""))
+    OtlpRequirer(
+        charm,
+        # NOTE: we set aggregator_peer_relation_name to ensure aggregator generic rules are published
+        aggregator_peer_relation_name="peers",
+        rules=rules,
+        extra_alert_labels=key_value_pair_string_to_dict(extra_alert_labels),
+    ).publish()
 
     # Access the provider's endpoints
     return OtlpRequirer(
