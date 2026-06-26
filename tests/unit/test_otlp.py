@@ -469,14 +469,12 @@ def test_received_sigma_rules_forwarded_to_send_otlp(ctx, otelcol_container):
     """
     # GIVEN an upstream Sigma rule already carrying its own `juju_application` topology tag
     upstream_rule = {**SINGLE_SIGMA_RULE, "tags": ["juju_application.upstream-app"]}
-    compressed = _compress({"logql": {}, "promql": {}, "sigma": {"rules": [upstream_rule]}})
-    # NOTE: `relation.load()` JSON-decodes every databag value, so the LZMA-compressed payload must
-    # itself be JSON-encoded to survive the round-trip unchanged.
+    rules = {"logql": {}, "promql": {}, "sigma": {"rules": [upstream_rule]}}
     receiver = Relation(
         "receive-otlp",
         remote_app_name="upstream-otelcol",
         remote_app_data={
-            "rules": json.dumps(compressed),
+            "rules": json.dumps(_compress(rules)),
             "metadata": json.dumps(OTELCOL_METADATA),
         },
     )
