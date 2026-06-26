@@ -12,12 +12,12 @@ dependencies = [
   "jsonschema",
   "cryptography",
   "lightkube>=0.11",
-  "cosl @ git+https://github.com/canonical/cos-lib@feat/sigma-rules-3",
+  "cosl",
   "pydantic",
   "charmlibs-pathops",
   "charmed-service-mesh-helpers>=0.2.0", # istio-beacon lib requirement"lightkube-extensions@git+https://github.com/canonical/lightkube-extensions.git@main", # istio-beacon lib requirement,
   "lightkube-extensions", # istio-beacon lib requirement
-  "charmlibs-interfaces-otlp@git+https://github.com/canonical/charmlibs.git@feat/sigma-rules-2#subdirectory=interfaces/otlp",
+  "charmlibs-interfaces-otlp@git+https://github.com/canonical/charmlibs.git@feat/sigma-rules#subdirectory=interfaces/otlp",
 ]
 
 [project.optional-dependencies]
