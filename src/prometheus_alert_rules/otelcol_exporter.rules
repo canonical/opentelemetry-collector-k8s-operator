@@ -7,7 +7,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: Some log points failed to send by exporter
+          summary: Some log points failed to send by exporter (application {{ $labels.juju_application }} in model {{ $labels.juju_model }})
           description: Destination may have a problem or payload is incorrect
       - alert: failed-metrics
         expr: sum(rate(otelcol_exporter_send_failed_metric_points{}[5m])) > 0
@@ -15,7 +15,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: Some metric points failed to send by exporter
+          summary: Some metric points failed to send by exporter (application {{ $labels.juju_application }} in model {{ $labels.juju_model }})
           description: Destination may have a problem or payload is incorrect
       - alert: failed-traces
         expr: sum(rate(otelcol_exporter_send_failed_spans{}[5m])) > 0
@@ -23,7 +23,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: Some spans failed to send by exporter
+          summary: Some spans failed to send by exporter (application {{ $labels.juju_application }} in model {{ $labels.juju_model }})
           description: Destination may have a problem or payload is incorrect
       - alert: queue-near-capacity
         expr: otelcol_exporter_queue_size / otelcol_exporter_queue_capacity > 0.8
@@ -31,7 +31,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: Exporter sending queue is over 80% full
+          summary: Exporter sending queue is over 80% full (application {{ $labels.juju_application }} in model {{ $labels.juju_model }})
           description: >
             The exporter's sending queue has stayed above 80% capacity, meaning the destination
             can't keep up with incoming telemetry. If the queue reaches capacity, data will be
@@ -47,7 +47,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: Exporter sending queue is full and dropping telemetry
+          summary: Exporter sending queue is full and dropping telemetry (application {{ $labels.juju_application }} in model {{ $labels.juju_model }})
           description: >
             The exporter's sending queue is at capacity and rejecting new telemetry at enqueue,
             causing data loss. Check that the exporter's endpoint is operational, reduce the
