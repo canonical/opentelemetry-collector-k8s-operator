@@ -9,6 +9,7 @@ resource "juju_application" "opentelemetry_collector" {
   units              = var.units
 
   charm {
+    base     = var.base
     name     = "opentelemetry-collector-k8s"
     channel  = var.channel
     revision = var.revision
