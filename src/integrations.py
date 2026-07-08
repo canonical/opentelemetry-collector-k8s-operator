@@ -77,6 +77,7 @@ from constants import (
     METRICS_RULES_SRC_PATH,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
+    SIGMA_RULES_SRC_PATH,
 )
 
 logger = logging.getLogger(__name__)
@@ -583,6 +584,7 @@ def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoin
         RuleStore(JujuTopology.from_charm(charm))
         .add_logql_path(charm_root.joinpath(LOKI_RULES_SRC_PATH), recursive=True)
         .add_promql_path(charm_root.joinpath(METRICS_RULES_SRC_PATH), recursive=True)
+        .add_sigma_path(charm_root.joinpath(SIGMA_RULES_SRC_PATH), recursive=True)
     )
 
     # Gather the requirer charm's rules from the databag if forwarding is desired

@@ -15,6 +15,17 @@ from ops.testing import Model, Relation, State
 
 from src.integrations import cyclic_otlp_relations_exist, send_otlp
 
+SINGLE_SIGMA_RULE = {
+    "title": "Failed SSH Login",
+    "id": "096fc2b2-3a62-4f4b-98dc-0ced2d59b0a6",
+    "status": "stable",
+    "description": "Detects failed SSH login attempts via auth log",
+    "logsource": {"product": "linux", "category": "process_creation"},
+    "detection": {"selection": {"EventID": 4688}},
+    "level": "high",
+    "tags": ["attack.initial_access"],
+}
+
 MODEL_NAME = "foo-model"
 MODEL_UUID = "f4d59020-c8e7-4053-8044-a2c1e5591c7f"
 MODEL = Model(MODEL_NAME, uuid=MODEL_UUID)
@@ -31,6 +42,10 @@ RECEIVE_OTLP = Relation("receive-otlp", remote_app_data={"rules": "{}", "metadat
 
 def _replace(*args, **kwargs):
     return dataclasses.replace(*args, **kwargs)
+
+
+def _compress(rules: dict) -> str:
+    return LZMABase64.compress(json.dumps(rules, sort_keys=True))
 
 
 def _decompress(rules: str) -> dict:
@@ -441,6 +456,50 @@ def test_incoming_rules_forwarded_to_send_otlp(
         assert not leaked, (
             f"forwarding disabled but {source_endpoint} alerts leaked into send-otlp: {leaked}"
         )
+
+
+def test_received_sigma_rules_forwarded_to_send_otlp(ctx, otelcol_container):
+    """Sigma rules received over `receive-otlp` are forwarded to `send-otlp` with topology intact.
+
+    The labeling/forwarding mechanics are exercised in depth by `cos-lib` and
+    `charmlibs.interfaces.otlp`; here we only assert the charm-specific behavior:
+
+      * a Sigma rule received upstream reaches the downstream `send-otlp` databag, and
+      * the upstream charm's ``juju_application`` topology is preserved, not overwritten by otelcol.
+    """
+    # GIVEN an upstream Sigma rule already carrying its own `juju_application` topology tag
+    upstream_rule = {**SINGLE_SIGMA_RULE, "tags": ["juju_application.upstream-app"]}
+    rules = {"logql": {}, "promql": {}, "sigma": {"rules": [upstream_rule]}}
+    receiver = Relation(
+        "receive-otlp",
+        remote_app_name="upstream-otelcol",
+        remote_app_data={
+            "rules": json.dumps(_compress(rules)),
+            "metadata": json.dumps(OTELCOL_METADATA),
+        },
+    )
+    downstream = Relation(
+        "send-otlp", remote_app_name="downstream-otelcol", remote_app_data={"endpoints": "[]"}
+    )
+    state = State(
+        relations=[receiver, downstream],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+        config={"forward_alert_rules": True},
+    )
+
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN the upstream Sigma rule is forwarded to the `send-otlp` databag
+    out_relation = state_out.get_relation(downstream.id)
+    forwarded = _decompress(out_relation.local_app_data["rules"]).get("sigma", {}).get("rules", [])
+    assert [r["title"] for r in forwarded] == [SINGLE_SIGMA_RULE["title"]]
+
+    # AND the upstream charm's `juju_application` is preserved, not overwritten by otelcol
+    assert "juju_application.upstream-app" in forwarded[0]["tags"]
+    assert "juju_application.opentelemetry-collector-k8s" not in forwarded[0]["tags"]
 
 
 def test_forwarded_rules_have_topology(ctx, otelcol_container):
