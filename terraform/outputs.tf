@@ -25,6 +25,7 @@ output "requires" {
     send_otlp                   = "send-otlp",
     send_remote_write           = "send-remote-write",
     send_traces                 = "send-traces",
+    send_charm_traces           = "send-charm-traces",
     service_mesh                = "service-mesh",
   }
 }

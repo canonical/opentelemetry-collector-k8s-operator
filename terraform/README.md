@@ -17,10 +17,6 @@ This is a Terraform module facilitating the deployment of opentelemetry-collecto
 |------|---------|
 | <a name="provider_juju"></a> [juju](#provider\_juju) | >= 1.0 |
 
-## Modules
-
-No modules.
-
 ## Inputs
 
 | Name | Description | Type | Default | Required |
