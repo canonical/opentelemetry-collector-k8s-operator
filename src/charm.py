@@ -139,11 +139,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     def __init__(self, *args):
         super().__init__(*args)
-        # The `reconcile` action forces a full rebuild of the world state. The reconcile logic
-        # runs holistically on every event (including this action), so observing the action lets
-        # us report success back to the operator once the rebuild has completed. This is the
-        # explicit "recreate the world" escape hatch that keeps the delta/pass-through publishing
-        # path safe (ADR-0001).
+        # The reconcile logic runs holistically on every event (including the `reconcile` action),
+        # so observing the action lets us report success once the rebuild has completed.
         self.framework.observe(self.on.reconcile_action, self._on_reconcile_action)
 
         if not self.unit.get_container(self._container_name).can_connect():
@@ -155,12 +152,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self._reconcile()
 
     def _on_reconcile_action(self, event):
-        """Force a full reconcile and report the outcome to the operator.
+        """Report the outcome of the reconcile that already ran during charm initialization.
 
-        `_reconcile` has already run during charm initialization for this action event, fully
-        rebuilding the config file, on-disk assets and relation data. This handler surfaces that
-        the rebuild happened so operators can use the action to recover from any divergence
-        between the charm's published state and the workload (see ADR-0001).
+        `_reconcile` has already rebuilt the config file, on-disk assets and relation data for this
+        action event; this handler surfaces that so operators can use the action to recover from
+        any divergence between the charm's published state and the workload.
         """
         if not self.unit.get_container(self._container_name).can_connect():
             event.fail("Cannot connect to the otelcol container; try again once it is up.")

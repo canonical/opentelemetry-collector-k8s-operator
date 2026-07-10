@@ -174,3 +174,46 @@ def test_reconcile_action_reports_success(ctx, execs):
     )
     ctx.run(ctx.on.action("reconcile"), state)
     assert ctx.action_results == {"result": "Reconcile complete; world state rebuilt."}
+
+
+def test_publish_count_does_not_scale_with_dashboards(ctx, execs):
+    """Scenario: adding many received dashboards does not publish once per dashboard.
+
+    Regression guard for the O(N^2) databag-write trap: the per-dashboard add uses publish=False
+    and a single update_dashboards() writes the databag once, so the number of
+    _upset_dashboards_on_relation calls stays bounded regardless of how many dashboards arrive.
+    """
+    from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
+
+    def _make_state(n_dashboards: int) -> State:
+        templates = {
+            f"file:dash-{i}": {
+                "charm": "some-charm",
+                "content": encode_as_dashboard({"whoami": str(i)}),
+            }
+            for i in range(n_dashboards)
+        }
+        consumer = Relation(
+            "grafana-dashboards-consumer",
+            remote_app_data={"dashboards": json.dumps({"templates": templates})},
+            id=200,
+        )
+        return State(
+            relations=[consumer, Relation("grafana-dashboards-provider")],
+            leader=True,
+            containers=[Container("otelcol", can_connect=True, execs=execs)],
+        )
+
+    def _count_publishes(n_dashboards: int) -> int:
+        with patch.object(
+            GrafanaDashboardProvider,
+            "_upset_dashboards_on_relation",
+            autospec=True,
+        ) as spy:
+            with ctx(ctx.on.update_status(), state=_make_state(n_dashboards)) as mgr:
+                mgr.run()
+            return spy.call_count
+
+    # The publish count must be identical whether 2 or 50 dashboards are received: batching means
+    # it does not grow with the number of dashboards (it would be O(N) without publish=False).
+    assert _count_publishes(2) == _count_publishes(50)
