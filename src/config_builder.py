@@ -7,7 +7,7 @@ from enum import Enum, unique
 
 import yaml
 
-from constants import SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH
+from constants import SERVER_CA_CERT_PATH, SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -172,11 +172,41 @@ class ConfigBuilder:
         # FIXME https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/11780
         # Add TLS config to extensions
         self.add_extension("health_check", {"endpoint": f"0.0.0.0:{Port.health.value}"})
+        # Feed the collector's OWN internal logs back into its always-on OTLP receiver (defined
+        # above and wired to the `logs/<unit>` pipeline). From there they are exported alongside
+        # every other received/forwarded log, e.g. to Loki via the `send-loki-logs` exporter, and
+        # get the same topology labels applied by the pipeline's processors. If no log exporter is
+        # attached (no `send-loki-logs` relation), the pipeline falls back to the nop exporter and
+        # the internal logs are simply dropped -- no config error.
+        # We target `localhost` (the receiver binds `0.0.0.0`) over HTTP/protobuf. When receiver
+        # TLS is enabled, `_add_tls_to_all_receivers` puts a server cert on the OTLP receiver, so
+        # the loopback exporter must speak HTTPS and trust the CA.
+        # https://opentelemetry.io/docs/collector/internal-telemetry/#configure-internal-logs
+        internal_logs_otlp_exporter: Dict[str, Any] = {
+            "protocol": "http/protobuf",
+            "endpoint": (
+                f"https://localhost:{Port.otlp_http.value}"
+                if self._receiver_tls
+                else f"http://localhost:{Port.otlp_http.value}"
+            ),
+        }
+        if self._receiver_tls:
+            internal_logs_otlp_exporter["certificate"] = SERVER_CA_CERT_PATH
         self.add_telemetry(
             "logs",
             {
                 "level": "INFO",
                 "disable_stacktrace": True,
+                # Tag internal logs so they are distinguishable from ingested/forwarded logs
+                # in Grafana.
+                "initial_fields": {"job": "otelcol-internal"},
+                "processors": [
+                    {
+                        "batch": {
+                            "exporter": {"otlp": internal_logs_otlp_exporter},
+                        }
+                    }
+                ],
             },
         )
         self.add_telemetry("metrics", {"level": "normal"})

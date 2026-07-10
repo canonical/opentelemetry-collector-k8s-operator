@@ -60,3 +60,4 @@ def test_logs_pipeline_pebble(juju: jubilant.Juju, charm: str, charm_resources: 
     # FIXME: The Pebble log forwarding library sets different label names
     # Once they match, change this to `juju_application`
     assert "application" in labels
+    # TODO: Assert that internal logs reach loki

@@ -108,6 +108,45 @@ def test_rendered_default_is_valid():
     assert all(all(condition for condition in pair) for pair in pairs)
 
 
+def test_default_internal_logs_self_export_plaintext():
+    # GIVEN a default config without receiver TLS
+    config = ConfigBuilder(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+        receiver_tls=False,
+    )
+    config.add_default_config()
+    logs_telemetry = config._config["service"]["telemetry"]["logs"]
+    # THEN internal logs are tagged so they are distinguishable in Grafana
+    assert logs_telemetry["initial_fields"] == {"job": "otelcol-internal"}
+    # AND internal logs are exported over OTLP to the collector's own OTLP receiver
+    otlp = logs_telemetry["processors"][0]["batch"]["exporter"]["otlp"]
+    assert otlp["protocol"] == "http/protobuf"
+    # AND the loopback endpoint uses plaintext HTTP with no CA certificate
+    assert otlp["endpoint"] == "http://localhost:4318"
+    assert "certificate" not in otlp
+
+
+def test_default_internal_logs_self_export_tls():
+    # GIVEN a default config WITH receiver TLS
+    config = ConfigBuilder(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+        receiver_tls=True,
+    )
+    config.add_default_config()
+    otlp = config._config["service"]["telemetry"]["logs"]["processors"][0]["batch"]["exporter"][
+        "otlp"
+    ]
+    # THEN the loopback endpoint uses HTTPS and trusts the CA cert
+    assert otlp["endpoint"] == "https://localhost:4318"
+    assert otlp["certificate"] == (
+        "/usr/local/share/ca-certificates/juju_receive-ca-cert/cos-ca.crt"
+    )
+
+
 def test_receivers_tls_empty_config():
     # GIVEN an "empty" config
     config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
