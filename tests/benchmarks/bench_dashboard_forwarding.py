@@ -7,15 +7,8 @@ CPU (no decompress/re-compress) and disk I/O (no per-dashboard file writes, no d
 rescan), all of which are pure-Python / filesystem operations reproducible in a harness.
 
 It builds a synthetic fan-in of ``--relations`` relations, each providing ``--per-relation``
-RECEIVED dashboards of roughly ``--kib`` KiB (uncompressed), plus ``--bundled`` of otelcol's OWN
-on-disk dashboards, then times the strategies using the real ``GrafanaDashboardProvider`` and the
-real ``cosl`` LZMA+base64 codec.
-
-Received dashboards are forwarded verbatim (never compressed by the NEW path). Bundled dashboards
-ARE compressed by every strategy via ``reload_dashboards()`` -- so ``--bundled`` is the knob that
-makes the NEW pass-through path do compression work and reveals how the win narrows as the
-bundled:received ratio grows. ``--runs`` sets how many times each strategy runs; reported numbers
-are the MEDIAN across runs (more runs = less scheduling/GC noise), not a larger workload.
+dashboards of roughly ``--kib`` KiB (uncompressed), then times both implementations using the
+real ``GrafanaDashboardProvider`` and the real ``cosl`` LZMA+base64 codec.
 
 Metrics reported per implementation:
   * wall-clock time (median of ``--runs``)
@@ -43,7 +36,7 @@ import time
 import tracemalloc
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from unittest.mock import patch
 
 from cosl import LZMABase64
@@ -146,11 +139,11 @@ def build_fan_in(relations: int, per_relation: int, kib: int) -> List[dict]:
 def write_bundled_dashboards(dest_dir: Path, count: int, kib: int) -> None:
     """Write ``count`` raw-JSON bundled dashboards to ``dest_dir``.
 
-    Bundled dashboards are otelcol's *own* on-disk dashboards. Every strategy publishes them via
+    Bundled dashboards are otelcol's *own* on-disk dashboards. Both OLD and NEW publish these via
     ``reload_dashboards()``, which reads each file and **compresses** it. This is the only path on
     which the NEW (pass-through) implementation performs compression, so raising ``--bundled``
-    increases the compress workload shared by all strategies and shows how the pass-through win
-    narrows as the bundled:received ratio grows.
+    directly increases the compress workload shared by all strategies and shows how the pass-through
+    win narrows as the bundled:received ratio grows.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     for i in range(count):
@@ -191,7 +184,7 @@ def new_forward(provider, payloads: List[dict], dest_dir: Path) -> None:
         for template_id, template in payload["templates"].items():
             provider.add_dashboard_precompressed(
                 key=f"rel_{r}__{template_id}",
-                encoded_content=template["content"],  # VERBATIM
+                encoded_content=template["content"],  # VERBATIM (received: no compression)
                 inject_dropdowns=False,
             )
 
@@ -199,10 +192,10 @@ def new_forward(provider, payloads: List[dict], dest_dir: Path) -> None:
 def new_forward_batched(provider, payloads: List[dict], dest_dir: Path) -> None:
     """NEW behaviour (batch publish): accumulate all pass-through dashboards, publish ONCE.
 
-    Same verbatim pass-through, but the per-relation databag write is deferred by suppressing the
-    per-call publish and calling ``update_dashboards()`` a single time at the end. This avoids the
-    O(N^2) re-serialization of the growing templates dict. Bundled dashboards on disk are loaded
-    (and compressed) once via reload_dashboards(), like production.
+    Matches production ``forward_dashboards``: bundled on-disk dashboards are loaded (and
+    compressed) once via reload_dashboards(); received dashboards are passed through verbatim with
+    ``publish=False`` and a single ``update_dashboards()`` writes the databag once, avoiding the
+    O(N^2) re-serialization of the growing templates dict.
     """
     provider.reload_dashboards(inject_dropdowns=False)  # compresses bundled dashboards
     provider.remove_non_builtin_dashboards()
@@ -210,7 +203,7 @@ def new_forward_batched(provider, payloads: List[dict], dest_dir: Path) -> None:
         for template_id, template in payload["templates"].items():
             provider.add_dashboard_precompressed(
                 key=f"rel_{r}__{template_id}",
-                encoded_content=template["content"],  # VERBATIM
+                encoded_content=template["content"],  # VERBATIM (received: no compression)
                 inject_dropdowns=False,
                 publish=False,  # defer the databag write
             )
@@ -305,9 +298,20 @@ def main() -> None:
     payloads = build_fan_in(args.relations, args.per_relation, args.kib)
 
     results = [
-        run_impl("OLD (decompress+disk+rescan)", old_forward, payloads, args.runs, args.bundled, args.kib),
-        run_impl("NEW (pass-through, per-call)", new_forward, payloads, args.runs, args.bundled, args.kib),
-        run_impl("NEW (pass-through, batched)", new_forward_batched, payloads, args.runs, args.bundled, args.kib),
+        run_impl(
+            "OLD (decompress+disk+rescan)", old_forward, payloads, args.runs, args.bundled, args.kib
+        ),
+        run_impl(
+            "NEW (pass-through, per-call)", new_forward, payloads, args.runs, args.bundled, args.kib
+        ),
+        run_impl(
+            "NEW (pass-through, batched)",
+            new_forward_batched,
+            payloads,
+            args.runs,
+            args.bundled,
+            args.kib,
+        ),
     ]
 
     hdr = f"{'impl':<32}{'wall(s)':>10}{'cpu(s)':>10}{'peakMiB':>10}{'compress':>10}{'decompress':>12}{'diskKiB':>10}"
