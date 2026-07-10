@@ -139,6 +139,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     def __init__(self, *args):
         super().__init__(*args)
+        # The reconcile logic runs holistically on every event (including the `reconcile` action),
+        # so observing the action lets us report success once the rebuild has completed.
+        self.framework.observe(self.on.reconcile_action, self._on_reconcile_action)
+
         if not self.unit.get_container(self._container_name).can_connect():
             self.unit.status = MaintenanceStatus("Waiting for otelcol to start")
             return
@@ -146,6 +150,18 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self.external_configs: List[Dict[str, Any]] = []
         self.external_secret_files: Dict[str, str] = {}
         self._reconcile()
+
+    def _on_reconcile_action(self, event):
+        """Report the outcome of the reconcile that already ran during charm initialization.
+
+        `_reconcile` has already rebuilt the config file, on-disk assets and relation data for this
+        action event; this handler surfaces that so operators can use the action to recover from
+        any divergence between the charm's published state and the workload.
+        """
+        if not self.unit.get_container(self._container_name).can_connect():
+            event.fail("Cannot connect to the otelcol container; try again once it is up.")
+            return
+        event.set_results({"result": "Reconcile complete; world state rebuilt."})
 
     def _reconcile(self):
         """Recreate the world state for the charm.

@@ -217,7 +217,7 @@ LIBAPI = 0
 # Increment this PATCH version before using `charmcraft publish-lib` or reset
 # to 0 if you are raising the major API version
 
-LIBPATCH = 50
+LIBPATCH = 51
 
 PYDEPS = ["cosl >= 0.0.50"]
 
@@ -1226,6 +1226,83 @@ class GrafanaDashboardProvider(Object):
         )
 
         if self._charm.unit.is_leader():
+            for dashboard_relation in self._charm.model.relations[self._relation_name]:
+                self._upset_dashboards_on_relation(dashboard_relation)
+
+    def add_dashboard_precompressed(
+        self, key: str, encoded_content: str, inject_dropdowns: bool = True, publish: bool = True
+    ) -> None:
+        """Add an already-compressed dashboard under a caller-controlled key.
+
+        Pass-through counterpart of :method:`add_dashboard` for callers that already hold
+        LZMA+base64-compressed content (e.g. aggregators forwarding received dashboards verbatim).
+        The content is stored as-is (no decompress, no re-compress) under ``prog:{key}``, and can
+        later be removed with :method:`remove_dashboard`.
+
+        The caller is trusted: ``key`` must be non-empty, unique and stable (the ``prog:``
+        namespace is shared with :method:`add_dashboard`, so use structured keys such as
+        ``rel_5__my-dashboard``), and ``encoded_content`` must be the output of
+        ``LZMABase64.compress(...)``; it is not validated.
+
+        Args:
+            key: a caller-controlled, stable identifier for this dashboard.
+            encoded_content: the LZMA+base64-compressed dashboard content, stored verbatim.
+            inject_dropdowns: whether topology dropdowns should be added to the dashboard.
+            publish: whether to write the databag now. Bulk callers adding many dashboards should
+                pass ``publish=False`` for each add and call :method:`update_dashboards` once at
+                the end, avoiding an O(N^2) re-serialization of the templates dict.
+
+        Raises:
+            ValueError: if ``key`` or ``encoded_content`` is empty.
+        """
+        if not key:
+            raise ValueError("'key' must be a non-empty string")
+        if not encoded_content:
+            raise ValueError("'encoded_content' must be a non-empty string")
+
+        # Update of storage must be done irrespective of leadership, so
+        # that the stored state is there when this unit becomes leader.
+        stored_dashboard_templates: Any = self._stored.dashboard_templates  # pyright: ignore
+
+        id = "prog:{}".format(key)
+
+        # Store the compressed content verbatim: no decompress, no re-compress.
+        stored_dashboard_templates[id] = CharmedDashboard._content_to_dashboard_object(
+            charm_name=self._charm.meta.name,
+            content=encoded_content,
+            dashboard_alt_uid=CharmedDashboard._generate_alt_uid(self._charm.meta.name, id),
+            inject_dropdowns=inject_dropdowns,
+            juju_topology=self._juju_topology,
+        )
+        self._stored.dashboard_templates = stored_dashboard_templates
+
+        if publish and self._charm.unit.is_leader():
+            for dashboard_relation in self._charm.model.relations[self._relation_name]:
+                self._upset_dashboards_on_relation(dashboard_relation)
+
+    def remove_dashboard(self, key: str, publish: bool = True) -> None:
+        """Remove a single dashboard added via :method:`add_dashboard_precompressed`.
+
+        Removes only the dashboard stored under ``prog:{key}`` and republishes, leaving all other
+        dashboards untouched. Idempotent: removing an unknown ``key`` is a no-op.
+
+        Args:
+            key: the caller-controlled identifier used when the dashboard was added.
+            publish: whether to write the databag now. Bulk callers should pass ``publish=False``
+                and call :method:`update_dashboards` once at the end.
+        """
+        # Update of storage must be done irrespective of leadership, so
+        # that the stored state is there when this unit becomes leader.
+        stored_dashboard_templates: Any = self._stored.dashboard_templates  # pyright: ignore
+
+        id = "prog:{}".format(key)
+        if id not in stored_dashboard_templates:
+            return
+
+        del stored_dashboard_templates[id]
+        self._stored.dashboard_templates = stored_dashboard_templates
+
+        if publish and self._charm.unit.is_leader():
             for dashboard_relation in self._charm.model.relations[self._relation_name]:
                 self._upset_dashboards_on_relation(dashboard_relation)
 
