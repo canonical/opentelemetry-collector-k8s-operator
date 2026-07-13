@@ -147,6 +147,28 @@ def test_default_internal_logs_self_export_tls():
     )
 
 
+def test_default_internal_logs_loop_breaker_filter_present():
+    # GIVEN a default config (which self-ingests internal logs into the logs pipeline)
+    config = ConfigBuilder(
+        unit_name="fake/0", global_scrape_interval="", global_scrape_timeout=""
+    )
+    config.add_default_config()
+    # THEN a loop-breaker filter processor exists
+    filter_name = "filter/internal-telemetry-loop-breaker/fake/0"
+    assert filter_name in config._config["processors"]
+    filter_cfg = config._config["processors"][filter_name]
+    # AND it drops ONLY the failure logs of the log exporter(s) the internal logs loop through,
+    # keyed on their otelcol.component.id prefix (so OTHER exporters' failure logs pass through)
+    assert filter_cfg["logs"]["log_record"] == [
+        'IsMatch(attributes["otelcol.component.id"], "^loki/send-loki-logs/")',
+        'IsMatch(attributes["otelcol.component.id"], "^loki/cloud-config")',
+    ]
+    # AND it is resilient to OTTL evaluation errors (does not drop valid data)
+    assert filter_cfg["error_mode"] == "ignore"
+    # AND it is wired into the self-ingested logs pipeline
+    assert filter_name in config._config["service"]["pipelines"]["logs/fake/0"]["processors"]
+
+
 def test_receivers_tls_empty_config():
     # GIVEN an "empty" config
     config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")

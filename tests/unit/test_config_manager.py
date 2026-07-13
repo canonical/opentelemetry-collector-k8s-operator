@@ -246,6 +246,8 @@ def test_add_remote_write():
             {
                 "logs/otelcol/0": {
                     "receivers": ["otlp/otelcol/0"],
+                    # The loop-breaker filter is always present on the self-ingested logs pipeline
+                    "processors": ["filter/internal-telemetry-loop-breaker/otelcol/0"],
                     "exporters": ["debug/juju-config-enabled"],
                 },
                 "metrics/otelcol/0": {
@@ -263,6 +265,8 @@ def test_add_remote_write():
             {
                 "logs/otelcol/0": {
                     "receivers": ["otlp/otelcol/0"],
+                    # The loop-breaker filter is always present on the self-ingested logs pipeline
+                    "processors": ["filter/internal-telemetry-loop-breaker/otelcol/0"],
                     "exporters": ["debug/juju-config-enabled"],
                 },
                 "metrics/otelcol/0": {"receivers": ["otlp/otelcol/0"]},
@@ -367,6 +371,9 @@ def test_add_otlp_forwarding():
     expected_pipelines = {
         "logs/otelcol/0": {
             "receivers": ["otlp/otelcol/0"],
+            # The loop-breaker filter is always present on the self-ingested logs pipeline, so any
+            # log exporter (here an OTLP-logs exporter) is guarded against the recursion.
+            "processors": ["filter/internal-telemetry-loop-breaker/otelcol/0"],
             "exporters": [f"otlphttp/rel-1/{unit_name}", f"otlp/rel-2/{unit_name}"],
         },
         "metrics/otelcol/0": {
@@ -380,3 +387,68 @@ def test_add_otlp_forwarding():
     }
     assert config_manager.config._config["exporters"] == expected_exporters
     assert config_manager.config._config["service"]["pipelines"] == expected_pipelines
+
+
+def test_self_ingest_loop_breaker_invariant_all_log_exporters():
+    """INVARIANT: every log exporter on the self-ingested pipeline is covered by the loop-breaker.
+
+    The collector self-ingests its own internal logs into `logs/<unit>` and exports them. Only the
+    LOG exporter(s) those internal logs loop through can recurse when their endpoint is down. The
+    filter drops exactly those exporters' failure logs, keyed on their `otelcol.component.id`
+    prefix (LOOPABLE_LOG_EXPORTER_ID_PREFIXES). This test enables every feature that attaches a
+    LOG exporter to the pipeline (Loki forwarding + cloud-integrator Loki) and asserts:
+      1. the filter is present on the logs pipeline, and
+      2. EVERY log exporter's id is matched by one of the filter conditions.
+    If a future log exporter is wired into the logs pipeline without adding its id prefix to
+    LOOPABLE_LOG_EXPORTER_ID_PREFIXES, assertion (2) fails at authoring time.
+    """
+    from src.constants import LOOPABLE_LOG_EXPORTER_ID_PREFIXES
+
+    unit_name = "otelcol/0"
+    filter_name = f"filter/internal-telemetry-loop-breaker/{unit_name}"
+    config_manager = ConfigManager(
+        unit_name=unit_name,
+        global_scrape_interval="",
+        global_scrape_timeout="",
+    )
+    # WHEN every LOG-exporting feature is enabled ...
+    config_manager.add_log_forwarding(
+        endpoints=[{"url": "http://loki/loki/api/v1/push"}],
+        insecure_skip_verify=False,
+    )
+    config_manager.add_cloud_integrator(
+        username=None,
+        password=None,
+        prometheus_url=None,
+        loki_url="http://cloud-loki/loki/api/v1/push",
+        tempo_url=None,
+    )
+    # ... AND a NON-log exporter is also enabled (remote-write to Mimir), whose failure logs must
+    # NOT be dropped (they cannot recurse while the log path is up and are the most useful logs).
+    config_manager.add_remote_write(endpoints=[{"url": "http://mimir/api/v1/push"}])
+
+    config = config_manager.config._config
+    pipelines = config["service"]["pipelines"]
+    logs_pipeline = pipelines[f"logs/{unit_name}"]
+    # THEN the loop-breaker filter is present on the self-ingested logs pipeline.
+    # NOTE: internal telemetry is only self-ingested for the `logs` signal today. If a future
+    # change self-ingests `metrics`/`traces`, extend this invariant (and the filter) accordingly.
+    assert filter_name in logs_pipeline.get("processors", [])
+
+    # AND every LOG exporter on the pipeline is matched by one of the filter's id-prefix conditions
+    prefixes = LOOPABLE_LOG_EXPORTER_ID_PREFIXES
+    for exporter_id in logs_pipeline.get("exporters", []):
+        assert any(exporter_id.startswith(prefix) for prefix in prefixes), (
+            f"log exporter '{exporter_id}' on the self-ingested pipeline is NOT covered by the "
+            f"loop-breaker filter; add its id prefix to LOOPABLE_LOG_EXPORTER_ID_PREFIXES"
+        )
+
+    # AND the NON-log Mimir exporter is NOT covered by the filter, so its "Exporting failed" logs
+    # would pass through to Loki (visibility of cross-signal export failures is preserved).
+    mimir_id = next(
+        e for e in config["exporters"] if e.startswith("prometheusremotewrite/send-remote-write/")
+    )
+    assert not any(mimir_id.startswith(prefix) for prefix in prefixes), (
+        f"non-log exporter '{mimir_id}' must NOT be covered by the loop-breaker filter; its "
+        "failure logs are the most useful logs and cannot recurse while the log path is up"
+    )

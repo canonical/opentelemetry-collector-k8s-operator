@@ -22,3 +22,9 @@ FILE_STORAGE_DIRECTORY: Final[str] = "/otelcol"
 CERTS_DIR: Final[str] = "/etc/otelcol/certs/"
 EXTERNAL_CONFIG_SECRETS_DIR: Final[str] = "/etc/otelcol/external_config_secrets/"
 INGRESS_IP_MATCHER: Final[str] = "ClientIP(`0.0.0.0/0`)"
+INTERNAL_LOGS_FILTER_ID: Final[str] = "internal-telemetry-loop-breaker"
+# `otelcol.component.id` prefixes of the log exporters the internal error logs are filtered for
+LOOPABLE_LOG_EXPORTER_ID_PREFIXES: Final[tuple] = (
+    "loki/send-loki-logs/",  # add_log_forwarding (send-loki-logs relation)
+    "loki/cloud-config",  # add_cloud_integrator (cloud-integrator relation)
+)

@@ -7,7 +7,13 @@ from enum import Enum, unique
 
 import yaml
 
-from constants import SERVER_CA_CERT_PATH, SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH
+from constants import (
+    INTERNAL_LOGS_FILTER_ID,
+    LOOPABLE_LOG_EXPORTER_ID_PREFIXES,
+    SERVER_CA_CERT_PATH,
+    SERVER_CERT_PATH,
+    SERVER_CERT_PRIVATE_KEY_PATH,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +178,48 @@ class ConfigBuilder:
         # FIXME https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/11780
         # Add TLS config to extensions
         self.add_extension("health_check", {"endpoint": f"0.0.0.0:{Port.health.value}"})
+        # Loop-breaker for self-ingested internal telemetry.
+        #
+        # We feed the collector's OWN internal logs back into the `logs/<unit>` pipeline (see the
+        # telemetry config below), so they can be exported (e.g. to Loki) with topology labels.
+        # This creates a recursion risk: when the LOG exporter's endpoint is down, it emits an
+        # "Exporting failed" log; that log is itself internal telemetry, so it re-enters the
+        # pipeline, is re-exported, fails again, and so on -- an unbounded feedback loop.
+        # https://github.com/canonical/opentelemetry-collector-operator/pull/138
+        #
+        # ONLY the log exporter(s) the internal logs actually loop THROUGH can recurse. A failure
+        # log from a NON-log exporter (Mimir/remote-write, Tempo, OTLP-metrics/traces, ...) flows
+        # through the log path exactly once and leaves -- it cannot form a cycle while that log
+        # path is healthy. Those exporter-failure logs are also the MOST useful logs to see in
+        # Grafana. So we drop ONLY the failure logs emitted by the looping log exporter(s),
+        # identified by their `otelcol.component.id` prefix, and let all other exporters' failure
+        # logs through. Keyed on origin/id -- not on a message string.
+        #
+        # INVARIANT: every log exporter added to `logs/<unit>` (now or in the future) must have
+        # its id prefix listed in LOOPABLE_LOG_EXPORTER_ID_PREFIXES so it is covered here. The
+        # filter is added unconditionally on the base config, so it always sits upstream of every
+        # exporter on the logs pipeline.
+        loopable_exporter_conditions = [
+            f'IsMatch(attributes["otelcol.component.id"], "^{prefix}")'
+            for prefix in LOOPABLE_LOG_EXPORTER_ID_PREFIXES
+        ]
+        self.add_component(
+            Component.processor,
+            f"filter/{INTERNAL_LOGS_FILTER_ID}/{self._unit_name}",
+            {
+                # `ignore` keeps the pipeline resilient: OTTL evaluation errors (e.g. a log record
+                # with no `otelcol.component.id` attribute) are logged but do NOT drop valid data.
+                # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/filterprocessor#error-modes
+                "error_mode": "ignore",
+                "logs": {
+                    # OTTL conditions are OR-ed: drop the record if it was emitted by ANY of the
+                    # log exporters the internal logs loop through (the source of the recursive
+                    # "Exporting failed"/retry/queue logs on THAT path).
+                    "log_record": loopable_exporter_conditions,
+                },
+            },
+            pipelines=[f"logs/{self._unit_name}"],
+        )
         # Feed the collector's OWN internal logs back into its always-on OTLP receiver (defined
         # above and wired to the `logs/<unit>` pipeline). From there they are exported alongside
         # every other received/forwarded log, e.g. to Loki via the `send-loki-logs` exporter, and
