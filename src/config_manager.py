@@ -114,6 +114,7 @@ class ConfigManager:
         insecure_skip_verify: bool = False,
         queue_size: int = 1000,
         max_elapsed_time_min: int = 5,
+        internal_host: str = "localhost",
     ):
         """Generate a default OpenTelemetry collector ConfigManager.
 
@@ -127,6 +128,8 @@ class ConfigManager:
             insecure_skip_verify: value for `insecure_skip_verify` in all exporters
             queue_size: size of the sending queue for exporters
             max_elapsed_time_min: maximum elapsed time for retrying failed requests in minutes
+            internal_host: the unit FQDN the OTLP receiver's server cert is valid for; used as the
+                loopback self-ingest endpoint when receiver TLS is enabled.
         """
         self._unit_name = unit_name
         self._insecure_skip_verify = insecure_skip_verify
@@ -138,6 +141,7 @@ class ConfigManager:
             global_scrape_timeout=global_scrape_timeout,
             receiver_tls=receiver_tls,
             exporter_skip_verify=insecure_skip_verify,
+            internal_host=internal_host,
         )
         self.config.add_default_config()
         self.config.add_extension("file_storage", {"directory": FILE_STORAGE_DIRECTORY})

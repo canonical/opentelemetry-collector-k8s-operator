@@ -22,9 +22,18 @@ FILE_STORAGE_DIRECTORY: Final[str] = "/otelcol"
 CERTS_DIR: Final[str] = "/etc/otelcol/certs/"
 EXTERNAL_CONFIG_SECRETS_DIR: Final[str] = "/etc/otelcol/external_config_secrets/"
 INGRESS_IP_MATCHER: Final[str] = "ClientIP(`0.0.0.0/0`)"
+
+# Loop-breaker for self-ingested internal telemetry.
+# The collector feeds its OWN internal logs into the `logs/<unit>` pipeline, so they can be
+# exported with topology labels. Only the exporter(s) attached to the LOGS pipeline can recurse:
+# such an exporter's "Exporting failed" log is itself an internal log, so it re-enters the same
+# pipeline and is re-exported -> an unbounded loop when the endpoint is down. We drop the logs
+# emitted by exactly those log-pipeline exporter components (matched on `otelcol.component.id`,
+# enumerated dynamically at build time in ConfigBuilder._populate_loop_breaker_filter). Every OTHER
+# component's logs -- including failure logs from exporters on the metrics/traces pipelines
+# (Mimir/remote-write, Tempo, OTLP-metrics/traces) -- pass through to Loki, since they cannot form
+# a cycle while the log path is up and are the most useful logs to see in Grafana.
 INTERNAL_LOGS_FILTER_ID: Final[str] = "internal-telemetry-loop-breaker"
-# `otelcol.component.id` prefixes of the log exporters the internal error logs are filtered for
-LOOPABLE_LOG_EXPORTER_ID_PREFIXES: Final[tuple] = (
-    "loki/send-loki-logs/",  # add_log_forwarding (send-loki-logs relation)
-    "loki/cloud-config",  # add_cloud_integrator (cloud-integrator relation)
-)
+# Exporter component-id prefixes that are auto-injected by the builder (not real destinations) and
+# so must never be treated as loop-through log exporters by the loop-breaker filter.
+NON_LOOPING_EXPORTER_PREFIXES: Final[tuple] = ("nop", "debug")

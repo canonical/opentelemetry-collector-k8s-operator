@@ -123,28 +123,38 @@ def test_default_internal_logs_self_export_plaintext():
     # AND internal logs are exported over OTLP to the collector's own OTLP receiver
     otlp = logs_telemetry["processors"][0]["batch"]["exporter"]["otlp"]
     assert otlp["protocol"] == "http/protobuf"
-    # AND the loopback endpoint uses plaintext HTTP with no CA certificate
+    # AND the loopback endpoint uses plaintext HTTP with no CA certificate and no TLS block
     assert otlp["endpoint"] == "http://localhost:4318"
     assert "certificate" not in otlp
+    assert "tls" not in otlp
 
 
 def test_default_internal_logs_self_export_tls():
-    # GIVEN a default config WITH receiver TLS
+    # GIVEN a default config WITH receiver TLS and the unit FQDN the server cert is valid for
     config = ConfigBuilder(
         unit_name="fake/0",
         global_scrape_interval="",
         global_scrape_timeout="",
         receiver_tls=True,
+        internal_host="otelcol-0.otelcol-endpoints.o11y.svc.cluster.local",
     )
     config.add_default_config()
     otlp = config._config["service"]["telemetry"]["logs"]["processors"][0]["batch"]["exporter"][
         "otlp"
     ]
-    # THEN the loopback endpoint uses HTTPS and trusts the CA cert
-    assert otlp["endpoint"] == "https://localhost:4318"
-    assert otlp["certificate"] == (
-        "/usr/local/share/ca-certificates/juju_receive-ca-cert/cos-ca.crt"
+    # THEN the loopback endpoint targets the FQDN (a name present in the cert SANs) over HTTPS, so
+    # verification succeeds -- NOT `localhost`, which would fail ("valid for <fqdn>, not localhost")
+    assert (
+        otlp["endpoint"]
+        == "https://otelcol-0.otelcol-endpoints.o11y.svc.cluster.local:4318"
     )
+    # AND no explicit CA is configured: trust is via the system root store (the charm installs the
+    # server CA with update-ca-certificates), so the exporter falls back to the system cert pool
+    assert "certificate" not in otlp
+    # AND no skip-verify knob is needed (endpoint matches the SAN); the OTel SDK schema has no
+    # `tls`/`insecure_skip_verify` anyway
+    assert "insecure" not in otlp
+    assert "tls" not in otlp
 
 
 def test_default_internal_logs_loop_breaker_filter_present():
@@ -153,20 +163,70 @@ def test_default_internal_logs_loop_breaker_filter_present():
         unit_name="fake/0", global_scrape_interval="", global_scrape_timeout=""
     )
     config.add_default_config()
-    # THEN a loop-breaker filter processor exists
+    # THEN a loop-breaker filter processor exists on the self-ingested logs pipeline
     filter_name = "filter/internal-telemetry-loop-breaker/fake/0"
     assert filter_name in config._config["processors"]
     filter_cfg = config._config["processors"][filter_name]
-    # AND it drops ONLY the failure logs of the log exporter(s) the internal logs loop through,
-    # keyed on their otelcol.component.id prefix (so OTHER exporters' failure logs pass through)
-    assert filter_cfg["logs"]["log_record"] == [
-        'IsMatch(attributes["otelcol.component.id"], "^loki/send-loki-logs/")',
-        'IsMatch(attributes["otelcol.component.id"], "^loki/cloud-config")',
-    ]
     # AND it is resilient to OTTL evaluation errors (does not drop valid data)
     assert filter_cfg["error_mode"] == "ignore"
-    # AND it is wired into the self-ingested logs pipeline
+    # AND it is wired into the logs pipeline
     assert filter_name in config._config["service"]["pipelines"]["logs/fake/0"]["processors"]
+    # AND before build() its drop conditions are empty (populated dynamically at build time)
+    assert filter_cfg["logs"]["log_record"] == []
+
+
+def test_loop_breaker_filter_conditions_populated_from_logs_exporters():
+    # GIVEN a default config with a real log exporter and a nop-only build
+    config = ConfigBuilder(
+        unit_name="fake/0", global_scrape_interval="", global_scrape_timeout=""
+    )
+    config.add_default_config()
+    # AND a couple of log exporters wired into the logs pipeline (as add_log_forwarding would)
+    config.add_component(
+        Component.exporter,
+        "loki/send-loki-logs/0",
+        {"endpoint": "http://loki/loki/api/v1/push"},
+        pipelines=["logs/fake/0"],
+    )
+    config.add_component(
+        Component.exporter,
+        "otlphttp/rel-1/fake/0",
+        {"endpoint": "http://otlp-logs:4318"},
+        pipelines=["logs/fake/0"],
+    )
+    # AND a NON-log exporter on the metrics pipeline (must NOT be covered)
+    config.add_component(
+        Component.exporter,
+        "prometheusremotewrite/send-remote-write/0",
+        {"endpoint": "http://mimir/api/v1/push"},
+        pipelines=["metrics/fake/0"],
+    )
+    # WHEN the config is built (populates the loop-breaker conditions dynamically)
+    built = yaml.safe_load(config.build())
+    filter_name = "filter/internal-telemetry-loop-breaker/fake/0"
+    conditions = built["processors"][filter_name]["logs"]["log_record"]
+    # THEN every LOG-pipeline exporter is covered by an exact component-id match
+    assert set(conditions) == {
+        'attributes["otelcol.component.id"] == "loki/send-loki-logs/0"',
+        'attributes["otelcol.component.id"] == "otlphttp/rel-1/fake/0"',
+    }
+    # AND the non-log (Mimir) exporter is NOT covered, so its failure logs still reach Loki
+    assert not any("prometheusremotewrite" in cond for cond in conditions)
+    # AND the auto-injected nop/debug exporters are excluded
+    assert not any("nop" in cond or "debug" in cond for cond in conditions)
+
+
+def test_loop_breaker_filter_conditions_empty_without_log_exporter():
+    # GIVEN a default config with NO log exporter (only the fallback nop after build)
+    config = ConfigBuilder(
+        unit_name="fake/0", global_scrape_interval="", global_scrape_timeout=""
+    )
+    config.add_default_config()
+    # WHEN built
+    built = yaml.safe_load(config.build())
+    filter_name = "filter/internal-telemetry-loop-breaker/fake/0"
+    # THEN there are no drop conditions (nothing can recurse; nop is excluded)
+    assert built["processors"][filter_name]["logs"]["log_record"] == []
 
 
 def test_receivers_tls_empty_config():

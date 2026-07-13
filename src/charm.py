@@ -229,6 +229,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             queue_size=cast(int, self.config.get("queue_size")),
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
             unit_name=self.unit.name,
+            internal_host=socket.getfqdn(),
         )
 
         # TODO: if/when we support multiple feature gates, make this a list and find out how to

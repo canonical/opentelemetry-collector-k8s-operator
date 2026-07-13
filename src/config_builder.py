@@ -9,8 +9,7 @@ import yaml
 
 from constants import (
     INTERNAL_LOGS_FILTER_ID,
-    LOOPABLE_LOG_EXPORTER_ID_PREFIXES,
-    SERVER_CA_CERT_PATH,
+    NON_LOOPING_EXPORTER_PREFIXES,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
@@ -98,6 +97,7 @@ class ConfigBuilder:
         global_scrape_timeout: str,
         receiver_tls: bool = False,
         exporter_skip_verify: bool = False,
+        internal_host: str = "localhost",
     ):
         """Generate an empty OpenTelemetry collector config.
 
@@ -107,6 +107,9 @@ class ConfigBuilder:
             global_scrape_timeout: value for `scrape_timeout` in all prometheus receivers
             receiver_tls: whether to inject TLS config in all receivers on build
             exporter_skip_verify: value for `insecure_skip_verify` in all exporters
+            internal_host: the host the OTLP receiver's server cert is valid for (the unit FQDN).
+                Used as the loopback self-ingest endpoint when receiver TLS is enabled, so the
+                exporter connects to a name present in the cert's SANs.
         """
         self._config = {
             "extensions": {},
@@ -123,6 +126,7 @@ class ConfigBuilder:
         self._unit_name = unit_name
         self._receiver_tls = receiver_tls
         self._exporter_skip_verify = exporter_skip_verify
+        self._internal_host = internal_host
         self._scrape_interval = global_scrape_interval
         self._scrape_timeout = global_scrape_timeout
 
@@ -138,6 +142,7 @@ class ConfigBuilder:
             str: A YAML string representing the complete configuration.
         """
         self._add_missing_nop_exporters()
+        self._populate_loop_breaker_filter()
         if self._receiver_tls:
             self._add_tls_to_all_receivers()
         self._set_prometheus_receiver_global_timeout_and_interval(
@@ -146,6 +151,39 @@ class ConfigBuilder:
         )
         self._add_exporter_insecure_skip_verify(self._exporter_skip_verify)
         return yaml.safe_dump(self._config)
+
+    def _populate_loop_breaker_filter(self):
+        """Populate the internal-telemetry loop-breaker filter's drop conditions.
+
+        The collector self-ingests its own internal logs into the `logs/<unit>` pipeline. Any
+        exporter on THAT pipeline can recurse: its "Exporting failed" log is itself an internal
+        log that re-enters the pipeline and is re-exported. To break the cycle we drop the logs
+        emitted by exactly those exporter components, matched on `otelcol.component.id`.
+
+        We enumerate the logs-pipeline exporters dynamically (at build time, after all components
+        and the fallback nop exporter have been added) so the filter automatically covers EVERY
+        log exporter -- send-loki-logs, cloud-integrator, send-otlp logs, and any future one --
+        with no static list to maintain. Exporters on the metrics/traces pipelines are never
+        included, so their failure logs still reach Loki.
+
+        The auto-injected `nop`/`debug` exporters are excluded: they have no remote endpoint, so
+        they cannot fail-and-recurse.
+        """
+        filter_name = f"filter/{INTERNAL_LOGS_FILTER_ID}/{self._unit_name}"
+        if filter_name not in self._config["processors"]:
+            return
+        logs_pipeline = self._config["service"]["pipelines"].get(f"logs/{self._unit_name}", {})
+        log_exporter_ids = [
+            exporter_id
+            for exporter_id in logs_pipeline.get("exporters", [])
+            if exporter_id.split("/")[0] not in NON_LOOPING_EXPORTER_PREFIXES
+        ]
+        # OTTL conditions are OR-ed: drop the record if it was emitted by ANY exporter attached to
+        # the logs pipeline (the source of the recursive "Exporting failed"/retry/queue logs).
+        self._config["processors"][filter_name]["logs"]["log_record"] = [
+            f'attributes["otelcol.component.id"] == "{exporter_id}"'
+            for exporter_id in log_exporter_ids
+        ]
 
     @property
     def hash(self):
@@ -180,66 +218,34 @@ class ConfigBuilder:
         self.add_extension("health_check", {"endpoint": f"0.0.0.0:{Port.health.value}"})
         # Loop-breaker for self-ingested internal telemetry.
         #
-        # We feed the collector's OWN internal logs back into the `logs/<unit>` pipeline (see the
-        # telemetry config below), so they can be exported (e.g. to Loki) with topology labels.
-        # This creates a recursion risk: when the LOG exporter's endpoint is down, it emits an
-        # "Exporting failed" log; that log is itself internal telemetry, so it re-enters the
-        # pipeline, is re-exported, fails again, and so on -- an unbounded feedback loop.
-        # https://github.com/canonical/opentelemetry-collector-operator/pull/138
+        # We feed the collector's OWN internal logs back into the `logs/<unit>` pipeline, so they
+        # can be exported (e.g. to Loki) with topology labels. This creates a recursion risk: any
+        # exporter ATTACHED TO THE LOGS PIPELINE emits an "Exporting failed" log when its endpoint
+        # is down; that log is itself internal telemetry, so it re-enters the same pipeline, is
+        # re-exported, fails again; an unbounded feedback loop.
         #
-        # ONLY the log exporter(s) the internal logs actually loop THROUGH can recurse. A failure
-        # log from a NON-log exporter (Mimir/remote-write, Tempo, OTLP-metrics/traces, ...) flows
-        # through the log path exactly once and leaves -- it cannot form a cycle while that log
-        # path is healthy. Those exporter-failure logs are also the MOST useful logs to see in
-        # Grafana. So we drop ONLY the failure logs emitted by the looping log exporter(s),
-        # identified by their `otelcol.component.id` prefix, and let all other exporters' failure
-        # logs through. Keyed on origin/id -- not on a message string.
-        #
-        # INVARIANT: every log exporter added to `logs/<unit>` (now or in the future) must have
-        # its id prefix listed in LOOPABLE_LOG_EXPORTER_ID_PREFIXES so it is covered here. The
-        # filter is added unconditionally on the base config, so it always sits upstream of every
-        # exporter on the logs pipeline.
-        loopable_exporter_conditions = [
-            f'IsMatch(attributes["otelcol.component.id"], "^{prefix}")'
-            for prefix in LOOPABLE_LOG_EXPORTER_ID_PREFIXES
-        ]
+        # We add the filter here (unconditionally, on the base config) so it always sits UPSTREAM
+        # of every log exporter. Its drop conditions are left EMPTY here and are populated at build
+        # time by `_populate_loop_breaker_filter`, once the full set of exporters on the logs
+        # pipeline is known.
         self.add_component(
             Component.processor,
             f"filter/{INTERNAL_LOGS_FILTER_ID}/{self._unit_name}",
             {
-                # `ignore` keeps the pipeline resilient: OTTL evaluation errors (e.g. a log record
-                # with no `otelcol.component.id` attribute) are logged but do NOT drop valid data.
-                # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/filterprocessor#error-modes
                 "error_mode": "ignore",
-                "logs": {
-                    # OTTL conditions are OR-ed: drop the record if it was emitted by ANY of the
-                    # log exporters the internal logs loop through (the source of the recursive
-                    # "Exporting failed"/retry/queue logs on THAT path).
-                    "log_record": loopable_exporter_conditions,
-                },
+                # Populated at build time from the logs-pipeline exporters (see build()).
+                "logs": {"log_record": []},
             },
             pipelines=[f"logs/{self._unit_name}"],
         )
-        # Feed the collector's OWN internal logs back into its always-on OTLP receiver (defined
-        # above and wired to the `logs/<unit>` pipeline). From there they are exported alongside
-        # every other received/forwarded log, e.g. to Loki via the `send-loki-logs` exporter, and
-        # get the same topology labels applied by the pipeline's processors. If no log exporter is
-        # attached (no `send-loki-logs` relation), the pipeline falls back to the nop exporter and
-        # the internal logs are simply dropped -- no config error.
-        # We target `localhost` (the receiver binds `0.0.0.0`) over HTTP/protobuf. When receiver
-        # TLS is enabled, `_add_tls_to_all_receivers` puts a server cert on the OTLP receiver, so
-        # the loopback exporter must speak HTTPS and trust the CA.
-        # https://opentelemetry.io/docs/collector/internal-telemetry/#configure-internal-logs
         internal_logs_otlp_exporter: Dict[str, Any] = {
             "protocol": "http/protobuf",
             "endpoint": (
-                f"https://localhost:{Port.otlp_http.value}"
+                f"https://{self._internal_host}:{Port.otlp_http.value}"
                 if self._receiver_tls
                 else f"http://localhost:{Port.otlp_http.value}"
             ),
         }
-        if self._receiver_tls:
-            internal_logs_otlp_exporter["certificate"] = SERVER_CA_CERT_PATH
         self.add_telemetry(
             "logs",
             {
