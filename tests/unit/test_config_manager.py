@@ -3,11 +3,13 @@
 
 """Feature: Opentelemetry-collector config builder."""
 
-from src.config_manager import ConfigManager
-from charmlibs.interfaces.otlp import OtlpEndpoint
 import copy
 
 import pytest
+import yaml
+from charmlibs.interfaces.otlp import OtlpEndpoint
+
+from src.config_manager import ConfigManager
 
 
 def test_add_prometheus_scrape():
@@ -187,9 +189,9 @@ def test_add_traces_forwarding_multiple_endpoints():
     assert exporters["otlphttp/send-traces-1"]["endpoint"] == "http://tempo2.example.com:4318"
 
     # AND both exporters are wired into the traces pipeline
-    pipeline_exporters = config_manager.config._config["service"]["pipelines"][
-        "traces/otelcol/0"
-    ]["exporters"]
+    pipeline_exporters = config_manager.config._config["service"]["pipelines"]["traces/otelcol/0"][
+        "exporters"
+    ]
     assert "otlphttp/send-traces-0" in pipeline_exporters
     assert "otlphttp/send-traces-1" in pipeline_exporters
 
@@ -390,29 +392,28 @@ def test_add_otlp_forwarding():
 
 
 def test_self_ingest_loop_breaker_invariant_all_log_exporters():
-    """INVARIANT: every exporter on the self-ingested logs pipeline is covered by the loop-breaker.
+    """Every exporter on the self-ingested logs pipeline is covered by the loop-breaker.
 
     The collector self-ingests its own internal logs into `logs/<unit>` and exports them. Any
     exporter on THAT pipeline can recurse when its endpoint is down. The loop-breaker filter's drop
     conditions are enumerated dynamically at build time from the logs-pipeline exporters, so it
     covers EVERY log exporter automatically. This test enables every feature that attaches a log
-    exporter -- Loki forwarding, cloud-integrator Loki, AND a `send-otlp` LOGS exporter -- plus a
+    exporter: Loki forwarding, cloud-integrator Loki, AND a `send-otlp` LOGS exporter, plus a
     NON-log exporter (Mimir remote-write on the metrics pipeline), then asserts:
       1. every log-pipeline exporter is covered by an exact component-id condition, and
       2. the non-log (Mimir) exporter is NOT covered (its failure logs still reach Loki).
     If a future log exporter is wired into the logs pipeline, (1) covers it with no code change;
     if the dynamic enumeration regresses, this test fails.
     """
-    import yaml
-
     unit_name = "otelcol/0"
     filter_name = f"filter/internal-telemetry-loop-breaker/{unit_name}"
+    # GIVEN a base config manager
     config_manager = ConfigManager(
         unit_name=unit_name,
         global_scrape_interval="",
         global_scrape_timeout="",
     )
-    # WHEN every LOG-exporting feature is enabled ...
+    # WHEN every LOG-exporting feature is enabled
     config_manager.add_log_forwarding(
         endpoints=[{"url": "http://loki/loki/api/v1/push"}],
         insecure_skip_verify=False,
@@ -424,7 +425,6 @@ def test_self_ingest_loop_breaker_invariant_all_log_exporters():
         loki_url="http://cloud-loki/loki/api/v1/push",
         tempo_url=None,
     )
-    # ... including a `send-otlp` LOGS exporter (the previously-unguarded loop path) ...
     config_manager.add_otlp_forwarding(
         relation_map={
             0: OtlpEndpoint(
@@ -435,8 +435,7 @@ def test_self_ingest_loop_breaker_invariant_all_log_exporters():
             ),
         }
     )
-    # ... AND a NON-log exporter (remote-write to Mimir), whose failure logs must NOT be dropped
-    # (they cannot recurse while the log path is up and are the most useful logs).
+    # AND WHEN a NON-log exporter, whose failure logs must NOT be dropped, is added
     config_manager.add_remote_write(endpoints=[{"url": "http://mimir/api/v1/push"}])
 
     built = yaml.safe_load(config_manager.config.build())
@@ -444,8 +443,6 @@ def test_self_ingest_loop_breaker_invariant_all_log_exporters():
     logs_pipeline = pipelines[f"logs/{unit_name}"]
     conditions = built["processors"][filter_name]["logs"]["log_record"]
     # THEN the filter is present on the self-ingested logs pipeline.
-    # NOTE: internal telemetry is only self-ingested for the `logs` signal today. If a future
-    # change self-ingests `metrics`/`traces`, extend the filter/build() to those pipelines too.
     assert filter_name in logs_pipeline.get("processors", [])
 
     # Every non-nop/debug logs-pipeline exporter (incl. the send-otlp logs exporter) is covered,
@@ -455,6 +452,8 @@ def test_self_ingest_loop_breaker_invariant_all_log_exporters():
             continue
         covering = [c for c in conditions if exporter_id in c]
         assert covering, f"log exporter '{exporter_id}' not covered by loop-breaker filter"
-        assert all('instrumentation_scope.attributes["otelcol.signal"] == "logs"' in c for c in covering)
+        assert all(
+            'instrumentation_scope.attributes["otelcol.signal"] == "logs"' in c for c in covering
+        )
     assert any("otlphttp/rel-" in c for c in conditions)
     assert not any("prometheusremotewrite" in c for c in conditions)

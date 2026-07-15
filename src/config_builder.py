@@ -162,10 +162,9 @@ class ConfigBuilder:
         `otelcol.component.id` AND `otelcol.signal`.
 
         We enumerate the logs-pipeline exporters dynamically (at build time, after all components
-        and the fallback nop exporter have been added) so the filter automatically covers EVERY
-        log exporter -- send-loki-logs, cloud-integrator, send-otlp logs, and any future one --
-        with no static list to maintain. Exporters on the metrics/traces pipelines are never
-        included, so their failure logs still reach Loki.
+        and the fallback nop exporter have been added) so the filter automatically covers EVERY log
+        exporter: send-loki-logs, cloud-integrator, send-otlp logs, and any future one. Exporters
+        on the metrics/traces pipelines are never included, so their failure logs still reach Loki.
 
         The auto-injected `nop`/`debug` exporters are excluded: they have no remote endpoint, so
         they cannot fail-and-recurse.
@@ -177,13 +176,6 @@ class ConfigBuilder:
         `signal: logs` failures can recurse (they flow through the logs pipeline it feeds); its
         `signal: metrics` failures pass through once and are the useful cross-signal logs we want
         to keep. Matching id alone would over-drop the latter, so we AND in the signal.
-
-        IMPORTANT: the collector attaches `otelcol.component.id` (and `otelcol.signal`) to the
-        log's INSTRUMENTATION SCOPE, not to the log-record attributes (verified against the
-        OTLP-decoded internal logs: they appear under `InstrumentationScope attributes`, while the
-        log record's own `Attributes` only carry `code.*`/`error`/`interval`). So the OTTL
-        conditions must use the `instrumentation_scope.attributes[...]` context; `attributes[...]`
-        (log-record) never matches and would filter nothing.
         """
         filter_name = f"filter/{INTERNAL_LOGS_FILTER_ID}/{self._unit_name}"
         if filter_name not in self._config["processors"]:
@@ -194,11 +186,6 @@ class ConfigBuilder:
             for exporter_id in logs_pipeline.get("exporters", [])
             if exporter_id.split("/")[0] not in NON_LOOPING_EXPORTER_PREFIXES
         ]
-        # OTTL conditions are OR-ed across the list: drop the record if it was emitted by ANY
-        # logs-pipeline exporter FOR THE LOGS SIGNAL (the only failures that can recurse). Both
-        # `otelcol.component.id` and `otelcol.signal` live on the instrumentation scope (see
-        # docstring); the id+signal AND avoids over-dropping a shared exporter's metrics/traces
-        # failure logs.
         self._config["processors"][filter_name]["logs"]["log_record"] = [
             f'instrumentation_scope.attributes["otelcol.component.id"] == "{exporter_id}" '
             f'and instrumentation_scope.attributes["otelcol.signal"] == "logs"'

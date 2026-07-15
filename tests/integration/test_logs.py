@@ -43,12 +43,12 @@ def test_logs_pipeline_promtail(juju: jubilant.Juju, charm: str, charm_resources
 def test_internal_logs_loop_breaker_drops_on_outage(juju: jubilant.Juju):
     """Scenario: when the Loki exporter is down, the loop-breaker filter drops its own failure logs.
 
-    Guards the runtime contract that unit tests cannot: that the OTTL condition
-    (instrumentation_scope.attributes["otelcol.component.id"] + otelcol.signal) actually matches the
-    collector's self-ingested internal logs. Reuses the otelcol+loki deployment from the promtail test.
+    Checks that the OTTL condition
+    (instrumentation_scope.attributes["otelcol.component.id"] + otelcol.signal) actually matches
+    the collector's self-ingested internal logs.
     """
     # GIVEN the send-loki-logs exporter is failing (Loki workload stopped)
-    juju.ssh(target="loki/leader", command="pebble stop --all", container="loki")
+    juju.ssh(target="loki/leader", command="pebble stop loki", container="loki")
 
     # THEN the loop-breaker filter drops the looping exporter's own internal logs
     @tenacity.retry(stop=tenacity.stop_after_attempt(12), wait=tenacity.wait_fixed(10))
@@ -67,7 +67,7 @@ def test_internal_logs_loop_breaker_drops_on_outage(juju: jubilant.Juju):
     _filter_dropped_logs()
 
     # cleanup: bring Loki back so later tests aren't affected
-    juju.ssh(target="loki/leader", command="pebble start --all", container="loki")
+    juju.ssh(target="loki/leader", command="pebble start loki", container="loki")
 
 
 def test_logs_pipeline_pebble(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
