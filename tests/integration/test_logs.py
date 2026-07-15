@@ -110,7 +110,8 @@ def test_logs_pipeline_promtail(juju: jubilant.Juju, charm: str, charm_resources
     # AND the collector's own internal telemetry logs (tagged job=otelcol-internal) reach loki
     try:
         assert_internal_logs_in_loki(juju, "loki")
-    except AssertionError:
+    except Exception:
+        # RETRY re-raises as tenacity.RetryError (not AssertionError), so catch broadly.
         # Dump otelcol/loki diagnostics once (after RETRY is exhausted) to root-cause CI failures.
         _dump_internal_logs_diagnostics(juju, "otelcol", "loki")
         raise
