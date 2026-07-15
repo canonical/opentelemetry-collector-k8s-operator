@@ -148,11 +148,8 @@ def test_default_internal_logs_self_export_tls():
         otlp["endpoint"]
         == "https://otelcol-0.otelcol-endpoints.o11y.svc.cluster.local:4318"
     )
-    # AND no explicit CA is configured: trust is via the system root store (the charm installs the
-    # server CA with update-ca-certificates), so the exporter falls back to the system cert pool
+    # AND no explicit CA is configured: trust is via the system root store
     assert "certificate" not in otlp
-    # AND no skip-verify knob is needed (endpoint matches the SAN); the OTel SDK schema has no
-    # `tls`/`insecure_skip_verify` anyway
     assert "insecure" not in otlp
     assert "tls" not in otlp
 

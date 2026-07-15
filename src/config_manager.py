@@ -128,8 +128,7 @@ class ConfigManager:
             insecure_skip_verify: value for `insecure_skip_verify` in all exporters
             queue_size: size of the sending queue for exporters
             max_elapsed_time_min: maximum elapsed time for retrying failed requests in minutes
-            internal_host: the unit FQDN the OTLP receiver's server cert is valid for; used as the
-                loopback self-ingest endpoint when receiver TLS is enabled.
+            internal_host: the unit FQDN the OTLP receiver's server cert is valid for
         """
         self._unit_name = unit_name
         self._insecure_skip_verify = insecure_skip_verify

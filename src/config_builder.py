@@ -107,9 +107,7 @@ class ConfigBuilder:
             global_scrape_timeout: value for `scrape_timeout` in all prometheus receivers
             receiver_tls: whether to inject TLS config in all receivers on build
             exporter_skip_verify: value for `insecure_skip_verify` in all exporters
-            internal_host: the host the OTLP receiver's server cert is valid for (the unit FQDN).
-                Used as the loopback self-ingest endpoint when receiver TLS is enabled, so the
-                exporter connects to a name present in the cert's SANs.
+            internal_host: the unit FQDN the OTLP receiver's server cert is valid for
         """
         self._config = {
             "extensions": {},
