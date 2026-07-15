@@ -3,16 +3,67 @@
 
 """Feature: Ingested logs are forwarded."""
 
+import logging
 import pathlib
 from typing import Dict
 
 import jubilant
 from helpers import RETRY
 
+logger = logging.getLogger(__name__)
+
 # pyright: reportAttributeAccessIssue = false
 
 # Juju is a strictly confined snap that cannot see /tmp, so we need to use something else
 TEMP_DIR = pathlib.Path(__file__).parent.resolve()
+
+
+def _dump_internal_logs_diagnostics(juju: jubilant.Juju, otelcol_app: str, loki_app: str) -> None:
+    """Log diagnostics to disambiguate why internal logs didn't reach Loki (CI-vs-local).
+
+    Distinguishes the two possible failure boundaries:
+      * self-ingest boundary: the collector exports its own logs to its OWN OTLP receiver
+        (http://localhost:4318). If this fails, `otelcol_receiver_accepted_log_records` for the
+        otlp receiver stays at 0 and the otelcol logs show connection/TLS errors to :4318.
+      * Loki boundary: logs are ingested locally but never forwarded (send-loki-logs failing) or
+        arrive under a different label than `job=otelcol-internal`.
+    """
+
+    def _ssh(target: str, container: str, command: str) -> str:
+        try:
+            return juju.ssh(target=target, command=command, container=container)
+        except Exception as exc:  # noqa: BLE001 - diagnostics must never mask the real failure
+            return f"<ssh failed: {exc}>"
+
+    # 1) Self-export boundary: the collector exports its OWN logs to http://localhost:4318.
+    #    If that connection fails, the otelcol log tail shows connection/TLS errors to :4318, and
+    #    the internal logs never enter the pipeline (so they can't reach Loki). `curl` is NOT in
+    #    the rock, so we rely on the Pebble log tail, which is always available.
+    otelcol_logs = _ssh(f"{otelcol_app}/leader", "otelcol", "pebble logs -n 300")
+    suspicious = "\n".join(
+        line
+        for line in otelcol_logs.splitlines()
+        if any(
+            token in line.lower()
+            for token in ("4318", "x509", "certificate", "refused", "otelcol-internal", "error")
+        )
+    )
+    # 2) Loki boundary: what labels/streams actually exist? If ingestion works but the `job` label
+    #    differs in CI, `job` will list values other than (or missing) `otelcol-internal`.
+    loki_labels = _ssh(f"{loki_app}/leader", "loki", "/usr/bin/logcli labels")
+    loki_jobs = _ssh(f"{loki_app}/leader", "loki", "/usr/bin/logcli labels job")
+
+    logger.error(
+        "INTERNAL-LOGS DIAGNOSTICS\n"
+        "=== otelcol suspicious log lines (self-export to :4318 / errors) ===\n%s\n"
+        "=== loki labels ===\n%s\n"
+        "=== loki `job` label values ===\n%s\n"
+        "=== otelcol log tail (last 300) ===\n%s",
+        suspicious or "<no suspicious lines>",
+        loki_labels,
+        loki_jobs,
+        otelcol_logs,
+    )
 
 
 @RETRY
@@ -57,7 +108,12 @@ def test_logs_pipeline_promtail(juju: jubilant.Juju, charm: str, charm_resources
     _assert_topology_labels()
 
     # AND the collector's own internal telemetry logs (tagged job=otelcol-internal) reach loki
-    assert_internal_logs_in_loki(juju, "loki")
+    try:
+        assert_internal_logs_in_loki(juju, "loki")
+    except AssertionError:
+        # Dump otelcol/loki diagnostics once (after RETRY is exhausted) to root-cause CI failures.
+        _dump_internal_logs_diagnostics(juju, "otelcol", "loki")
+        raise
 
 
 def test_logs_pipeline_pebble(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
