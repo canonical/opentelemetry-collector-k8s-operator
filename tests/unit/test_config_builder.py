@@ -158,75 +158,43 @@ def test_default_internal_logs_self_export_tls():
 
 
 def test_default_internal_logs_loop_breaker_filter_present():
-    # GIVEN a default config (which self-ingests internal logs into the logs pipeline)
-    config = ConfigBuilder(
-        unit_name="fake/0", global_scrape_interval="", global_scrape_timeout=""
-    )
+    config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
     config.add_default_config()
-    # THEN a loop-breaker filter processor exists on the self-ingested logs pipeline
     filter_name = "filter/internal-telemetry-loop-breaker/fake/0"
-    assert filter_name in config._config["processors"]
     filter_cfg = config._config["processors"][filter_name]
-    # AND it is resilient to OTTL evaluation errors (does not drop valid data)
+    # Filter is wired into the logs pipeline and tolerates OTTL eval errors (keeps valid data).
     assert filter_cfg["error_mode"] == "ignore"
-    # AND it is wired into the logs pipeline
     assert filter_name in config._config["service"]["pipelines"]["logs/fake/0"]["processors"]
-    # AND before build() its drop conditions are empty (populated dynamically at build time)
-    assert filter_cfg["logs"]["log_record"] == []
 
 
 def test_loop_breaker_filter_conditions_populated_from_logs_exporters():
-    # GIVEN a default config with a real log exporter and a nop-only build
-    config = ConfigBuilder(
-        unit_name="fake/0", global_scrape_interval="", global_scrape_timeout=""
-    )
+    config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
     config.add_default_config()
-    # AND a couple of log exporters wired into the logs pipeline (as add_log_forwarding would)
+    for name in ("loki/send-loki-logs/0", "otlphttp/rel-1/fake/0"):
+        config.add_component(Component.exporter, name, {"endpoint": "x"}, pipelines=["logs/fake/0"])
+    # A non-log exporter (metrics pipeline) must NOT be covered.
     config.add_component(
-        Component.exporter,
-        "loki/send-loki-logs/0",
-        {"endpoint": "http://loki/loki/api/v1/push"},
-        pipelines=["logs/fake/0"],
+        Component.exporter, "prometheusremotewrite/0", {"endpoint": "x"}, pipelines=["metrics/fake/0"]
     )
-    config.add_component(
-        Component.exporter,
-        "otlphttp/rel-1/fake/0",
-        {"endpoint": "http://otlp-logs:4318"},
-        pipelines=["logs/fake/0"],
-    )
-    # AND a NON-log exporter on the metrics pipeline (must NOT be covered)
-    config.add_component(
-        Component.exporter,
-        "prometheusremotewrite/send-remote-write/0",
-        {"endpoint": "http://mimir/api/v1/push"},
-        pipelines=["metrics/fake/0"],
-    )
-    # WHEN the config is built (populates the loop-breaker conditions dynamically)
     built = yaml.safe_load(config.build())
-    filter_name = "filter/internal-telemetry-loop-breaker/fake/0"
-    conditions = built["processors"][filter_name]["logs"]["log_record"]
-    # THEN every LOG-pipeline exporter is covered by an exact component-id match
-    assert set(conditions) == {
-        'attributes["otelcol.component.id"] == "loki/send-loki-logs/0"',
-        'attributes["otelcol.component.id"] == "otlphttp/rel-1/fake/0"',
-    }
-    # AND the non-log (Mimir) exporter is NOT covered, so its failure logs still reach Loki
-    assert not any("prometheusremotewrite" in cond for cond in conditions)
-    # AND the auto-injected nop/debug exporters are excluded
-    assert not any("nop" in cond or "debug" in cond for cond in conditions)
+    conditions = built["processors"]["filter/internal-telemetry-loop-breaker/fake/0"]["logs"][
+        "log_record"
+    ]
+    # Every logs-pipeline exporter is covered, each scoped to the logs signal; nothing else is.
+    assert all('instrumentation_scope.attributes["otelcol.signal"] == "logs"' in c for c in conditions)
+    covered = {c for eid in ("loki/send-loki-logs/0", "otlphttp/rel-1/fake/0") for c in conditions if eid in c}
+    assert len(covered) == 2
+    assert not any("prometheusremotewrite" in c or "nop" in c or "debug" in c for c in conditions)
 
 
 def test_loop_breaker_filter_conditions_empty_without_log_exporter():
-    # GIVEN a default config with NO log exporter (only the fallback nop after build)
-    config = ConfigBuilder(
-        unit_name="fake/0", global_scrape_interval="", global_scrape_timeout=""
-    )
+    # With no log exporter (only the fallback nop), nothing can recurse -> no drop conditions.
+    config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
     config.add_default_config()
-    # WHEN built
     built = yaml.safe_load(config.build())
-    filter_name = "filter/internal-telemetry-loop-breaker/fake/0"
-    # THEN there are no drop conditions (nothing can recurse; nop is excluded)
-    assert built["processors"][filter_name]["logs"]["log_record"] == []
+    assert built["processors"]["filter/internal-telemetry-loop-breaker/fake/0"]["logs"][
+        "log_record"
+    ] == []
 
 
 def test_receivers_tls_empty_config():

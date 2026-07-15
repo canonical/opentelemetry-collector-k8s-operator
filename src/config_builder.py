@@ -158,7 +158,8 @@ class ConfigBuilder:
         The collector self-ingests its own internal logs into the `logs/<unit>` pipeline. Any
         exporter on THAT pipeline can recurse: its "Exporting failed" log is itself an internal
         log that re-enters the pipeline and is re-exported. To break the cycle we drop the logs
-        emitted by exactly those exporter components, matched on `otelcol.component.id`.
+        emitted by exactly those exporter components for the LOGS signal, matched on
+        `otelcol.component.id` AND `otelcol.signal`.
 
         We enumerate the logs-pipeline exporters dynamically (at build time, after all components
         and the fallback nop exporter have been added) so the filter automatically covers EVERY
@@ -168,6 +169,21 @@ class ConfigBuilder:
 
         The auto-injected `nop`/`debug` exporters are excluded: they have no remote endpoint, so
         they cannot fail-and-recurse.
+
+        Why also match `otelcol.signal == "logs"`: a single OTLP exporter can be attached to MORE
+        than one pipeline (e.g. `send-otlp` with `telemetries: [logs, metrics]` produces one
+        `otlphttp/rel-N` component on both `logs/<unit>` and `metrics/<unit>`). That component
+        emits failure logs for BOTH signals with the SAME `otelcol.component.id`. Only its
+        `signal: logs` failures can recurse (they flow through the logs pipeline it feeds); its
+        `signal: metrics` failures pass through once and are the useful cross-signal logs we want
+        to keep. Matching id alone would over-drop the latter, so we AND in the signal.
+
+        IMPORTANT: the collector attaches `otelcol.component.id` (and `otelcol.signal`) to the
+        log's INSTRUMENTATION SCOPE, not to the log-record attributes (verified against the
+        OTLP-decoded internal logs: they appear under `InstrumentationScope attributes`, while the
+        log record's own `Attributes` only carry `code.*`/`error`/`interval`). So the OTTL
+        conditions must use the `instrumentation_scope.attributes[...]` context; `attributes[...]`
+        (log-record) never matches and would filter nothing.
         """
         filter_name = f"filter/{INTERNAL_LOGS_FILTER_ID}/{self._unit_name}"
         if filter_name not in self._config["processors"]:
@@ -178,10 +194,14 @@ class ConfigBuilder:
             for exporter_id in logs_pipeline.get("exporters", [])
             if exporter_id.split("/")[0] not in NON_LOOPING_EXPORTER_PREFIXES
         ]
-        # OTTL conditions are OR-ed: drop the record if it was emitted by ANY exporter attached to
-        # the logs pipeline (the source of the recursive "Exporting failed"/retry/queue logs).
+        # OTTL conditions are OR-ed across the list: drop the record if it was emitted by ANY
+        # logs-pipeline exporter FOR THE LOGS SIGNAL (the only failures that can recurse). Both
+        # `otelcol.component.id` and `otelcol.signal` live on the instrumentation scope (see
+        # docstring); the id+signal AND avoids over-dropping a shared exporter's metrics/traces
+        # failure logs.
         self._config["processors"][filter_name]["logs"]["log_record"] = [
-            f'attributes["otelcol.component.id"] == "{exporter_id}"'
+            f'instrumentation_scope.attributes["otelcol.component.id"] == "{exporter_id}" '
+            f'and instrumentation_scope.attributes["otelcol.signal"] == "logs"'
             for exporter_id in log_exporter_ids
         ]
 
@@ -251,8 +271,6 @@ class ConfigBuilder:
             {
                 "level": "INFO",
                 "disable_stacktrace": True,
-                # Tag internal logs so they are distinguishable from ingested/forwarded logs
-                # in Grafana.
                 "initial_fields": {"job": "otelcol-internal"},
                 "processors": [
                     {

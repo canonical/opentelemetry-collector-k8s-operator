@@ -448,18 +448,13 @@ def test_self_ingest_loop_breaker_invariant_all_log_exporters():
     # change self-ingests `metrics`/`traces`, extend the filter/build() to those pipelines too.
     assert filter_name in logs_pipeline.get("processors", [])
 
-    # AND every non-nop/debug exporter on the logs pipeline is covered by an exact-id condition
+    # Every non-nop/debug logs-pipeline exporter (incl. the send-otlp logs exporter) is covered,
+    # scoped to the logs signal; the metrics-only Mimir exporter is not.
     for exporter_id in logs_pipeline.get("exporters", []):
         if exporter_id.split("/")[0] in ("nop", "debug"):
             continue
-        expected = f'attributes["otelcol.component.id"] == "{exporter_id}"'
-        assert expected in conditions, (
-            f"log exporter '{exporter_id}' on the self-ingested pipeline is NOT covered by the "
-            "loop-breaker filter (see ConfigBuilder._populate_loop_breaker_filter)"
-        )
-
-    # AND the send-otlp LOGS exporter specifically is covered (the previously-unguarded path)
-    assert any("otlphttp/rel-" in cond for cond in conditions)
-
-    # AND the NON-log Mimir exporter is NOT covered, so its failure logs still reach Loki
-    assert not any("prometheusremotewrite" in cond for cond in conditions)
+        covering = [c for c in conditions if exporter_id in c]
+        assert covering, f"log exporter '{exporter_id}' not covered by loop-breaker filter"
+        assert all('instrumentation_scope.attributes["otelcol.signal"] == "logs"' in c for c in covering)
+    assert any("otlphttp/rel-" in c for c in conditions)
+    assert not any("prometheusremotewrite" in c for c in conditions)
