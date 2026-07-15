@@ -23,7 +23,7 @@ def assert_internal_logs_in_loki(juju: jubilant.Juju, loki_app: str) -> None:
     """
     result = juju.ssh(
         target=f"{loki_app}/leader",
-        command='/usr/bin/logcli query --limit=1 --output=jsonl \'{job="otelcol-internal"}\'',
+        command="/usr/bin/logcli query --limit=1 --output=jsonl '{job=\"otelcol-internal\"}'",
         container="loki",
     )
     assert result.strip(), f"No internal logs (job=otelcol-internal) found in Loki: {result!r}"
@@ -58,6 +58,32 @@ def test_logs_pipeline_promtail(juju: jubilant.Juju, charm: str, charm_resources
 
     # AND the collector's own internal telemetry logs (tagged job=otelcol-internal) reach loki
     assert_internal_logs_in_loki(juju, "loki")
+
+
+def test_logs_pipeline_pebble(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+    """Scenario: log forwarding via Pebble log forwarding."""
+    # GIVEN a model with flog, blackbox-exporter, otel-collector, and loki charms
+    juju.deploy(charm, "otelcol-pebble", resources=charm_resources, trust=True)
+    juju.deploy("blackbox-exporter-k8s", "blackbox", channel="2/edge", trust=True)
+    juju.deploy("loki-k8s", "loki-pebble", channel="2/edge", trust=True)
+
+    # WHEN they are related to over the loki_push_api interface
+    juju.integrate("otelcol-pebble:receive-loki-logs", "blackbox")
+    juju.integrate("otelcol-pebble:send-loki-logs", "loki-pebble")
+    juju.wait(jubilant.all_active, delay=10, timeout=600)
+
+    # THEN logs arrive in loki
+    labels = juju.ssh(
+        target="loki-pebble/leader",
+        command="/usr/bin/logcli labels",
+        container="loki",
+    )
+    # FIXME: The Pebble log forwarding library sets different label names
+    # Once they match, change this to `juju_application`
+    assert "application" in labels
+
+    # AND the collector's own internal telemetry logs (tagged job=otelcol-internal) reach loki
+    assert_internal_logs_in_loki(juju, "loki-pebble")
 
 
 def test_internal_logs_loop_breaker_drops_on_outage(juju: jubilant.Juju):
@@ -97,27 +123,46 @@ def test_internal_logs_loop_breaker_drops_on_outage(juju: jubilant.Juju):
         juju.config("otelcol", {"debug_exporter_for_metrics": False})
 
 
-def test_logs_pipeline_pebble(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
-    """Scenario: log forwarding via Pebble log forwarding."""
-    # GIVEN a model with flog, blackbox-exporter, otel-collector, and loki charms
-    juju.deploy(charm, "otelcol-pebble", resources=charm_resources, trust=True)
-    juju.deploy("blackbox-exporter-k8s", "blackbox", channel="2/edge", trust=True)
-    juju.deploy("loki-k8s", "loki-pebble", channel="2/edge", trust=True)
+def test_internal_logs_cross_signal_preserved_on_metrics_outage(juju: jubilant.Juju):
+    """Scenario: a metrics exporter's failure logs still reach Loki (they are NOT loop-dropped).
 
-    # WHEN they are related to over the loki_push_api interface
-    juju.integrate("otelcol-pebble:receive-loki-logs", "blackbox")
-    juju.integrate("otelcol-pebble:send-loki-logs", "loki-pebble")
+    The loop-breaker filter drops ONLY logs emitted by exporters on the LOGS pipeline (matched on
+    `otelcol.component.id` AND `otelcol.signal == "logs"`). Failure logs from exporters on other
+    pipelines (here: `prometheusremotewrite/0` on the metrics pipeline, which emits
+    `otelcol.signal: metrics`) must be preserved and forwarded to Loki, proving the fix is not
+    Loki-specific and does not over-drop cross-signal visibility.
+    """
+    # GIVEN Loki is up and otelcol is related to a Prometheus over send-remote-write
+    juju.deploy("prometheus-k8s", "prometheus", channel="2/edge", trust=True)
+    juju.integrate("otelcol:send-remote-write", "prometheus")
     juju.wait(jubilant.all_active, delay=10, timeout=600)
 
-    # THEN logs arrive in loki
-    labels = juju.ssh(
-        target="loki-pebble/leader",
-        command="/usr/bin/logcli labels",
-        container="loki",
-    )
-    # FIXME: The Pebble log forwarding library sets different label names
-    # Once they match, change this to `juju_application`
-    assert "application" in labels
+    # WHEN the remote-write target is down, the metrics exporter (`prometheusremotewrite/0`) emits
+    # "Exporting failed" internal logs carrying `otelcol.signal: metrics`.
+    juju.ssh(target="prometheus/leader", command="pebble stop prometheus", container="prometheus")
 
-    # AND the collector's own internal telemetry logs (tagged job=otelcol-internal) reach loki
-    assert_internal_logs_in_loki(juju, "loki-pebble")
+    try:
+        # THEN those metrics-signal failure logs are NOT dropped by the loop-breaker filter and
+        # still arrive in Loki under {job="otelcol-internal"}, tagged with the metrics exporter id.
+        @RETRY
+        def _assert_metrics_exporter_failure_logs_in_loki() -> None:
+            result = juju.ssh(
+                target="loki/leader",
+                command=(
+                    "/usr/bin/logcli query --limit=5 --output=jsonl "
+                    "'{job=\"otelcol-internal\"} |= `prometheusremotewrite`'"
+                ),
+                container="loki",
+            )
+            assert result.strip(), (
+                "Metrics-exporter failure logs were not forwarded to Loki (over-dropped by the "
+                f"loop-breaker?): {result!r}"
+            )
+
+        _assert_metrics_exporter_failure_logs_in_loki()
+    finally:
+        # cleanup: bring Prometheus back and remove the relation so later tests aren't affected
+        juju.ssh(
+            target="prometheus/leader", command="pebble start prometheus", container="prometheus"
+        )
+        juju.remove_relation("otelcol:send-remote-write", "prometheus")
