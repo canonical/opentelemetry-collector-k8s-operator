@@ -120,8 +120,10 @@ def test_default_internal_logs_self_export_plaintext():
     logs_telemetry = config._config["service"]["telemetry"]["logs"]
     # THEN the collector's own telemetry resource is tagged so the Loki exporter derives
     # `job=otelcol-internal` from `service.name` deterministically (distinguishable in Grafana)
+    # AND the full internal log record (body + attributes) is rendered into the Loki line
     assert config._config["service"]["telemetry"]["resource"] == {
-        "service.name": "otelcol-internal"
+        "service.name": "otelcol-internal",
+        "loki.format": "logfmt",
     }
     # AND internal logs are exported over OTLP to the collector's own OTLP receiver
     otlp = logs_telemetry["processors"][0]["batch"]["exporter"]["otlp"]
@@ -130,6 +132,24 @@ def test_default_internal_logs_self_export_plaintext():
     assert otlp["endpoint"] == "http://localhost:4318"
     assert "certificate" not in otlp
     assert "tls" not in otlp
+
+
+def test_internal_logs_full_record_rendered_to_loki():
+    # GIVEN a default config
+    config = ConfigBuilder(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+        receiver_tls=False,
+    )
+    config.add_default_config()
+    resource = config._config["service"]["telemetry"]["resource"]
+    # THEN `loki.format: logfmt` renders the full record (so in-log context like `target_labels`
+    # survives), and no otelcol-own topology labels are injected
+    assert resource == {
+        "service.name": "otelcol-internal",
+        "loki.format": "logfmt",
+    }
 
 
 def test_default_internal_logs_self_export_tls():

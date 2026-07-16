@@ -257,8 +257,14 @@ class ConfigBuilder:
         # exporter derives its `job` label from `service.namespace/service.name`, so this
         # deterministically lands the self-ingested internal logs under `job=otelcol-internal`.
         # It is exporter-agnostic: any backend (OTLP, remote-write, etc.) sees the same identifier.
+        #
+        # `loki.format: logfmt` renders the full record (body + attributes) into the Loki line, so
+        # attributes like `error`, `interval` and `target_labels` (the scraped target's topology,
+        # e.g. `juju_unit=loki-read/0`) survive. `add_log_forwarding`'s `insert` of `loki.format:
+        # raw` won't overwrite this, so scraped charm logs stay `raw`.
         self._config["service"]["telemetry"]["resource"] = {
-            "service.name": INTERNAL_TELEMETRY_SERVICE_NAME
+            "service.name": INTERNAL_TELEMETRY_SERVICE_NAME,
+            "loki.format": "logfmt",
         }
         self.add_telemetry(
             "logs",
