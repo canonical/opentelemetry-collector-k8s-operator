@@ -25,6 +25,25 @@ RETRY = retry(
 )
 
 
+@RETRY
+def assert_pebble_service_active(
+    juju: jubilant.Juju, unit: str, container: str, service: str
+) -> None:
+    """Assert a Pebble service in a workload container is running (Current == active)."""
+    out = juju.ssh(target=unit, command=f"pebble services {service}", container=container)
+    # `pebble services <name>` prints a header then one row per service:
+    #   Service  Startup  Current  Since
+    #   <name>   enabled  active   ...
+    for line in out.splitlines():
+        cols = line.split()
+        if cols and cols[0] == service:
+            assert "active" in cols, f"pebble service {service!r} is not active: {out!r}"
+            return
+    raise AssertionError(
+        f"pebble service {service!r} not found in container {container!r}: {out!r}"
+    )
+
+
 def deploy_seaweedfs(juju: jubilant.Juju, app: str, s3_requirer_app: str) -> None:
     """Deploy seaweedfs-k8s and integrate it with the given S3-requiring app.
 
