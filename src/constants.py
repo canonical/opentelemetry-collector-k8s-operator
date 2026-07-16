@@ -23,4 +23,5 @@ CERTS_DIR: Final[str] = "/etc/otelcol/certs/"
 EXTERNAL_CONFIG_SECRETS_DIR: Final[str] = "/etc/otelcol/external_config_secrets/"
 INGRESS_IP_MATCHER: Final[str] = "ClientIP(`0.0.0.0/0`)"
 INTERNAL_LOGS_FILTER_ID: Final[str] = "internal-telemetry-loop-breaker"
+INTERNAL_TELEMETRY_SERVICE_NAME: Final[str] = "otelcol-internal"
 NON_LOOPING_EXPORTER_PREFIXES: Final[tuple] = ("nop", "debug")

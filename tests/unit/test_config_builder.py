@@ -118,8 +118,11 @@ def test_default_internal_logs_self_export_plaintext():
     )
     config.add_default_config()
     logs_telemetry = config._config["service"]["telemetry"]["logs"]
-    # THEN internal logs are tagged so they are distinguishable in Grafana
-    assert logs_telemetry["initial_fields"] == {"job": "otelcol-internal"}
+    # THEN the collector's own telemetry resource is tagged so the Loki exporter derives
+    # `job=otelcol-internal` from `service.name` deterministically (distinguishable in Grafana)
+    assert config._config["service"]["telemetry"]["resource"] == {
+        "service.name": "otelcol-internal"
+    }
     # AND internal logs are exported over OTLP to the collector's own OTLP receiver
     otlp = logs_telemetry["processors"][0]["batch"]["exporter"]["otlp"]
     assert otlp["protocol"] == "http/protobuf"

@@ -9,6 +9,7 @@ import yaml
 
 from constants import (
     INTERNAL_LOGS_FILTER_ID,
+    INTERNAL_TELEMETRY_SERVICE_NAME,
     NON_LOOPING_EXPORTER_PREFIXES,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
@@ -251,12 +252,19 @@ class ConfigBuilder:
                 else f"http://localhost:{Port.otlp_http.value}"
             ),
         }
+        # Tag ALL of the collector's own telemetry (logs/metrics/traces) with a dedicated
+        # `service.name`. This is the OTel-standard way to identify a service, and the Loki
+        # exporter derives its `job` label from `service.namespace/service.name`, so this
+        # deterministically lands the self-ingested internal logs under `job=otelcol-internal`.
+        # It is exporter-agnostic: any backend (OTLP, remote-write, etc.) sees the same identifier.
+        self._config["service"]["telemetry"]["resource"] = {
+            "service.name": INTERNAL_TELEMETRY_SERVICE_NAME
+        }
         self.add_telemetry(
             "logs",
             {
                 "level": "INFO",
                 "disable_stacktrace": True,
-                "initial_fields": {"job": "otelcol-internal"},
                 "processors": [
                     {
                         "batch": {

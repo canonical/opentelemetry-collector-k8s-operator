@@ -74,7 +74,7 @@ def assert_internal_logs_in_loki(juju: jubilant.Juju, loki_app: str) -> None:
     """
     result = juju.ssh(
         target=f"{loki_app}/leader",
-        command="/usr/bin/logcli query --limit=1 --output=jsonl '{job=\"otelcol-internal\"}'",
+        command="/usr/bin/logcli query --quiet --limit=1 --output=jsonl '{job=\"otelcol-internal\"}'",
         container="loki",
     )
     assert result.strip(), f"No internal logs (job=otelcol-internal) found in Loki: {result!r}"
@@ -206,7 +206,7 @@ def test_internal_logs_cross_signal_preserved_on_metrics_outage(juju: jubilant.J
             result = juju.ssh(
                 target="loki/leader",
                 command=(
-                    "/usr/bin/logcli query --limit=5 --output=jsonl "
+                    "/usr/bin/logcli query --quiet --limit=5 --output=jsonl "
                     "'{job=\"otelcol-internal\"} |= `prometheusremotewrite`'"
                 ),
                 container="loki",
