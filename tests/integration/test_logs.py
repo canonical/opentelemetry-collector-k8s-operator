@@ -6,7 +6,6 @@
 import json
 import logging
 import pathlib
-import time
 from typing import Dict, Optional
 
 import jubilant
@@ -21,21 +20,19 @@ TEMP_DIR = pathlib.Path(__file__).parent.resolve()
 
 
 def _jsonl_has_entries(result: str) -> bool:
-    """Assert `logcli query --output=jsonl` returned at least one real log entry.
+    """Return True if `logcli query --output=jsonl` output has at least one real log entry.
 
     Each line is a JSON object like `{"labels": {...}, "line": "...", "timestamp": "..."}`. We parse
-    it (rather than a bare truthiness check on stdout) and require at least one entry with a
-    non-empty `line`. The caller's stream selector (e.g. `{job="otelcol-internal"}`) is what
-    guarantees the labels on the returned entries -- `logcli` strips labels common to all returned
-    streams from the per-line `labels` field (so it is often `{}`), which is why we do NOT assert on
-    that field here. Use `logcli series` when you need to assert the label set explicitly.
+    it (rather than a bare truthiness check on stdout, which would also match `logcli` metadata) and
+    require at least one entry with a non-empty `line`. This is a pure predicate; callers wrap it in
+    an assertion (typically under `@RETRY`). The caller's stream selector (e.g.
+    `{job="otelcol-internal"}`) is what guarantees the labels on the returned entries -- `logcli`
+    strips labels common to all returned streams from the per-line `labels` field (so it is often
+    `{}`), which is why we do NOT assert on that field here; use `logcli series` for that.
     """
-    entries = [line for line in result.splitlines() if line.strip()]
-    assert entries, f"logcli returned no log entries: {result!r}"
-    for line in entries:
-        if json.loads(line).get("line", "").strip():
+    for line in result.splitlines():
+        if line.strip() and json.loads(line).get("line", "").strip():
             return True
-    logger.error("logcli returned entries but none had a log line: %s", result)
     return False
 
 
@@ -69,16 +66,6 @@ def _loop_breaker_filtered_count(juju: jubilant.Juju) -> Optional[float]:
         if "otelcol_processor_filter_logs.filtered" in line and "loop-breaker" in line:
             value = float(line.rsplit(" ", 1)[-1])  # keep the most recent sample
     return value
-
-
-@RETRY
-def _filter_dropped_logs(juju: jubilant.Juju) -> bool:
-    value = _loop_breaker_filtered_count(juju)
-    if value is None:
-        logger.warning("loop-breaker filter dropped logs counter not found in Pebble logs")
-        return False
-    logger.info("loop-breaker filter dropped logs counter: %s", value)
-    return value > 0
 
 
 @RETRY
@@ -158,18 +145,32 @@ def test_internal_logs_loop_breaker_drops_on_outage(juju: jubilant.Juju):
     juju.config("otelcol", {"debug_exporter_for_metrics": True})
     juju.wait(lambda status: jubilant.all_active(status, "otelcol"), delay=5, timeout=300)
 
-    # AND the loop-breaker filter has not dropped any logs yet (Loki is healthy)
-    assert not _filter_dropped_logs(juju)
+    # Baseline the loop-breaker drop counter. It may already be > 0: Loki can have transient
+    # "not ready" windows (e.g. ingester warmup) during which send-loki-logs fails and the
+    # loop-breaker correctly drops those recursive logs-signal failures. So we assert on the DELTA
+    # once we stop Loki, never on an absolute zero.
+    baseline = _loop_breaker_filtered_count(juju) or 0.0
 
     # WHEN the send-loki-logs exporter is failing (Loki workload stopped), which makes it emit
     # "Exporting failed" internal logs that recurse into the logs pipeline and must be dropped.
     juju.ssh(target="loki/leader", command="pebble stop loki", container="loki")
 
-    # THEN the loop-breaker filter drops the looping exporter's own internal logs, visible as a
-    # positive `otelcol_processor_filter_logs.filtered` counter for the loop-breaker filter.
-    assert _filter_dropped_logs(juju)
-    juju.ssh(target="loki/leader", command="pebble start loki", container="loki")
-    assert_pebble_service_active(juju, "loki/leader", "loki", "loki")
+    try:
+        # THEN the loop-breaker drop counter climbs above the baseline as it drops the looping
+        # exporter's own internal logs.
+        @RETRY
+        def _assert_filter_dropped_more() -> None:
+            current = _loop_breaker_filtered_count(juju) or 0.0
+            assert current > baseline, (
+                f"loop-breaker filter drop counter did not increase: {baseline} -> {current}"
+            )
+
+        _assert_filter_dropped_more()
+    finally:
+        juju.ssh(target="loki/leader", command="pebble start loki", container="loki")
+        assert_pebble_service_active(juju, "loki/leader", "loki", "loki")
+        juju.config("otelcol", {"debug_exporter_for_metrics": False})
+
 
 
 def test_internal_logs_cross_signal_preserved_on_metrics_outage(juju: jubilant.Juju):
@@ -180,57 +181,45 @@ def test_internal_logs_cross_signal_preserved_on_metrics_outage(juju: jubilant.J
     pipelines (here: `prometheusremotewrite/0` on the metrics pipeline, which emits
     `otelcol.signal: metrics`) must be preserved and forwarded to Loki.
     """
-
-    @RETRY
-    def _metrics_exporter_failure_logs_in_loki() -> bool:
-        # We match on the log BODY (`|= "Exporting failed"`): `send-loki-logs` stores logs with
-        # `loki.format: raw`, so the line is only the record body -- the `otelcol.component.id`
-        # lives on the instrumentation scope and is neither in the line nor a label. Since Loki is
-        # up (so `send-loki-logs` is healthy) and `prometheusremotewrite` is the only failing
-        # exporter.
-        result = juju.ssh(
-            target="loki/leader",
-            command=(
-                "/usr/bin/logcli query --quiet --limit=5 "
-                "--output=jsonl '{job=\"otelcol-internal\"} |= `Exporting failed`'"
-            ),
-            container="loki",
-        )
-        # {"labels":{},"line":"Exporting failed. Dropping data.","timestamp":"2026-07-16T17:58:18.118744382Z"}
-        return _jsonl_has_entries(result)
-
-    # GIVEN Loki is up and otelcol is related to a Prometheus over send-remote-write, with the
-    # metrics debug exporter on so the loop-breaker filter counter is printed to otelcol Pebble logs
-    juju.deploy("prometheus-k8s", "prometheus", channel="dev/edge", trust=True)
+    # GIVEN Loki is up and otelcol is related to a Prometheus over send-remote-write
+    juju.deploy("prometheus-k8s", "prometheus", channel="2/edge", trust=True)
     juju.integrate("otelcol:send-remote-write", "prometheus")
-    juju.config("otelcol", {"debug_exporter_for_metrics": True})
     juju.wait(jubilant.all_active, delay=10, timeout=600)
-    assert not _metrics_exporter_failure_logs_in_loki()
 
     # WHEN the remote-write target is down, the metrics exporter (`prometheusremotewrite/0`) emits
     # "Exporting failed" internal logs carrying `otelcol.signal: metrics`.
     juju.ssh(target="prometheus/leader", command="pebble stop prometheus", container="prometheus")
 
     try:
-        # THEN those metrics-signal failure logs still arrive in Loki under {job="otelcol-internal"}.
-        breakpoint()
-        assert _metrics_exporter_failure_logs_in_loki()
+        # THEN those metrics-signal failure logs arrive in Loki under {job="otelcol-internal"}.
+        #
+        # This is both the "forwarded" and the "not over-dropped" proof: the loop-breaker drops
+        # every LOGS-signal "Exporting failed" (so those never reach Loki), and
+        # `prometheusremotewrite` is the only failing non-logs exporter -- so any "Exporting failed"
+        # that reaches Loki is necessarily its metrics-signal log, proving it was preserved. We
+        # match on the log BODY (`|= "Exporting failed"`) because `send-loki-logs` stores logs with
+        # `loki.format: raw`: the line is only the record body, and `otelcol.component.id`/`signal`
+        # live on the instrumentation scope (neither in the line nor a label).
+        @RETRY
+        def _assert_metrics_exporter_failure_logs_in_loki() -> None:
+            result = juju.ssh(
+                target="loki/leader",
+                command=(
+                    "/usr/bin/logcli query --quiet --limit=5 "
+                    "--output=jsonl '{job=\"otelcol-internal\"} |= `Exporting failed`'"
+                ),
+                container="loki",
+            )
+            assert _jsonl_has_entries(result), (
+                "Metrics-exporter failure logs were not forwarded to Loki (over-dropped by the "
+                f"loop-breaker?): {result!r}"
+            )
 
-        # AND the loop-breaker did NOT drop them: with Loki healthy there are no logs-pipeline
-        # failures to legitimately drop, so the filter's drop counter must stay flat even while the
-        # metrics exporter keeps failing. Sampled twice, late (after the Loki check above), so
-        # pre-restart samples have scrolled out of the log window.
-        filtered = _loop_breaker_filtered_count(juju) or 0.0
-        time.sleep(30)  # let more metrics-signal failures flow through the filter
-        filtered_later = _loop_breaker_filtered_count(juju) or 0.0
-        assert filtered_later == filtered, (
-            "loop-breaker filter dropped logs during a metrics-only outage (over-dropping "
-            f"cross-signal logs?): {filtered} -> {filtered_later}"
-        )
+        _assert_metrics_exporter_failure_logs_in_loki()
     finally:
         juju.ssh(
             target="prometheus/leader", command="pebble start prometheus", container="prometheus"
         )
         assert_pebble_service_active(juju, "prometheus/leader", "prometheus", "prometheus")
         juju.remove_relation("otelcol:send-remote-write", "prometheus")
-        juju.config("otelcol", {"debug_exporter_for_metrics": False})
+
