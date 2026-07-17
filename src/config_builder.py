@@ -167,14 +167,6 @@ class ConfigBuilder:
 
         The auto-injected `nop`/`debug` exporters are excluded: they have no remote endpoint, so
         they cannot fail-and-recurse.
-
-        Why also match `otelcol.signal == "logs"`: a single OTLP exporter can be attached to MORE
-        than one pipeline (e.g. `send-otlp` with `telemetries: [logs, metrics]` produces one
-        `otlphttp/rel-N` component on both `logs/<unit>` and `metrics/<unit>`). That component
-        emits failure logs for BOTH signals with the SAME `otelcol.component.id`. Only its
-        `signal: logs` failures can recurse (they flow through the logs pipeline it feeds); its
-        `signal: metrics` failures pass through once and are the useful cross-signal logs we want
-        to keep. Matching id alone would over-drop the latter, so we AND in the signal.
         """
         filter_name = f"filter/{INTERNAL_LOGS_FILTER_ID}/{self._unit_name}"
         if filter_name not in self._config["processors"]:
@@ -222,18 +214,23 @@ class ConfigBuilder:
         # FIXME https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/11780
         # Add TLS config to extensions
         self.add_extension("health_check", {"endpoint": f"0.0.0.0:{Port.health.value}"})
-        # Loop-breaker for self-ingested internal telemetry.
-        #
-        # We feed the collector's OWN internal logs back into the `logs/<unit>` pipeline, so they
-        # can be exported (e.g. to Loki) with topology labels. This creates a recursion risk: any
-        # exporter ATTACHED TO THE LOGS PIPELINE emits an "Exporting failed" log when its endpoint
-        # is down; that log is itself internal telemetry, so it re-enters the same pipeline, is
-        # re-exported, fails again; an unbounded feedback loop.
-        #
-        # We add the filter here (unconditionally, on the base config) so it always sits UPSTREAM
-        # of every log exporter. Its drop conditions are left EMPTY here and are populated at build
-        # time by `_populate_loop_breaker_filter`, once the full set of exporters on the logs
-        # pipeline is known.
+        self._add_internal_telemetry_loop_breaker()
+        self.add_telemetry("metrics", {"level": "normal"})
+
+    def _add_internal_telemetry_loop_breaker(self):
+        """Configure the loop-breaker and self-ingestion of the collector's internal telemetry.
+
+        We feed the collector's OWN internal logs back into the `logs/<unit>` pipeline, so they
+        can be exported (e.g. to Loki) with topology labels. This creates a recursion risk: any
+        exporter ATTACHED TO THE LOGS PIPELINE emits an "Exporting failed" log when its endpoint
+        is down; that log is itself internal telemetry, so it re-enters the same pipeline, is
+        re-exported, fails again; an unbounded feedback loop.
+
+        We add the filter here (unconditionally, on the base config) so it always sits UPSTREAM
+        of every log exporter. Its drop conditions are left EMPTY here and are populated at build
+        time by `_populate_loop_breaker_filter`, once the full set of exporters on the logs
+        pipeline is known.
+        """
         self.add_component(
             Component.processor,
             f"filter/{INTERNAL_LOGS_FILTER_ID}/{self._unit_name}",
@@ -280,7 +277,6 @@ class ConfigBuilder:
                 ],
             },
         )
-        self.add_telemetry("metrics", {"level": "normal"})
 
     def add_component(
         self,

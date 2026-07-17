@@ -69,6 +69,21 @@ def _loop_breaker_filtered_count(juju: jubilant.Juju) -> Optional[float]:
 
 
 @RETRY
+def _assert_loop_breaker_dropped_more(juju: jubilant.Juju, baseline: float) -> None:
+    """Assert otelcol's loop-breaker `filtered` counter has climbed above `baseline`.
+
+    Requires `debug_exporter_for_metrics=True` so the counter is printed to the Pebble logs (see
+    `_loop_breaker_filtered_count`). We assert on the DELTA rather than an absolute value because
+    the counter can already be > 0 due to transient logs-signal failures (e.g. Loki "not ready"
+    windows) that the loop-breaker legitimately drops.
+    """
+    current = _loop_breaker_filtered_count(juju) or 0.0
+    assert current > baseline, (
+        f"loop-breaker filter drop counter did not increase: {baseline} -> {current}"
+    )
+
+
+@RETRY
 def _assert_internal_logs_in_loki(juju: jubilant.Juju, loki_app: str) -> None:
     """Assert the collector's own internal telemetry logs (job=otelcol-internal) reach Loki."""
     result = juju.ssh(
@@ -158,19 +173,10 @@ def test_internal_logs_loop_breaker_drops_on_outage(juju: jubilant.Juju):
     try:
         # THEN the loop-breaker drop counter climbs above the baseline as it drops the looping
         # exporter's own internal logs.
-        @RETRY
-        def _assert_filter_dropped_more() -> None:
-            current = _loop_breaker_filtered_count(juju) or 0.0
-            assert current > baseline, (
-                f"loop-breaker filter drop counter did not increase: {baseline} -> {current}"
-            )
-
-        _assert_filter_dropped_more()
+        _assert_loop_breaker_dropped_more(juju, baseline)
     finally:
         juju.ssh(target="loki/leader", command="pebble start loki", container="loki")
         assert_pebble_service_active(juju, "loki/leader", "loki", "loki")
-        juju.config("otelcol", {"debug_exporter_for_metrics": False})
-
 
 
 def test_internal_logs_cross_signal_preserved_on_metrics_outage(juju: jubilant.Juju):
@@ -186,27 +192,34 @@ def test_internal_logs_cross_signal_preserved_on_metrics_outage(juju: jubilant.J
     juju.integrate("otelcol:send-remote-write", "prometheus")
     juju.wait(jubilant.all_active, delay=10, timeout=600)
 
+    # AND the metrics debug exporter is on, so the loop-breaker's drop counter is printed to the
+    # Pebble logs (see `_loop_breaker_filtered_count`).
+    juju.config("otelcol", {"debug_exporter_for_metrics": True})
+    juju.wait(lambda status: jubilant.all_active(status, "otelcol"), delay=5, timeout=300)
+
+    # Baseline the loop-breaker drop counter so we can later assert on the DELTA (it may already
+    # be > 0 from transient logs-signal failures).
+    baseline = _loop_breaker_filtered_count(juju) or 0.0
+
     # WHEN the remote-write target is down, the metrics exporter (`prometheusremotewrite/0`) emits
     # "Exporting failed" internal logs carrying `otelcol.signal: metrics`.
     juju.ssh(target="prometheus/leader", command="pebble stop prometheus", container="prometheus")
 
     try:
-        # THEN those metrics-signal failure logs arrive in Loki under {job="otelcol-internal"}.
+        # THEN the metrics-exporter's logs reach Loki, proving they were not over-dropped.
         #
-        # This is both the "forwarded" and the "not over-dropped" proof: the loop-breaker drops
-        # every LOGS-signal "Exporting failed" (so those never reach Loki), and
-        # `prometheusremotewrite` is the only failing non-logs exporter -- so any "Exporting failed"
-        # that reaches Loki is necessarily its metrics-signal log, proving it was preserved. We
-        # match on the log BODY (`|= "Exporting failed"`) because `send-loki-logs` stores logs with
-        # `loki.format: raw`: the line is only the record body, and `otelcol.component.id`/`signal`
-        # live on the instrumentation scope (neither in the line nor a label).
+        # `loki.format: logfmt` mangles the body text (`Exporting failed` is no longer a contiguous
+        # substring), so we match the scope attributes instead, which logfmt emits verbatim as
+        # `instrumentation_scope_attribute_<key>=<value>`.
         @RETRY
         def _assert_metrics_exporter_failure_logs_in_loki() -> None:
             result = juju.ssh(
                 target="loki/leader",
                 command=(
-                    "/usr/bin/logcli query --quiet --limit=5 "
-                    "--output=jsonl '{job=\"otelcol-internal\"} |= `Exporting failed`'"
+                    "/usr/bin/logcli query --quiet --limit=5 --output=jsonl "
+                    '\'{job="otelcol-internal"} '
+                    "|= `otelcol.component.id=prometheusremotewrite` "
+                    "|= `otelcol.signal=metrics`'"
                 ),
                 container="loki",
             )
@@ -216,10 +229,16 @@ def test_internal_logs_cross_signal_preserved_on_metrics_outage(juju: jubilant.J
             )
 
         _assert_metrics_exporter_failure_logs_in_loki()
+
+        # AND the loop-breaker keeps dropping logs-signal failures (its counter still climbs above
+        # the baseline). Together with the assertion above, this proves the loop-breaker
+        # discriminates by signal: it drops `otelcol.signal: logs` failures while preserving the
+        # metrics-signal ones.
+        _assert_loop_breaker_dropped_more(juju, baseline)
     finally:
         juju.ssh(
             target="prometheus/leader", command="pebble start prometheus", container="prometheus"
         )
         assert_pebble_service_active(juju, "prometheus/leader", "prometheus", "prometheus")
+        juju.config("otelcol", {"debug_exporter_for_metrics": False})
         juju.remove_relation("otelcol:send-remote-write", "prometheus")
-
