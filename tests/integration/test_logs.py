@@ -84,16 +84,36 @@ def _assert_loop_breaker_dropped_more(juju: jubilant.Juju, baseline: float) -> N
 
 
 @RETRY
-def _assert_internal_logs_in_loki(juju: jubilant.Juju, loki_app: str) -> None:
-    """Assert the collector's own internal telemetry logs (job=otelcol-internal) reach Loki."""
+def _assert_internal_logs_in_loki(juju: jubilant.Juju, loki_app: str, otelcol_app: str) -> None:
+    """Assert the collector's own internal telemetry logs reach Loki with Juju topology labels.
+
+    The internal logs are tagged with this collector's own Juju topology so that, when multiple
+    otelcol apps ship to the same Loki, their `job=otelcol-internal` streams stay distinguishable.
+    We also pin `service.instance.id` to the Juju unit, so the `instance` label is the unit (stable
+    and correlatable) rather than a random per-process UUID that churns on every restart.
+    """
     result = juju.ssh(
         target=f"{loki_app}/leader",
         command="/usr/bin/logcli series --quiet '{job=\"otelcol-internal\"}'",
         container="loki",
     )
-    # {instance="59c126fd-e67f-49c6-8008-5994b6d501b1", job="otelcol-internal", level="INFO", service_name="otelcol-internal"}
+    # {instance="otelcol/0", job="otelcol-internal", juju_application="otelcol", juju_charm="...",
+    #  juju_model="...", juju_model_uuid="...", juju_unit="otelcol/0", level="INFO", ...}
     assert "otelcol-internal" in result, (
         f"No `job=otelcol-internal` stream found in Loki: {result!r}"
+    )
+    # Topology labels are present and identify the emitting app/unit ...
+    for label in (
+        f'juju_application="{otelcol_app}"',
+        f'juju_unit="{otelcol_app}/0"',
+        "juju_model=",
+        "juju_model_uuid=",
+        "juju_charm=",
+    ):
+        assert label in result, f"Expected topology label {label!r} on internal logs: {result!r}"
+    # ... and the `instance` label is the Juju unit, not a random UUID.
+    assert f'instance="{otelcol_app}/0"' in result, (
+        f"Expected `instance` label pinned to the Juju unit: {result!r}"
     )
 
 
@@ -125,7 +145,7 @@ def test_logs_pipeline_promtail(juju: jubilant.Juju, charm: str, charm_resources
     _assert_topology_labels()
 
     # AND the collector's own internal telemetry logs (tagged job=otelcol-internal) reach loki
-    _assert_internal_logs_in_loki(juju, "loki")
+    _assert_internal_logs_in_loki(juju, "loki", "otelcol")
 
 
 def test_logs_pipeline_pebble(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
@@ -151,7 +171,7 @@ def test_logs_pipeline_pebble(juju: jubilant.Juju, charm: str, charm_resources: 
     assert "application" in labels
 
     # AND the collector's own internal telemetry logs (tagged job=otelcol-internal) reach loki
-    _assert_internal_logs_in_loki(juju, "loki-pebble")
+    _assert_internal_logs_in_loki(juju, "loki-pebble", "otelcol-pebble")
 
 
 def test_internal_logs_loop_breaker_drops_on_outage(juju: jubilant.Juju):

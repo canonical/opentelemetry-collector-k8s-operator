@@ -99,6 +99,7 @@ class ConfigBuilder:
         receiver_tls: bool = False,
         exporter_skip_verify: bool = False,
         internal_host: str = "localhost",
+        topology_labels: Optional[Dict[str, str]] = None,
     ):
         """Generate an empty OpenTelemetry collector config.
 
@@ -109,6 +110,8 @@ class ConfigBuilder:
             receiver_tls: whether to inject TLS config in all receivers on build
             exporter_skip_verify: value for `insecure_skip_verify` in all exporters
             internal_host: the unit FQDN the OTLP receiver's server cert is valid for
+            topology_labels: this collector's own deployment topology. Attached to the collector's
+                internal telemetry so logs from multiple otelcol apps/units are distinguishable.
         """
         self._config = {
             "extensions": {},
@@ -123,6 +126,7 @@ class ConfigBuilder:
             },
         }
         self._unit_name = unit_name
+        self._topology_labels = dict(topology_labels or {})
         self._receiver_tls = receiver_tls
         self._exporter_skip_verify = exporter_skip_verify
         self._internal_host = internal_host
@@ -155,15 +159,19 @@ class ConfigBuilder:
         """Populate the internal-telemetry loop-breaker filter's drop conditions.
 
         The collector self-ingests its own internal logs into the `logs/<unit>` pipeline. Any
-        exporter on THAT pipeline can recurse: its "Exporting failed" log is itself an internal
+        exporter on ANY logs pipeline can recurse: its "Exporting failed" log is itself an internal
         log that re-enters the pipeline and is re-exported. To break the cycle we drop the logs
         emitted by exactly those exporter components for the LOGS signal, matched on
         `otelcol.component.id` AND `otelcol.signal`.
 
-        We enumerate the logs-pipeline exporters dynamically (at build time, after all components
-        and the fallback nop exporter have been added) so the filter automatically covers EVERY log
-        exporter: send-loki-logs, cloud-integrator, send-otlp logs, and any future one. Exporters
-        on the metrics/traces pipelines are never included, so their failure logs still reach Loki.
+        We enumerate the exporters across EVERY logs pipeline dynamically (at build time, after all
+        components and the fallback nop exporter have been added), not just the charm-managed
+        `logs/<unit>` pipeline. This is important because a user-supplied config can add its own
+        logs pipeline (e.g. `logs/custom`) and/or exporters; those would otherwise fail-and-recurse
+        without being covered by the filter. As a result the filter automatically covers EVERY log
+        exporter: send-loki-logs, cloud-integrator, send-otlp logs, custom user exporters, and any
+        future one. Exporters on the metrics/traces pipelines are never included, so their failure
+        logs still reach Loki.
 
         The auto-injected `nop`/`debug` exporters are excluded: they have no remote endpoint, so
         they cannot fail-and-recurse.
@@ -171,12 +179,19 @@ class ConfigBuilder:
         filter_name = f"filter/{INTERNAL_LOGS_FILTER_ID}/{self._unit_name}"
         if filter_name not in self._config["processors"]:
             return
-        logs_pipeline = self._config["service"]["pipelines"].get(f"logs/{self._unit_name}", {})
-        log_exporter_ids = [
-            exporter_id
-            for exporter_id in logs_pipeline.get("exporters", [])
-            if exporter_id.split("/")[0] not in NON_LOOPING_EXPORTER_PREFIXES
-        ]
+        # A pipeline is a logs pipeline when its name is `logs` or `logs/<something>`; its type is
+        # the segment before the first `/`. Collect exporters across ALL such pipelines, preserving
+        # order and de-duplicating (an exporter may be shared by several logs pipelines).
+        log_exporter_ids: List[str] = []
+        for pipeline_name, pipeline in self._config["service"]["pipelines"].items():
+            if pipeline_name.split("/")[0] != "logs":
+                continue
+            for exporter_id in pipeline.get("exporters", []):
+                if (
+                    exporter_id.split("/")[0] not in NON_LOOPING_EXPORTER_PREFIXES
+                    and exporter_id not in log_exporter_ids
+                ):
+                    log_exporter_ids.append(exporter_id)
         self._config["processors"][filter_name]["logs"]["log_record"] = [
             f'instrumentation_scope.attributes["otelcol.component.id"] == "{exporter_id}" '
             f'and instrumentation_scope.attributes["otelcol.signal"] == "logs"'
@@ -259,10 +274,28 @@ class ConfigBuilder:
         # attributes like `error`, `interval` and `target_labels` (the scraped target's topology,
         # e.g. `juju_unit=loki-read/0`) survive. `add_log_forwarding`'s `insert` of `loki.format:
         # raw` won't overwrite this, so scraped charm logs stay `raw`.
-        self._config["service"]["telemetry"]["resource"] = {
+        resource: Dict[str, Any] = {
             "service.name": INTERNAL_TELEMETRY_SERVICE_NAME,
             "loki.format": "logfmt",
         }
+        # Attach this collector's own Juju topology so internal logs from multiple otelcol
+        # apps/units are distinguishable in Loki (otherwise every app's internal logs collapse
+        # into the single `job=otelcol-internal` stream and can't be told apart).
+        if self._topology_labels:
+            resource.update(self._topology_labels)
+            # Pin `service.instance.id` to the Juju unit so the Loki `instance` label is stable and
+            # correlatable with Juju. Otherwise the collector defaults it to a random per-process
+            # UUID that changes on every restart, minting a new Loki stream each time (needless
+            # cardinality churn that is also impossible to map back to a unit).
+            if "juju_unit" in self._topology_labels:
+                resource["service.instance.id"] = self._topology_labels["juju_unit"]
+            # Promote ONLY the bounded topology keys to Loki labels via the exporter's
+            # `loki.resource.labels` hint. Cardinality is then bounded by the number of otelcol
+            # units. Crucially we do NOT promote the collector's own high-cardinality log
+            # attributes (`error`, `target_labels`, `scrape_timestamp`, `otelcol.component.id`,
+            # ...); those stay in the `logfmt` body, so there is no cardinality explosion.
+            resource["loki.resource.labels"] = ", ".join(sorted(self._topology_labels))
+        self._config["service"]["telemetry"]["resource"] = resource
         self.add_telemetry(
             "logs",
             {

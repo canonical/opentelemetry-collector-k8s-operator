@@ -221,6 +221,14 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 return
 
         # Create the config manager
+        topology = JujuTopology.from_charm(self)
+        topology_labels = {
+            "juju_charm": topology.charm_name,
+            "juju_model": topology.model,
+            "juju_model_uuid": topology.model_uuid,
+            "juju_application": topology.application,
+            "juju_unit": topology.unit,
+        }
         config_manager = ConfigManager(
             global_scrape_interval=global_configs["global_scrape_interval"],
             global_scrape_timeout=global_configs["global_scrape_timeout"],
@@ -230,6 +238,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
             unit_name=self.unit.name,
             internal_host=socket.getfqdn(),
+            topology_labels=topology_labels,
         )
 
         # TODO: if/when we support multiple feature gates, make this a list and find out how to
@@ -254,16 +263,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         config_manager.add_log_forwarding(loki_endpoints, insecure_skip_verify)
 
         # Metrics setup
-        topology = JujuTopology.from_charm(self)
         config_manager.add_self_scrape(
             identifier=topology.identifier,
             labels={
                 "instance": f"{topology.identifier}_{topology.unit}",
-                "juju_charm": topology.charm_name,
-                "juju_model": topology.model,
-                "juju_model_uuid": topology.model_uuid,
-                "juju_application": topology.application,
-                "juju_unit": topology.unit,
+                **topology_labels,
             },
         )
         # For now, the only incoming and outgoing metrics relations are remote-write/scrape

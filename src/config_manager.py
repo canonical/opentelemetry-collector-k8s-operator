@@ -115,6 +115,7 @@ class ConfigManager:
         queue_size: int = 1000,
         max_elapsed_time_min: int = 5,
         internal_host: str = "localhost",
+        topology_labels: Optional[Dict[str, str]] = None,
     ):
         """Generate a default OpenTelemetry collector ConfigManager.
 
@@ -129,6 +130,8 @@ class ConfigManager:
             queue_size: size of the sending queue for exporters
             max_elapsed_time_min: maximum elapsed time for retrying failed requests in minutes
             internal_host: the unit FQDN the OTLP receiver's server cert is valid for
+            topology_labels: this collector's own Juju topology labels, attached to its internal
+                telemetry so logs from multiple otelcol apps/units are distinguishable in Loki
         """
         self._unit_name = unit_name
         self._insecure_skip_verify = insecure_skip_verify
@@ -141,6 +144,7 @@ class ConfigManager:
             receiver_tls=receiver_tls,
             exporter_skip_verify=insecure_skip_verify,
             internal_host=internal_host,
+            topology_labels=topology_labels,
         )
         self.config.add_default_config()
         self.config.add_extension("file_storage", {"directory": FILE_STORAGE_DIRECTORY})
