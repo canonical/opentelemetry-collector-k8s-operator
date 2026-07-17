@@ -265,35 +265,22 @@ class ConfigBuilder:
             ),
         }
         # Tag ALL of the collector's own telemetry (logs/metrics/traces) with a dedicated
-        # `service.name`. This is the OTel-standard way to identify a service, and the Loki
-        # exporter derives its `job` label from `service.namespace/service.name`, so this
-        # deterministically lands the self-ingested internal logs under `job=otelcol-internal`.
-        # It is exporter-agnostic: any backend (OTLP, remote-write, etc.) sees the same identifier.
-        #
-        # `loki.format: logfmt` renders the full record (body + attributes) into the Loki line, so
-        # attributes like `error`, `interval` and `target_labels` (the scraped target's topology,
-        # e.g. `juju_unit=loki-read/0`) survive. `add_log_forwarding`'s `insert` of `loki.format:
-        # raw` won't overwrite this, so scraped charm logs stay `raw`.
+        # `service.name`. The Loki exporter derives its `job` label from
+        # `service.namespace/service.name`, so this lands the self-ingested internal logs under
+        # `job=otelcol-internal`.
         resource: Dict[str, Any] = {
             "service.name": INTERNAL_TELEMETRY_SERVICE_NAME,
             "loki.format": "logfmt",
         }
-        # Attach this collector's own Juju topology so internal logs from multiple otelcol
-        # apps/units are distinguishable in Loki (otherwise every app's internal logs collapse
-        # into the single `job=otelcol-internal` stream and can't be told apart).
         if self._topology_labels:
             resource.update(self._topology_labels)
             # Pin `service.instance.id` to the Juju unit so the Loki `instance` label is stable and
             # correlatable with Juju. Otherwise the collector defaults it to a random per-process
-            # UUID that changes on every restart, minting a new Loki stream each time (needless
-            # cardinality churn that is also impossible to map back to a unit).
+            # UUID that changes on every restart; cardinality churn.
             if "juju_unit" in self._topology_labels:
                 resource["service.instance.id"] = self._topology_labels["juju_unit"]
             # Promote ONLY the bounded topology keys to Loki labels via the exporter's
-            # `loki.resource.labels` hint. Cardinality is then bounded by the number of otelcol
-            # units. Crucially we do NOT promote the collector's own high-cardinality log
-            # attributes (`error`, `target_labels`, `scrape_timestamp`, `otelcol.component.id`,
-            # ...); those stay in the `logfmt` body, so there is no cardinality explosion.
+            # `loki.resource.labels` hint.
             resource["loki.resource.labels"] = ", ".join(sorted(self._topology_labels))
         self._config["service"]["telemetry"]["resource"] = resource
         self.add_telemetry(
