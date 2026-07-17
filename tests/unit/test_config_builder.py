@@ -108,6 +108,207 @@ def test_rendered_default_is_valid():
     assert all(all(condition for condition in pair) for pair in pairs)
 
 
+def test_default_internal_logs_self_export_plaintext():
+    # GIVEN a default config without receiver TLS
+    config = ConfigBuilder(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+        receiver_tls=False,
+    )
+    config.add_default_config()
+    logs_telemetry = config._config["service"]["telemetry"]["logs"]
+    # THEN the collector's own telemetry resource is tagged so the Loki exporter derives
+    # `job=otelcol-internal` from `service.name` deterministically (distinguishable in Grafana)
+    # AND the full internal log record (body + attributes) is rendered into the Loki line
+    assert config._config["service"]["telemetry"]["resource"] == {
+        "service.name": "otelcol-internal",
+        "loki.format": "logfmt",
+    }
+    # AND internal logs are exported over OTLP to the collector's own OTLP receiver
+    otlp = logs_telemetry["processors"][0]["batch"]["exporter"]["otlp"]
+    assert otlp["protocol"] == "http/protobuf"
+    # AND the loopback endpoint uses plaintext HTTP with no CA certificate and no TLS block
+    assert otlp["endpoint"] == "http://localhost:4318"
+    assert "certificate" not in otlp
+    assert "tls" not in otlp
+
+
+def test_internal_logs_full_record_rendered_to_loki():
+    # GIVEN a default config
+    config = ConfigBuilder(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+        receiver_tls=False,
+    )
+    config.add_default_config()
+    resource = config._config["service"]["telemetry"]["resource"]
+    # THEN `loki.format: logfmt` renders the full record (so in-log context like `target_labels`
+    # survives), and no otelcol-own topology labels are injected
+    assert resource == {
+        "service.name": "otelcol-internal",
+        "loki.format": "logfmt",
+    }
+
+
+def test_internal_logs_topology_labels_promoted_to_loki_labels():
+    # GIVEN a config built with this collector's own Juju topology
+    topology = {
+        "juju_application": "otelcol",
+        "juju_charm": "opentelemetry-collector-k8s",
+        "juju_model": "mymodel",
+        "juju_model_uuid": "abcd-1234",
+        "juju_unit": "otelcol/0",
+    }
+    config = ConfigBuilder(
+        unit_name="otelcol/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+        topology_labels=topology,
+    )
+    config.add_default_config()
+    resource = config._config["service"]["telemetry"]["resource"]
+    # THEN the topology is attached to the internal-telemetry resource ...
+    for key, value in topology.items():
+        assert resource[key] == value
+    # AND `service.instance.id` is pinned to the Juju unit (so the Loki `instance` label is stable
+    # and correlatable, instead of a random per-process UUID that churns on every restart)
+    assert resource["service.instance.id"] == "otelcol/0"
+    # AND the job label is still derived from service.name
+    assert resource["service.name"] == "otelcol-internal"
+    # AND ONLY the bounded topology keys are promoted to Loki labels (no high-cardinality otelcol
+    # attributes like `error`/`target_labels`/`scrape_timestamp` are promoted)
+    promoted = {label.strip() for label in resource["loki.resource.labels"].split(",")}
+    assert promoted == set(topology.keys())
+
+
+def test_internal_logs_without_topology_labels_are_unchanged():
+    # GIVEN no topology is supplied (the historical behaviour)
+    config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
+    config.add_default_config()
+    resource = config._config["service"]["telemetry"]["resource"]
+    # THEN no topology labels, no pinned instance id, and no label-promotion hint are injected
+    assert resource == {"service.name": "otelcol-internal", "loki.format": "logfmt"}
+
+
+def test_default_internal_logs_self_export_tls():
+    # GIVEN a default config WITH receiver TLS and the unit FQDN the server cert is valid for
+    config = ConfigBuilder(
+        unit_name="fake/0",
+        global_scrape_interval="",
+        global_scrape_timeout="",
+        receiver_tls=True,
+        internal_host="otelcol-0.otelcol-endpoints.o11y.svc.cluster.local",
+    )
+    config.add_default_config()
+    otlp = config._config["service"]["telemetry"]["logs"]["processors"][0]["batch"]["exporter"][
+        "otlp"
+    ]
+    # THEN the loopback endpoint targets the FQDN (a name present in the cert SANs) over HTTPS, so
+    # verification succeeds -- NOT `localhost`, which would fail ("valid for <fqdn>, not localhost")
+    assert (
+        otlp["endpoint"]
+        == "https://otelcol-0.otelcol-endpoints.o11y.svc.cluster.local:4318"
+    )
+    # AND no explicit CA is configured: trust is via the system root store
+    assert "certificate" not in otlp
+    assert "insecure" not in otlp
+    assert "tls" not in otlp
+
+
+def test_default_internal_logs_loop_breaker_filter_present():
+    config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
+    config.add_default_config()
+    filter_name = "filter/internal-telemetry-loop-breaker/fake/0"
+    filter_cfg = config._config["processors"][filter_name]
+    # Filter is wired into the logs pipeline and tolerates OTTL eval errors (keeps valid data).
+    assert filter_cfg["error_mode"] == "ignore"
+    assert filter_name in config._config["service"]["pipelines"]["logs/fake/0"]["processors"]
+
+
+def test_loop_breaker_filter_conditions_populated_from_logs_exporters():
+    config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
+    config.add_default_config()
+    for name in ("loki/send-loki-logs/0", "otlphttp/rel-1/fake/0"):
+        config.add_component(Component.exporter, name, {"endpoint": "x"}, pipelines=["logs/fake/0"])
+    # A non-log exporter (metrics pipeline) must NOT be covered.
+    config.add_component(
+        Component.exporter, "prometheusremotewrite/0", {"endpoint": "x"}, pipelines=["metrics/fake/0"]
+    )
+    built = yaml.safe_load(config.build())
+    conditions = built["processors"]["filter/internal-telemetry-loop-breaker/fake/0"]["logs"][
+        "log_record"
+    ]
+    # Every logs-pipeline exporter is covered, each scoped to the logs signal; nothing else is.
+    assert all('instrumentation_scope.attributes["otelcol.signal"] == "logs"' in c for c in conditions)
+    covered = {c for eid in ("loki/send-loki-logs/0", "otlphttp/rel-1/fake/0") for c in conditions if eid in c}
+    assert len(covered) == 2
+    assert not any("prometheusremotewrite" in c or "nop" in c or "debug" in c for c in conditions)
+
+
+def test_loop_breaker_filter_covers_exporters_on_custom_logs_pipelines():
+    # A user-supplied config can add its own logs pipeline (e.g. `logs/custom`) with its own
+    # exporters. Those can still fail-and-recurse, so the loop-breaker must cover them too, not
+    # just exporters on the charm-managed `logs/<unit>` pipeline.
+    config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
+    config.add_default_config()
+    # Exporter on the charm-managed logs pipeline.
+    config.add_component(
+        Component.exporter, "loki/send-loki-logs/0", {"endpoint": "x"}, pipelines=["logs/fake/0"]
+    )
+    # Exporter on a user-defined logs pipeline in a different namespace.
+    config.add_component(
+        Component.exporter, "otlphttp/user-custom", {"endpoint": "x"}, pipelines=["logs/custom"]
+    )
+    # A bare `logs` pipeline (no `/<name>` suffix) is also a logs pipeline.
+    config.add_component(
+        Component.exporter, "kafka/user-bare", {"endpoint": "x"}, pipelines=["logs"]
+    )
+    # A metrics-pipeline exporter must NOT be covered even on a custom namespace.
+    config.add_component(
+        Component.exporter, "prometheusremotewrite/user", {"endpoint": "x"}, pipelines=["metrics/custom"]
+    )
+    built = yaml.safe_load(config.build())
+    conditions = built["processors"]["filter/internal-telemetry-loop-breaker/fake/0"]["logs"][
+        "log_record"
+    ]
+    covered = {
+        eid
+        for eid in ("loki/send-loki-logs/0", "otlphttp/user-custom", "kafka/user-bare")
+        if any(eid in c for c in conditions)
+    }
+    assert covered == {"loki/send-loki-logs/0", "otlphttp/user-custom", "kafka/user-bare"}
+    assert not any("prometheusremotewrite" in c for c in conditions)
+
+
+def test_loop_breaker_filter_deduplicates_shared_exporter_across_logs_pipelines():
+    # An exporter shared by multiple logs pipelines must yield exactly one drop condition.
+    config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
+    config.add_default_config()
+    config.add_component(
+        Component.exporter,
+        "loki/send-loki-logs/0",
+        {"endpoint": "x"},
+        pipelines=["logs/fake/0", "logs/custom"],
+    )
+    built = yaml.safe_load(config.build())
+    conditions = built["processors"]["filter/internal-telemetry-loop-breaker/fake/0"]["logs"][
+        "log_record"
+    ]
+    assert sum("loki/send-loki-logs/0" in c for c in conditions) == 1
+
+
+def test_loop_breaker_filter_conditions_empty_without_log_exporter():
+    # With no log exporter (only the fallback nop), nothing can recurse -> no drop conditions.
+    config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
+    config.add_default_config()
+    built = yaml.safe_load(config.build())
+    assert built["processors"]["filter/internal-telemetry-loop-breaker/fake/0"]["logs"][
+        "log_record"
+    ] == []
+
+
 def test_receivers_tls_empty_config():
     # GIVEN an "empty" config
     config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
