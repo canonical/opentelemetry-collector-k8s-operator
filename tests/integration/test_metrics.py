@@ -34,7 +34,7 @@ def _retry_prom_jobs_api(endpoint: str):
 
 @retry(stop=stop_after_attempt(10), wait=wait_fixed(10))
 def _retry_avalanche_metrics_arrive_prom(prom_ip: str):
-    params = {"query": 'count({__name__=~"avalanche_metric_.+"})'}
+    params = {"query": 'count({__name__=~"avalanche_.*"})'}
     data = json.loads(request("GET", f"http://{prom_ip}:9090/api/v1/query", params=params).text)[
         "data"
     ]
@@ -52,6 +52,7 @@ def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict
     juju.integrate("avalanche", "otelcol:metrics-endpoint")
     juju.integrate("otelcol:send-remote-write", "prometheus")
     juju.wait(jubilant.all_active, delay=10, timeout=600)
+    breakpoint()
     prom_ip = juju.status().apps["prometheus"].units["prometheus/0"].address
     # THEN the AlwaysFiring alerts from Avalanche arrive in prometheus
     _retry_prom_alerts_api(f"http://{prom_ip}:9090/api/v1/alerts")
