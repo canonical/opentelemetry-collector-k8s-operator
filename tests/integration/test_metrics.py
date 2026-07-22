@@ -52,7 +52,6 @@ def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict
     juju.integrate("avalanche", "otelcol:metrics-endpoint")
     juju.integrate("otelcol:send-remote-write", "prometheus")
     juju.wait(jubilant.all_active, delay=10, timeout=600)
-    breakpoint()
     prom_ip = juju.status().apps["prometheus"].units["prometheus/0"].address
     # THEN the AlwaysFiring alerts from Avalanche arrive in prometheus
     _retry_prom_alerts_api(f"http://{prom_ip}:9090/api/v1/alerts")
