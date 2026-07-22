@@ -18,8 +18,8 @@ def test_logs_pipeline_promtail(juju: jubilant.Juju, charm: str, charm_resources
     """Scenario: log forwarding via the LogProxyConsumer."""
     # GIVEN a model with flog, otel-collector, and loki
     juju.deploy(charm, "otelcol", resources=charm_resources, trust=True)
-    juju.deploy("flog-k8s", "flog", channel="latest/stable")
-    juju.deploy("loki-k8s", "loki", channel="2/edge", trust=True)
+    juju.deploy("flog-k8s", "flog", channel="latest/edge")
+    juju.deploy("loki-k8s", "loki", channel="3.7/edge", trust=True)
 
     # WHEN they are related to over the loki_push_api interface
     juju.integrate("otelcol:receive-loki-logs", "flog:log-proxy")
@@ -43,8 +43,8 @@ def test_logs_pipeline_pebble(juju: jubilant.Juju, charm: str, charm_resources: 
     """Scenario: log forwarding via Pebble log forwarding."""
     # GIVEN a model with flog, blackbox-exporter, otel-collector, and loki charms
     juju.deploy(charm, "otelcol-pebble", resources=charm_resources, trust=True)
-    juju.deploy("blackbox-exporter-k8s", "blackbox", channel="2/edge", trust=True)
-    juju.deploy("loki-k8s", "loki-pebble", channel="2/edge", trust=True)
+    juju.deploy("blackbox-exporter-k8s", "blackbox", channel="0.28/edge", trust=True)
+    juju.deploy("loki-k8s", "loki-pebble", channel="3.7/edge", trust=True)
 
     # WHEN they are related to over the loki_push_api interface
     juju.integrate("otelcol-pebble:receive-loki-logs", "blackbox")

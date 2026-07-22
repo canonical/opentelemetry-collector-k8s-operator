@@ -38,7 +38,7 @@ def test_otlp_setup(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, 
     juju.integrate("flog:log-proxy", "requirer")
 
     # AND a Grafana which sends its traces to the `requirer`
-    juju.deploy("grafana-k8s", "grafana", channel="dev/edge", trust=True)
+    juju.deploy("grafana-k8s", "grafana", channel="12.4/edge", trust=True)
     juju.integrate("grafana:charm-tracing", "requirer")
 
     # WHEN the requirer is related to the provider over the OTLP endpoints

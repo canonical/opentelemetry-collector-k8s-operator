@@ -45,8 +45,8 @@ def _retry_avalanche_metrics_arrive_prom(prom_ip: str):
 def test_metrics_pipeline(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
     """Scenario: scrape-to-remote-write forwarding."""
     # GIVEN a model with avalanche, otel-collector, and prometheus charms
-    juju.deploy("avalanche-k8s", app="avalanche", channel="2/edge", trust=True)
-    juju.deploy("prometheus-k8s", app="prometheus", channel="2/edge", trust=True)
+    juju.deploy("avalanche-k8s", app="avalanche", channel="0.7/edge", trust=True)
+    juju.deploy("prometheus-k8s", app="prometheus", channel="3.11/edge", trust=True)
     juju.deploy(charm, app="otelcol", resources=charm_resources, trust=True)
     # WHEN they are related via scrape and remote-write
     juju.integrate("avalanche", "otelcol:metrics-endpoint")
