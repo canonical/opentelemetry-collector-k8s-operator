@@ -7,7 +7,13 @@ from enum import Enum, unique
 
 import yaml
 
-from constants import SERVER_CERT_PATH, SERVER_CERT_PRIVATE_KEY_PATH
+from constants import (
+    INTERNAL_LOGS_FILTER_ID,
+    INTERNAL_TELEMETRY_SERVICE_NAME,
+    NON_LOOPING_EXPORTER_PREFIXES,
+    SERVER_CERT_PATH,
+    SERVER_CERT_PRIVATE_KEY_PATH,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +98,8 @@ class ConfigBuilder:
         global_scrape_timeout: str,
         receiver_tls: bool = False,
         exporter_skip_verify: bool = False,
+        internal_host: str = "localhost",
+        topology_labels: Optional[Dict[str, str]] = None,
     ):
         """Generate an empty OpenTelemetry collector config.
 
@@ -101,6 +109,9 @@ class ConfigBuilder:
             global_scrape_timeout: value for `scrape_timeout` in all prometheus receivers
             receiver_tls: whether to inject TLS config in all receivers on build
             exporter_skip_verify: value for `insecure_skip_verify` in all exporters
+            internal_host: the unit FQDN the OTLP receiver's server cert is valid for
+            topology_labels: this collector's own deployment topology. Attached to the collector's
+                internal telemetry so logs from multiple otelcol apps/units are distinguishable.
         """
         self._config = {
             "extensions": {},
@@ -115,8 +126,10 @@ class ConfigBuilder:
             },
         }
         self._unit_name = unit_name
+        self._topology_labels = dict(topology_labels or {})
         self._receiver_tls = receiver_tls
         self._exporter_skip_verify = exporter_skip_verify
+        self._internal_host = internal_host
         self._scrape_interval = global_scrape_interval
         self._scrape_timeout = global_scrape_timeout
 
@@ -132,6 +145,7 @@ class ConfigBuilder:
             str: A YAML string representing the complete configuration.
         """
         self._add_missing_nop_exporters()
+        self._populate_loop_breaker_filter()
         if self._receiver_tls:
             self._add_tls_to_all_receivers()
         self._set_prometheus_receiver_global_timeout_and_interval(
@@ -140,6 +154,49 @@ class ConfigBuilder:
         )
         self._add_exporter_insecure_skip_verify(self._exporter_skip_verify)
         return yaml.safe_dump(self._config)
+
+    def _populate_loop_breaker_filter(self):
+        """Populate the internal-telemetry loop-breaker filter's drop conditions.
+
+        The collector self-ingests its own internal logs into the `logs/<unit>` pipeline. Any
+        exporter on ANY logs pipeline can recurse: its "Exporting failed" log is itself an internal
+        log that re-enters the pipeline and is re-exported. To break the cycle we drop the logs
+        emitted by exactly those exporter components for the LOGS signal, matched on
+        `otelcol.component.id` AND `otelcol.signal`.
+
+        We enumerate the exporters across EVERY logs pipeline dynamically (at build time, after all
+        components and the fallback nop exporter have been added), not just the charm-managed
+        `logs/<unit>` pipeline. This is important because a user-supplied config can add its own
+        logs pipeline (e.g. `logs/custom`) and/or exporters; those would otherwise fail-and-recurse
+        without being covered by the filter. As a result the filter automatically covers EVERY log
+        exporter: send-loki-logs, cloud-integrator, send-otlp logs, custom user exporters, and any
+        future one. Exporters on the metrics/traces pipelines are never included, so their failure
+        logs still reach Loki.
+
+        The auto-injected `nop`/`debug` exporters are excluded: they have no remote endpoint, so
+        they cannot fail-and-recurse.
+        """
+        filter_name = f"filter/{INTERNAL_LOGS_FILTER_ID}/{self._unit_name}"
+        if filter_name not in self._config["processors"]:
+            return
+        # A pipeline is a logs pipeline when its name is `logs` or `logs/<something>`; its type is
+        # the segment before the first `/`. Collect exporters across ALL such pipelines, preserving
+        # order and de-duplicating (an exporter may be shared by several logs pipelines).
+        log_exporter_ids: List[str] = []
+        for pipeline_name, pipeline in self._config["service"]["pipelines"].items():
+            if pipeline_name.split("/")[0] != "logs":
+                continue
+            for exporter_id in pipeline.get("exporters", []):
+                if (
+                    exporter_id.split("/")[0] not in NON_LOOPING_EXPORTER_PREFIXES
+                    and exporter_id not in log_exporter_ids
+                ):
+                    log_exporter_ids.append(exporter_id)
+        self._config["processors"][filter_name]["logs"]["log_record"] = [
+            f'instrumentation_scope.attributes["otelcol.component.id"] == "{exporter_id}" '
+            f'and instrumentation_scope.attributes["otelcol.signal"] == "logs"'
+            for exporter_id in log_exporter_ids
+        ]
 
     @property
     def hash(self):
@@ -172,14 +229,74 @@ class ConfigBuilder:
         # FIXME https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/11780
         # Add TLS config to extensions
         self.add_extension("health_check", {"endpoint": f"0.0.0.0:{Port.health.value}"})
+        self._add_internal_telemetry_loop_breaker()
+        self.add_telemetry("metrics", {"level": "normal"})
+
+    def _add_internal_telemetry_loop_breaker(self):
+        """Configure the loop-breaker and self-ingestion of the collector's internal telemetry.
+
+        We feed the collector's OWN internal logs back into the `logs/<unit>` pipeline, so they
+        can be exported (e.g. to Loki) with topology labels. This creates a recursion risk: any
+        exporter ATTACHED TO THE LOGS PIPELINE emits an "Exporting failed" log when its endpoint
+        is down; that log is itself internal telemetry, so it re-enters the same pipeline, is
+        re-exported, fails again; an unbounded feedback loop.
+
+        We add the filter here (unconditionally, on the base config) so it always sits UPSTREAM
+        of every log exporter. Its drop conditions are left EMPTY here and are populated at build
+        time by `_populate_loop_breaker_filter`, once the full set of exporters on the logs
+        pipeline is known.
+        """
+        self.add_component(
+            Component.processor,
+            f"filter/{INTERNAL_LOGS_FILTER_ID}/{self._unit_name}",
+            {
+                "error_mode": "ignore",
+                # Populated at build time from the logs-pipeline exporters (see build()).
+                "logs": {"log_record": []},
+            },
+            pipelines=[f"logs/{self._unit_name}"],
+        )
+        internal_logs_otlp_exporter: Dict[str, Any] = {
+            "protocol": "http/protobuf",
+            "endpoint": (
+                f"https://{self._internal_host}:{Port.otlp_http.value}"
+                if self._receiver_tls
+                else f"http://localhost:{Port.otlp_http.value}"
+            ),
+        }
+        # Tag ALL of the collector's own telemetry (logs/metrics/traces) with a dedicated
+        # `service.name`. The Loki exporter derives its `job` label from
+        # `service.namespace/service.name`, so this lands the self-ingested internal logs under
+        # `job=otelcol-internal`.
+        resource: Dict[str, Any] = {
+            "service.name": INTERNAL_TELEMETRY_SERVICE_NAME,
+            "loki.format": "logfmt",
+        }
+        if self._topology_labels:
+            resource.update(self._topology_labels)
+            # Pin `service.instance.id` to the Juju unit so the Loki `instance` label is stable and
+            # correlatable with Juju. Otherwise the collector defaults it to a random per-process
+            # UUID that changes on every restart; cardinality churn.
+            if "juju_unit" in self._topology_labels:
+                resource["service.instance.id"] = self._topology_labels["juju_unit"]
+            # Promote ONLY the bounded topology keys to Loki labels via the exporter's
+            # `loki.resource.labels` hint.
+            resource["loki.resource.labels"] = ", ".join(sorted(self._topology_labels))
+        self._config["service"]["telemetry"]["resource"] = resource
         self.add_telemetry(
             "logs",
             {
                 "level": "INFO",
                 "disable_stacktrace": True,
+                "processors": [
+                    {
+                        "batch": {
+                            "exporter": {"otlp": internal_logs_otlp_exporter},
+                        }
+                    }
+                ],
             },
         )
-        self.add_telemetry("metrics", {"level": "normal"})
 
     def add_component(
         self,
