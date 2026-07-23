@@ -36,9 +36,9 @@ async def test_traces_pipeline(juju: jubilant.Juju, charm: str, charm_resources:
         resources=charm_resources,
         trust=True,
     )
-    juju.deploy(charm="grafana-k8s", app="grafana", channel="2/edge", trust=True)
-    juju.deploy(charm="tempo-coordinator-k8s", app="tempo", channel="2/edge", trust=True)
-    juju.deploy(charm="tempo-worker-k8s", app="tempo-worker", channel="2/edge", trust=True)
+    juju.deploy(charm="grafana-k8s", app="grafana", channel="dev/edge", trust=True)
+    juju.deploy(charm="tempo-coordinator-k8s", app="tempo", channel="dev/edge", trust=True)
+    juju.deploy(charm="tempo-worker-k8s", app="tempo-worker", channel="dev/edge", trust=True)
     deploy_seaweedfs(juju, app="seaweedfs-tempo", s3_requirer_app="tempo")
     juju.integrate("tempo:tempo-cluster", "tempo-worker")
     # WHEN we add relations to send charm traces to tempo
@@ -70,8 +70,8 @@ async def test_traces_multiple_backends(
 ):
     """Scenario: traces are forwarded to two Tempo backends simultaneously."""
     # GIVEN a second Tempo stack is deployed
-    juju.deploy(charm="tempo-coordinator-k8s", app="tempo2", channel="2/edge", trust=True)
-    juju.deploy(charm="tempo-worker-k8s", app="tempo-worker2", channel="2/edge", trust=True)
+    juju.deploy(charm="tempo-coordinator-k8s", app="tempo2", channel="dev/edge", trust=True)
+    juju.deploy(charm="tempo-worker-k8s", app="tempo-worker2", channel="dev/edge", trust=True)
     deploy_seaweedfs(juju, app="seaweedfs-tempo2", s3_requirer_app="tempo2")
     juju.integrate("tempo2:tempo-cluster", "tempo-worker2")
     juju.wait(lambda status: jubilant.all_active(status, "tempo2"), delay=10, timeout=900)
@@ -99,7 +99,7 @@ async def test_traces_multiple_backends(
 async def test_traces_with_tls(juju: jubilant.Juju):
     """Scenario: TLS is added to the tracing pipeline."""
     # WHEN TLS is added to Tempo and to otelcol
-    juju.deploy(charm="grafana-k8s", app="coconut", channel="2/edge", trust=True)
+    juju.deploy(charm="grafana-k8s", app="coconut", channel="dev/edge", trust=True)
     juju.deploy(charm="self-signed-certificates", app="ssc", channel="edge")
     juju.integrate("tempo:certificates", "ssc")
     juju.integrate("otelcol:receive-ca-cert", "ssc")

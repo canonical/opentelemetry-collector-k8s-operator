@@ -23,9 +23,9 @@ async def test_smoke(juju: jubilant.Juju, charm: str, charm_resources: Dict[str,
         resources=charm_resources,
         trust=True,
     )
-    juju.deploy(charm="grafana-k8s", app="grafana", channel="2/edge", trust=True)
-    juju.deploy(charm="pyroscope-coordinator-k8s", app="pyroscope", channel="2/edge", trust=True)
-    juju.deploy(charm="pyroscope-worker-k8s", app="pyroscope-worker", channel="2/edge", trust=True)
+    juju.deploy(charm="grafana-k8s", app="grafana", channel="dev/edge", trust=True)
+    juju.deploy(charm="pyroscope-coordinator-k8s", app="pyroscope", channel="dev/edge", trust=True)
+    juju.deploy(charm="pyroscope-worker-k8s", app="pyroscope-worker", channel="dev/edge", trust=True)
     # Set up minio and s3-integrator
     juju.deploy(
         charm="minio",
