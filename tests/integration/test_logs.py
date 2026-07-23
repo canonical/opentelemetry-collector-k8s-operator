@@ -122,7 +122,7 @@ def test_logs_pipeline_promtail(juju: jubilant.Juju, charm: str, charm_resources
     # GIVEN a model with flog, otel-collector, and loki
     juju.deploy(charm, "otelcol", resources=charm_resources, trust=True)
     juju.deploy("flog-k8s", "flog", channel="latest/stable")
-    juju.deploy("loki-k8s", "loki", channel="dev/edge", trust=True)
+    juju.deploy("loki-k8s", "loki", channel="3.7/edge", trust=True)
 
     # WHEN they are related to over the loki_push_api interface
     juju.integrate("otelcol:receive-loki-logs", "flog:log-proxy")
