@@ -152,7 +152,7 @@ def test_logs_pipeline_pebble(juju: jubilant.Juju, charm: str, charm_resources: 
     """Scenario: log forwarding via Pebble log forwarding."""
     # GIVEN a model with flog, blackbox-exporter, otel-collector, and loki charms
     juju.deploy(charm, "otelcol-pebble", resources=charm_resources, trust=True)
-    juju.deploy("blackbox-exporter-k8s", "blackbox", channel="dev/edge", trust=True)
+    juju.deploy("blackbox-exporter-k8s", "blackbox", channel="0.28/edge", trust=True)
     juju.deploy("loki-k8s", "loki-pebble", channel="dev/edge", trust=True)
 
     # WHEN they are related to over the loki_push_api interface
