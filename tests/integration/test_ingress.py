@@ -138,7 +138,7 @@ def test_health_through_traefik_ingress(
     """Scenario: log forwarding via the LogProxyConsumer."""
     # GIVEN a model with otel-collector and traefik
     juju.deploy(charm, "otelcol", resources=charm_resources, trust=True)
-    juju.deploy("traefik-k8s", "traefik", channel="latest/stable", trust=True)
+    juju.deploy("traefik-k8s", "traefik", channel="latest/edge", trust=True)
 
     # WHEN otel-collector is related to an ingress provider
     juju.integrate("otelcol:ingress", "traefik")
@@ -156,7 +156,7 @@ def test_push_logs_through_traefik_ingress(
     # GIVEN a model with otel-collector and traefik
     # AND a receive-loki-logs relation
 
-    juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="dev/edge", trust=True)
+    juju.deploy("opentelemetry-collector-k8s", "otelcol-push", channel="0.130/edge", trust=True)
     juju.integrate("otelcol:receive-loki-logs", "otelcol-push")
     juju.wait(
         lambda status: jubilant.all_active(status, "traefik", "otelcol-push"),
@@ -202,8 +202,8 @@ def test_remove_traefik_ingress(juju: jubilant.Juju):
 def test_integrate_istio_ingress(juju: jubilant.Juju, preset: str):
     # GIVEN otelcol is not ingressed
     # WHEN Istio applications are deployed
-    juju.deploy("istio-ingress-k8s", channel="dev/edge", trust=True)
-    juju.deploy("istio-k8s", channel="dev/edge", trust=True)
+    juju.deploy("istio-ingress-k8s", channel="1.29/edge", trust=True)
+    juju.deploy("istio-k8s", channel="1.29/edge", trust=True)
 
     if preset == "k8s":
         # https://canonical-service-mesh-documentation.readthedocs-hosted.com/latest/how-to/use-charmed-istio-with-canonical-kubernetes/
