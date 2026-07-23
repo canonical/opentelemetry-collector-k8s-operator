@@ -208,7 +208,7 @@ def test_internal_logs_cross_signal_preserved_on_metrics_outage(juju: jubilant.J
     `otelcol.signal: metrics`) must be preserved and forwarded to Loki.
     """
     # GIVEN Loki is up and otelcol is related to a Prometheus over send-remote-write
-    juju.deploy("prometheus-k8s", "prometheus", channel="2/edge", trust=True)
+    juju.deploy("prometheus-k8s", "prometheus", channel="3.11/edge", trust=True)
     juju.integrate("otelcol:send-remote-write", "prometheus")
     juju.wait(jubilant.all_active, delay=10, timeout=600)
 
