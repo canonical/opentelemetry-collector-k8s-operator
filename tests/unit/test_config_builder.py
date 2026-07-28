@@ -321,7 +321,13 @@ def test_loop_breaker_filter_excludes_nop_and_debug():
     )
     config.add_component(
         Component.exporter,
-        "debug/juju-config-enabled",
+        "nop",
+        {},
+        pipelines=["logs/fake/0"],
+    )
+    config.add_component(
+        Component.exporter,
+        "debug",
         {"verbosity": "normal"},
         pipelines=["logs/fake/0"],
     )
