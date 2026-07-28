@@ -309,6 +309,33 @@ def test_loop_breaker_filter_conditions_empty_without_log_exporter():
     ] == []
 
 
+def test_loop_breaker_filter_excludes_nop_and_debug():
+    # Nop and debug exporters are excluded from filter conditions; only real log exporters are covered.
+    config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
+    config.add_default_config()
+    config.add_component(
+        Component.exporter,
+        "loki/send-loki-logs/0",
+        {"endpoint": "x"},
+        pipelines=["logs/fake/0"],
+    )
+    config.add_component(
+        Component.exporter,
+        "debug/juju-config-enabled",
+        {"verbosity": "normal"},
+        pipelines=["logs/fake/0"],
+    )
+    built = yaml.safe_load(config.build())
+    conditions = built["processors"]["filter/internal-telemetry-loop-breaker/fake/0"]["logs"][
+        "log_record"
+    ]
+    # Only the loki exporter should be in conditions, not nop or debug.
+    assert len(conditions) == 1
+    assert "loki/send-loki-logs/0" in conditions[0]
+    assert all("debug" not in c for c in conditions)
+    assert all("nop" not in c for c in conditions)
+
+
 def test_receivers_tls_empty_config():
     # GIVEN an "empty" config
     config = ConfigBuilder(unit_name="fake/0", global_scrape_interval="", global_scrape_timeout="")
