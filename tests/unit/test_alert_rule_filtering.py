@@ -130,7 +130,7 @@ def test_invalid_alert_rule_relation_blocks(ctx, otelcol_container):
 
     # THEN the charm is blocked with a helpful message
     assert state_out.unit_status.name == "blocked"
-    assert state_out.unit_status.message == "Invalid alert rules. See debug-log"
+    assert state_out.unit_status.message == "Invalid Prometheus alerts. See debug-log"
 
 
 def test_invalid_alert_rule_relation_broken_recovers_to_active(ctx, otelcol_container):
