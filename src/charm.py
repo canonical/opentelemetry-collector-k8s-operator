@@ -3,6 +3,7 @@
 # See LICENSE file for licensing details.
 """A Juju charm for OpenTelemetry Collector on Kubernetes."""
 
+import json
 import logging
 import os
 import re
@@ -390,6 +391,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     "unit, with nothing sent to non-leader units."
                 )
 
+        # Invalid alert rules
+        if self._has_invalid_alert_rules():
+            self.unit.status = BlockedStatus("Invalid alert rules. See debug-log")
+
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")
 
@@ -545,6 +550,29 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     @property
     def _has_server_cert_relation(self) -> bool:
         return any(self.model.relations.get("receive-server-cert", []))
+
+    def _has_invalid_alert_rules(self) -> bool:
+        """Check if any metrics-endpoint relation reported invalid alert rules."""
+        for relation in self.model.relations.get("metrics-endpoint", []):
+            app_data = relation.data.get(self.app)
+            if not app_data:
+                continue
+
+            event_raw = app_data.get("event", "{}")
+            try:
+                event_data = json.loads(event_raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            if event_data.get("errors"):
+                logger.error(
+                    "Alert rule validation error on relation %s: %s",
+                    relation.id,
+                    event_data["errors"],
+                )
+                return True
+
+        return False
 
     def _resource_reqs_from_config(self) -> ResourceRequirements:
         limits = {
