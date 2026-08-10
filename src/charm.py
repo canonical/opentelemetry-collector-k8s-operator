@@ -395,6 +395,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if self._has_invalid_prometheus_alerts():
             self.unit.status = BlockedStatus("Invalid Prometheus alerts. See debug-log")
 
+        # Invalid scrape jobs
+        if self._has_invalid_scrape_job():
+            self.unit.status = BlockedStatus("Invalid scrape jobs. See debug-log")
+
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")
 
@@ -551,7 +555,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _has_server_cert_relation(self) -> bool:
         return any(self.model.relations.get("receive-server-cert", []))
 
-    def _has_invalid_prometheus_alerts(self) -> bool:
+def _has_invalid_prometheus_alerts(self) -> bool:
         """Check if any metrics-endpoint relation reported invalid alert rules."""
         for relation in self.model.relations.get("metrics-endpoint", []):
             app_data = relation.data.get(self.app)
@@ -569,6 +573,29 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     "Alert rule validation error on relation %s: %s",
                     relation.id,
                     event_data["errors"],
+                )
+                return True
+
+        return False
+
+    def _has_invalid_scrape_job(self) -> bool:
+        """Check if any metrics-endpoint relation reported invalid scrape jobs."""
+        for relation in self.model.relations.get("metrics-endpoint", []):
+            app_data = relation.data.get(self.app)
+            if not app_data:
+                continue
+
+            event_raw = app_data.get("event", "{}")
+            try:
+                event_data = json.loads(event_raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            if event_data.get("scrape_job_errors"):
+                logger.error(
+                    "Scrape job validation error on relation %s: %s",
+                    relation.id,
+                    event_data["scrape_job_errors"],
                 )
                 return True
 
