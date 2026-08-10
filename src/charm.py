@@ -555,7 +555,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _has_server_cert_relation(self) -> bool:
         return any(self.model.relations.get("receive-server-cert", []))
 
-def _has_invalid_prometheus_alerts(self) -> bool:
+    def _has_invalid_prometheus_alerts(self) -> bool:
         """Check if any metrics-endpoint relation reported invalid alert rules."""
         for relation in self.model.relations.get("metrics-endpoint", []):
             app_data = relation.data.get(self.app)
