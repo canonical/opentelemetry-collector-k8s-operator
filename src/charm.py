@@ -10,6 +10,7 @@ import socket
 from typing import Any, Dict, List, Optional, cast
 
 from charmlibs.pathops import ContainerPath
+from charms.loki_k8s.v1.loki_push_api import LokiPushApiProvider
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     KubernetesComputeResourcesPatch,
     adjust_resource_requirements,
@@ -138,6 +139,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     _container_name = "otelcol"
     metrics_consumer: MetricsEndpointConsumer
+    loki_provider: LokiPushApiProvider
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -396,6 +398,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if self._has_invalid_prometheus_alerts():
             self.unit.status = BlockedStatus("Invalid Prometheus alerts. See debug-log")
 
+        # Invalid loki alert rules
+        if self._has_invalid_loki_alerts():
+            self.unit.status = BlockedStatus("Invalid Loki alerts. See debug-log")
+
         # Invalid scrape jobs
         if self._has_invalid_scrape_job():
             self.unit.status = BlockedStatus("Invalid scrape jobs. See debug-log")
@@ -559,6 +565,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _has_invalid_prometheus_alerts(self) -> bool:
         """Check if any metrics-endpoint relation reported invalid alert rules."""
         return self.metrics_consumer.has_invalid_alert_rules()
+
+    def _has_invalid_loki_alerts(self) -> bool:
+        """Check if any receive-loki-logs relation reported invalid alert rules."""
+        return self.loki_provider.has_invalid_alert_rules()
 
     def _has_invalid_scrape_job(self) -> bool:
         """Check if any metrics-endpoint relation reported invalid scrape jobs."""
