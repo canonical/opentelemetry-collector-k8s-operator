@@ -4,6 +4,7 @@
 """Feature: Dashboard forwarding to Grafana."""
 
 import json
+from unittest.mock import patch
 
 from cosl import LZMABase64
 from ops.testing import Container, Relation, State
@@ -13,8 +14,17 @@ def encode_as_dashboard(dct: dict):
     return LZMABase64.compress(json.dumps(dct))
 
 
+def _published_templates(state_out):
+    """Return the merged templates published to all grafana-dashboards-provider relations."""
+    merged = {}
+    for rel in state_out.relations:
+        if "-provider" in rel.endpoint and "dashboards" in rel.local_app_data:
+            merged.update(json.loads(rel.local_app_data["dashboards"])["templates"])
+    return merged
+
+
 def test_dashboard_propagation(ctx, execs):
-    """Scenario: Dashboards are forwarded when a dashboard provider is related."""
+    """Scenario: received dashboards are forwarded, keyed per relation, alongside bundled ones."""
     # GIVEN multiple remote charms with dashboards
     content_in = {
         0: encode_as_dashboard({"whoami": "0"}),
@@ -51,10 +61,159 @@ def test_dashboard_propagation(ctx, execs):
     # WHEN any event executes the reconciler
     with ctx(ctx.on.update_status(), state=state) as mgr:
         state_out = mgr.run()
-        for rel in state_out.relations:
-            # THEN each Grafana instance receives otelcol's bundled dashboard and aggregated dashboards
-            if "-provider" in rel.endpoint:
-                dashboard_str = rel.local_app_data["dashboards"]
-                assert "file:juju_file:dashboard-0-some-charm-100" in dashboard_str
-                assert "file:juju_file:dashboard-1-some-charm-101" in dashboard_str
-                assert "file:overview-dashboard" in dashboard_str
+
+    templates = _published_templates(state_out)
+    # THEN each received dashboard is published under a per-relation pass-through key ...
+    assert "prog:rel_100__file:dashboard-0" in templates
+    assert "prog:rel_101__file:dashboard-1" in templates
+    # ... and otelcol's own bundled dashboard is published too.
+    assert "file:overview-dashboard" in templates
+
+
+def test_received_content_is_forwarded_verbatim(ctx, execs):
+    """Scenario: the compressed content received is published byte-for-byte (no re-compress)."""
+    # GIVEN a remote charm providing an already-compressed dashboard
+    original = {"title": "my-dashboard", "panels": []}
+    encoded = encode_as_dashboard(original)
+    consumer = Relation(
+        "grafana-dashboards-consumer",
+        remote_app_data={
+            "dashboards": json.dumps(
+                {"templates": {"file:my-dash": {"charm": "some-charm", "content": encoded}}}
+            )
+        },
+        id=42,
+    )
+    provider = Relation("grafana-dashboards-provider")
+    state = State(
+        relations=[consumer, provider],
+        leader=True,
+        containers=[Container("otelcol", can_connect=True, execs=execs)],
+    )
+
+    with ctx(ctx.on.update_status(), state=state) as mgr:
+        state_out = mgr.run()
+
+    entry = _published_templates(state_out)["prog:rel_42__file:my-dash"]
+    # THEN the published content is byte-identical to what was received ...
+    assert entry["content"] == encoded
+    # ... and it still decompresses back to the original dashboard.
+    assert json.loads(LZMABase64.decompress(entry["content"])) == original
+
+
+def test_forwarding_does_not_decompress_received_dashboards(ctx, execs):
+    """Scenario: the pass-through path never decompresses received content (the O(N) win)."""
+    encoded = encode_as_dashboard({"title": "x", "panels": []})
+    consumer = Relation(
+        "grafana-dashboards-consumer",
+        remote_app_data={
+            "dashboards": json.dumps(
+                {"templates": {"file:x": {"charm": "some-charm", "content": encoded}}}
+            )
+        },
+        id=7,
+    )
+    provider = Relation("grafana-dashboards-provider")
+    state = State(
+        relations=[consumer, provider],
+        leader=True,
+        containers=[Container("otelcol", can_connect=True, execs=execs)],
+    )
+
+    with patch.object(LZMABase64, "decompress", wraps=LZMABase64.decompress) as mock_decompress:
+        with ctx(ctx.on.update_status(), state=state) as mgr:
+            mgr.run()
+
+    # Received dashboards are forwarded verbatim, so nothing is decompressed on the send path.
+    mock_decompress.assert_not_called()
+
+
+def test_departed_consumer_dashboards_are_dropped(ctx, execs):
+    """Scenario: dashboards from a removed consumer relation are not republished."""
+    encoded = encode_as_dashboard({"title": "gone", "panels": []})
+    # GIVEN a consumer relation is present in one reconcile ...
+    consumer = Relation(
+        "grafana-dashboards-consumer",
+        remote_app_data={
+            "dashboards": json.dumps(
+                {"templates": {"file:gone": {"charm": "some-charm", "content": encoded}}}
+            )
+        },
+        id=55,
+    )
+    provider = Relation("grafana-dashboards-provider")
+    state_with = State(
+        relations=[consumer, provider],
+        leader=True,
+        containers=[Container("otelcol", can_connect=True, execs=execs)],
+    )
+    with ctx(ctx.on.update_status(), state=state_with) as mgr:
+        out_with = mgr.run()
+    assert "prog:rel_55__file:gone" in _published_templates(out_with)
+
+    # WHEN the consumer relation is gone on a later reconcile (no consumer in state) ...
+    state_without = State(
+        relations=[Relation("grafana-dashboards-provider")],
+        leader=True,
+        containers=[Container("otelcol", can_connect=True, execs=execs)],
+    )
+    with ctx(ctx.on.update_status(), state=state_without) as mgr:
+        out_without = mgr.run()
+
+    # THEN the departed relation's dashboard is no longer published, but bundled ones remain.
+    templates = _published_templates(out_without)
+    assert "prog:rel_55__file:gone" not in templates
+    assert "file:overview-dashboard" in templates
+
+
+def test_reconcile_action_reports_success(ctx, execs):
+    """Scenario: the reconcile action rebuilds the world and reports success."""
+    state = State(
+        leader=True,
+        containers=[Container("otelcol", can_connect=True, execs=execs)],
+    )
+    ctx.run(ctx.on.action("reconcile"), state)
+    assert ctx.action_results == {"result": "Reconcile complete; world state rebuilt."}
+
+
+def test_publish_count_does_not_scale_with_dashboards(ctx, execs):
+    """Scenario: adding many received dashboards does not publish once per dashboard.
+
+    Regression guard for the O(N^2) databag-write trap: the per-dashboard add uses publish=False
+    and a single update_dashboards() writes the databag once, so the number of
+    _upset_dashboards_on_relation calls stays bounded regardless of how many dashboards arrive.
+    """
+    from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
+
+    def _make_state(n_dashboards: int) -> State:
+        templates = {
+            f"file:dash-{i}": {
+                "charm": "some-charm",
+                "content": encode_as_dashboard({"whoami": str(i)}),
+            }
+            for i in range(n_dashboards)
+        }
+        consumer = Relation(
+            "grafana-dashboards-consumer",
+            remote_app_data={"dashboards": json.dumps({"templates": templates})},
+            id=200,
+        )
+        return State(
+            relations=[consumer, Relation("grafana-dashboards-provider")],
+            leader=True,
+            containers=[Container("otelcol", can_connect=True, execs=execs)],
+        )
+
+    def _count_publishes(n_dashboards: int) -> int:
+        with patch.object(
+            GrafanaDashboardProvider,
+            "_upset_dashboards_on_relation",
+            autospec=True,
+        ) as spy:
+            with ctx(ctx.on.update_status(), state=_make_state(n_dashboards)) as mgr:
+                mgr.run()
+            return spy.call_count
+
+    # The publish count must be identical whether 2 or 50 dashboards are received: batching means
+    # it does not grow with the number of dashboards (it would be O(N) without publish=False).
+    assert _count_publishes(2) == _count_publishes(50)

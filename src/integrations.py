@@ -61,7 +61,6 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
 )
 from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl.rules import JujuTopology
-from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
 from ops.model import Relation
 
@@ -404,82 +403,65 @@ def send_charm_traces(charm: CharmBase) -> Optional[str]:
     charm.__setattr__("charm_tracing_requirer", charm_tracing_requirer)
 
 
-def _get_dashboards(relations: List[Relation]) -> List[Dict[str, Any]]:
-    """Returns a deduplicated list of all dashboards received by this otelcol."""
-    aggregate = {}
+def _get_received_dashboards(relations: List[Relation]) -> Dict[str, str]:
+    """Return a mapping of pass-through key -> already-compressed dashboard content.
+
+    Dashboards received over ``grafana-dashboards-consumer`` are forwarded verbatim: their
+    ``content`` is already LZMA+base64-compressed, so it is returned untouched (no decompress, no
+    re-compress). The key embeds the relation id and template id (e.g. ``rel_5__file:my-dash``) so
+    it is stable across hooks and cannot collide with the ``prog:{8-char}`` ids auto-derived by
+    ``GrafanaDashboardProvider.add_dashboard``. Deduplication keeps the last-seen template id
+    across relations.
+    """
+    aggregate: Dict[str, str] = {}
     for rel in relations:
         dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
-        if "templates" not in dashboards:
-            continue
-        for template in dashboards["templates"]:
-            content = json.loads(
-                LZMABase64.decompress(dashboards["templates"][template].get("content"))
-            )
-            entry = {
-                "charm": dashboards["templates"][template].get("charm", "charm_name"),
-                "relation_id": rel.id,
-                "title": template,
-                "content": content,
-            }
-            aggregate[template] = entry
-
-    return list(aggregate.values())
-
-
-def _add_dashboards(dashboards: List[Dict[str, str]], dest_path: Path):
-    """Save the dashboards to files in the specified destination folder.
-
-    For K8s charms, dashboards are saved in the charm container.
-
-    Args:
-        dashboards: List of dictionaries representing a dashboard, with the following format:
-            {
-                "charm": charm_name,
-                "relation_id": data.relation_id,
-                "content": content,
-                "title": title,
-            }
-        dest_path: Path to the folder where dashboards will be saved
-    """
-    dest_path.mkdir(parents=True, exist_ok=True)
-    for dash in dashboards:
-        # Build dashboard custom filename
-        charm_name = dash.get("charm", "charm-name")
-        rel_id = dash.get("relation_id", "rel_id")
-        title = dash.get("title", "").replace(" ", "_").replace("/", "_").lower()
-        filename = f"juju_{title}-{charm_name}-{rel_id}.json"
-        with open(Path(dest_path, filename), mode="w", encoding="utf-8") as f:
-            f.write(json.dumps(dash["content"]))
-            logger.debug("updated dashboard file %s", f.name)
+        templates = dashboards.get("templates", {})
+        for template_id, template in templates.items():
+            content = template.get("content")
+            if not content:
+                continue
+            # Pass the compressed content through verbatim; do NOT decompress it.
+            aggregate[f"rel_{rel.id}__{template_id}"] = content
+    return aggregate
 
 
 def forward_dashboards(charm: CharmBase):
-    """Instantiate the GrafanaDashboardProvider and update the dashboards in the relation databag.
+    """Publish own (bundled) and received dashboards to Grafana.
 
-    First, dashboards from relations (including those bundled with Otelcol) and save them to disk.
-    Then, update the relation databag with these dashboards for Grafana.
+    Bundled dashboards on disk are published with a single ``reload_dashboards()``. Received
+    dashboards are forwarded verbatim via ``add_dashboard_precompressed`` (their content is already
+    compressed), avoiding the decompress -> disk -> re-compress -> rescan round-trip.
     """
-    src_path = charm.charm_dir.absolute().joinpath(*DASHBOARDS_SRC_PATH.split("/"))
-    dest_path = charm.charm_dir.absolute().joinpath(*DASHBOARDS_DEST_PATH.split("/"))
-
-    # The leader copies dashboards from relations and save them to disk."""
     if not charm.unit.is_leader():
         return
 
-    shutil.copytree(src_path, dest_path, dirs_exist_ok=True)
-    _add_dashboards(
-        dashboards=_get_dashboards(charm.model.relations["grafana-dashboards-consumer"]),
-        dest_path=dest_path,
-    )
+    src_path = charm.charm_dir.absolute().joinpath(*DASHBOARDS_SRC_PATH.split("/"))
 
     grafana_dashboards_provider = GrafanaDashboardProvider(
         charm,
         relation_name="grafana-dashboards-provider",
-        dashboards_path=dest_path.as_posix(),
+        dashboards_path=src_path.as_posix(),
     )
     charm.__setattr__("grafana_dashboards_provider", grafana_dashboards_provider)
-    # Scan the built-in dashboards and update relations with changes
+
+    # Stage the bundled (on-disk) dashboards into stored state. reload_dashboards() also publishes,
+    # but the subsequent add_dashboard_precompressed(publish=True) will publish the final combined
+    # set anyway, so that publish is redundant-but-harmless (bundled set is small and fixed).
     grafana_dashboards_provider.reload_dashboards()
+
+    # Clear previously-published pass-through dashboards (so departed relations do not linger),
+    # then (re)add the current set. These skip the directory rescan/re-compress done by
+    # reload_dashboards(). Adds use publish=False to avoid an O(N^2) re-serialization of the
+    # growing templates dict; a single update_dashboards() at the end writes the databag once.
+    grafana_dashboards_provider.remove_non_builtin_dashboards()
+    for key, encoded_content in _get_received_dashboards(
+        charm.model.relations["grafana-dashboards-consumer"]
+    ).items():
+        grafana_dashboards_provider.add_dashboard_precompressed(
+            key=key, encoded_content=encoded_content, inject_dropdowns=False, publish=False
+        )
+    grafana_dashboards_provider.update_dashboards()
 
     # TODO: Do we need to implement dashboard status changed logic?
     #   This propagates Grafana's errors to the charm which provided the dashboard
