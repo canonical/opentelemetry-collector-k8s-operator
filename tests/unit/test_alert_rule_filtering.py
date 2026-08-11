@@ -152,7 +152,6 @@ def test_invalid_alert_rule_relation_broken_recovers_to_active(ctx, otelcol_cont
     # THEN the charm is active again
     assert state_out.unit_status.name == "active"
 
-
 def test_invalid_alert_rule_relation_becoming_valid_recovers_to_active(
     ctx, otelcol_container
 ):

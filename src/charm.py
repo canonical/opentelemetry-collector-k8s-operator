@@ -3,7 +3,6 @@
 # See LICENSE file for licensing details.
 """A Juju charm for OpenTelemetry Collector on Kubernetes."""
 
-import json
 import logging
 import os
 import re
@@ -15,6 +14,7 @@ from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     KubernetesComputeResourcesPatch,
     adjust_resource_requirements,
 )
+from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointConsumer
 from cosl import JujuTopology, MandatoryRelationPairs
 from lightkube.models.core_v1 import ResourceRequirements
 from ops import BlockedStatus, CharmBase, Container, StatusBase, main
@@ -137,6 +137,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
     _container_name = "otelcol"
+    metrics_consumer: MetricsEndpointConsumer
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -557,49 +558,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
     def _has_invalid_prometheus_alerts(self) -> bool:
         """Check if any metrics-endpoint relation reported invalid alert rules."""
-        for relation in self.model.relations.get("metrics-endpoint", []):
-            app_data = relation.data.get(self.app)
-            if not app_data:
-                continue
-
-            event_raw = app_data.get("event", "{}")
-            try:
-                event_data = json.loads(event_raw)
-            except (json.JSONDecodeError, TypeError):
-                continue
-
-            if event_data.get("errors"):
-                logger.error(
-                    "Alert rule validation error on relation %s: %s",
-                    relation.id,
-                    event_data["errors"],
-                )
-                return True
-
-        return False
+        return self.metrics_consumer.has_invalid_alert_rules()
 
     def _has_invalid_scrape_job(self) -> bool:
         """Check if any metrics-endpoint relation reported invalid scrape jobs."""
-        for relation in self.model.relations.get("metrics-endpoint", []):
-            app_data = relation.data.get(self.app)
-            if not app_data:
-                continue
-
-            event_raw = app_data.get("event", "{}")
-            try:
-                event_data = json.loads(event_raw)
-            except (json.JSONDecodeError, TypeError):
-                continue
-
-            if event_data.get("scrape_job_errors"):
-                logger.error(
-                    "Scrape job validation error on relation %s: %s",
-                    relation.id,
-                    event_data["scrape_job_errors"],
-                )
-                return True
-
-        return False
+        return self.metrics_consumer.has_invalid_scrape_jobs()
 
     def _resource_reqs_from_config(self) -> ResourceRequirements:
         limits = {
