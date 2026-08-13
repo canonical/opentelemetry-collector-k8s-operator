@@ -23,6 +23,7 @@ from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
 
 import integrations
+import perf  # TEMPORARY: diagnostic instrumentation, do not merge
 from config_builder import Port
 from config_manager import ConfigManager
 from constants import (
@@ -142,6 +143,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     loki_provider: LokiPushApiProvider
 
     def __init__(self, *args):
+        perf.install()  # TEMPORARY: diagnostic instrumentation, do not merge
         super().__init__(*args)
         if not self.unit.get_container(self._container_name).can_connect():
             self.unit.status = MaintenanceStatus("Waiting for otelcol to start")
@@ -149,7 +151,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         self.external_configs: List[Dict[str, Any]] = []
         self.external_secret_files: Dict[str, str] = {}
-        self._reconcile()
+
+        # TEMPORARY: diagnostic instrumentation, do not merge
+        with perf.profiled(self, event=os.environ.get("JUJU_HOOK_NAME", "?")):
+            self._reconcile()
 
     def _reconcile(self):
         """Recreate the world state for the charm.
@@ -165,46 +170,56 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             initialization and the event emission.
         """
         container = self.unit.get_container(self._container_name)
-        self.resources_patch = KubernetesComputeResourcesPatch(
-            self,
-            container_name=self._container_name,
-            resource_reqs_func=self._resource_reqs_from_config,
-        )
-        resources_patch_status: StatusBase = self.resources_patch.get_status()
-        if not isinstance(resources_patch_status, ActiveStatus):
-            self.unit.status = resources_patch_status
-            return
+        with perf.phase("resources_patch"):
+            self.resources_patch = KubernetesComputeResourcesPatch(
+                self,
+                container_name=self._container_name,
+                resource_reqs_func=self._resource_reqs_from_config,
+            )
+            resources_patch_status: StatusBase = self.resources_patch.get_status()
+            if not isinstance(resources_patch_status, ActiveStatus):
+                self.unit.status = resources_patch_status
+                return
 
         insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
-        integrations.cleanup(self.charm_dir.absolute())
+        with perf.phase("cleanup_rule_dirs"):
+            integrations.cleanup(self.charm_dir.absolute())
 
         # Service mesh integration
-        integrations.setup_service_mesh(self)
+        with perf.phase("service_mesh"):
+            integrations.setup_service_mesh(self)
 
         # Ingress integration
-        traefik_tls = integrations.is_tls_ready(container)
-        traefik_ingress = integrations.setup_traefik_ingress(self, traefik_tls)
-        istio_ingress = integrations.setup_istio_ingress(self)
+        with perf.phase("ingress"):
+            traefik_tls = integrations.is_tls_ready(container)
+            traefik_ingress = integrations.setup_traefik_ingress(self, traefik_tls)
+            istio_ingress = integrations.setup_istio_ingress(self)
 
         # Integrate with TLS relations
-        receive_ca_certs_hash = integrations.receive_ca_cert(
-            self,
-            recv_ca_cert_folder_path=ContainerPath(RECV_CA_CERT_FOLDER_PATH, container=container),
-        )
-        server_cert_hash = integrations.receive_server_cert(
-            self,
-            server_cert_path=ContainerPath(SERVER_CERT_PATH, container=container),
-            private_key_path=ContainerPath(SERVER_CERT_PRIVATE_KEY_PATH, container=container),
-            root_ca_cert_path=ContainerPath(SERVER_CA_CERT_PATH, container=container),
-        )
+        with perf.phase("receive_ca_cert"):
+            receive_ca_certs_hash = integrations.receive_ca_cert(
+                self,
+                recv_ca_cert_folder_path=ContainerPath(
+                    RECV_CA_CERT_FOLDER_PATH, container=container
+                ),
+            )
+        with perf.phase("receive_server_cert"):
+            server_cert_hash = integrations.receive_server_cert(
+                self,
+                server_cert_path=ContainerPath(SERVER_CERT_PATH, container=container),
+                private_key_path=ContainerPath(SERVER_CERT_PRIVATE_KEY_PATH, container=container),
+                root_ca_cert_path=ContainerPath(SERVER_CA_CERT_PATH, container=container),
+            )
         # Refresh system certs
         # This must be run after receive_ca_cert and/or receive_server_cert because they update
         # certs in the /usr/local/share/ca-certificates directory
-        refresh_certs(container)
+        with perf.phase("refresh_certs"):
+            refresh_certs(container)
 
         # Address manager
         # NOTE: executed after ingress and TLS events
-        otelcol_address = charm_address(container, traefik_ingress, istio_ingress)
+        with perf.phase("address"):
+            otelcol_address = charm_address(container, traefik_ingress, istio_ingress)
         match otelcol_address:
             case integrations.MultipleIngressesConfigured():
                 self.unit.status = BlockedStatus(otelcol_address.message)
@@ -252,16 +267,24 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # OTLP setup
         traefik_ingress = integrations.traefik_ingress_ready(traefik_ingress)
-        otlp_provider = integrations.receive_otlp(self, otelcol_address, traefik_ingress)
+        with perf.phase("otlp_receive") as p:
+            otlp_provider = integrations.receive_otlp(self, otelcol_address, traefik_ingress)
+            p["n_relations"] = len(self.model.relations.get("receive-otlp", []))
         # See `stage_received_otlp_rules` for the ordering contract it depends on.
         # Ref: https://github.com/canonical/opentelemetry-collector-operator/issues/297
-        integrations.stage_received_otlp_rules(self, otlp_provider)
-        otlp_endpoints = integrations.send_otlp(self, otlp_provider)
+        with perf.phase("otlp_stage_rules"):
+            integrations.stage_received_otlp_rules(self, otlp_provider)
+        with perf.phase("otlp_send") as p:
+            otlp_endpoints = integrations.send_otlp(self, otlp_provider)
+            p["n_relations"] = len(self.model.relations.get("send-otlp", []))
         config_manager.add_otlp_forwarding(otlp_endpoints)
 
         # Logs setup
-        integrations.receive_loki_logs(self, otelcol_address)
-        loki_endpoints = integrations.send_loki_logs(self)
+        with perf.phase("logs_receive") as p:
+            integrations.receive_loki_logs(self, otelcol_address)
+            p["n_relations"] = len(self.model.relations.get("receive-loki-logs", []))
+        with perf.phase("logs_send"):
+            loki_endpoints = integrations.send_loki_logs(self)
         if self._incoming_logs:
             config_manager.add_log_ingestion()
         config_manager.add_log_forwarding(loki_endpoints, insecure_skip_verify)
@@ -275,63 +298,75 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             },
         )
         # For now, the only incoming and outgoing metrics relations are remote-write/scrape
-        metrics_consumer_jobs = integrations.scrape_metrics(self)
+        with perf.phase("metrics_scrape") as p:
+            metrics_consumer_jobs = integrations.scrape_metrics(self)
+            p["n_relations"] = len(self.model.relations.get("metrics-endpoint", []))
+            p["n_jobs"] = len(metrics_consumer_jobs)
         # Write CA certificates to disk and update job configurations
-        self._ensure_certs_dir(container)
-        cert_paths = self._write_ca_certificates_to_disk(metrics_consumer_jobs, container)
-        metrics_consumer_jobs = config_manager.update_jobs_with_ca_paths(
-            metrics_consumer_jobs, cert_paths
-        )
-        config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
-        remote_write_endpoints = integrations.send_remote_write(self)
+        with perf.phase("metrics_job_certs"):
+            self._ensure_certs_dir(container)
+            cert_paths = self._write_ca_certificates_to_disk(metrics_consumer_jobs, container)
+            metrics_consumer_jobs = config_manager.update_jobs_with_ca_paths(
+                metrics_consumer_jobs, cert_paths
+            )
+            config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
+        with perf.phase("remote_write_send") as p:
+            remote_write_endpoints = integrations.send_remote_write(self)
+            p["n_relations"] = len(self.model.relations.get("send-remote-write", []))
         config_manager.add_remote_write(remote_write_endpoints)
 
         # External-config setup
-        self.external_configs, self.external_secret_files = integrations.receive_external_configs(
-            self
-        )
-        self._write_secrets_to_disk(container, self.external_secret_files)
-        self._configure_external_configs(config_manager)
+        with perf.phase("external_configs"):
+            self.external_configs, self.external_secret_files = (
+                integrations.receive_external_configs(self)
+            )
+            self._write_secrets_to_disk(container, self.external_secret_files)
+            self._configure_external_configs(config_manager)
 
         # Profiling setup
-        if self._incoming_profiles:
-            config_manager.add_profile_ingestion()
-            integrations.receive_profiles(self, integrations.is_tls_ready(container))
-        if profiling_endpoints := integrations.send_profiles(self):
-            config_manager.add_profile_forwarding(profiling_endpoints)
-        if self._incoming_profiles or integrations.send_profiles(self):
-            feature_gates = "service.profilesSupport"
+        with perf.phase("profiles"):
+            if self._incoming_profiles:
+                config_manager.add_profile_ingestion()
+                integrations.receive_profiles(self, integrations.is_tls_ready(container))
+            if profiling_endpoints := integrations.send_profiles(self):
+                config_manager.add_profile_forwarding(profiling_endpoints)
+            if self._incoming_profiles or integrations.send_profiles(self):
+                feature_gates = "service.profilesSupport"
 
         # Tracing setup
-        requested_tracing_protocols = integrations.receive_traces(
-            self, integrations.is_tls_ready(container)
-        )
-        if self._incoming_traces:
-            config_manager.add_traces_ingestion(requested_tracing_protocols)
-            # Add default processors to traces
-            config_manager.add_traces_processing(
-                sampling_rate_charm=cast(bool, self.config.get("tracing_sampling_rate_charm")),
-                sampling_rate_workload=cast(
-                    bool, self.config.get("tracing_sampling_rate_workload")
-                ),
-                sampling_rate_error=cast(bool, self.config.get("tracing_sampling_rate_error")),
+        with perf.phase("traces"):
+            requested_tracing_protocols = integrations.receive_traces(
+                self, integrations.is_tls_ready(container)
             )
-        for idx, endpoint in enumerate(integrations.send_traces(self)):
-            config_manager.add_traces_forwarding(endpoint, identifier=str(idx))
-        integrations.send_charm_traces(self)
+            if self._incoming_traces:
+                config_manager.add_traces_ingestion(requested_tracing_protocols)
+                # Add default processors to traces
+                config_manager.add_traces_processing(
+                    sampling_rate_charm=cast(bool, self.config.get("tracing_sampling_rate_charm")),
+                    sampling_rate_workload=cast(
+                        bool, self.config.get("tracing_sampling_rate_workload")
+                    ),
+                    sampling_rate_error=cast(bool, self.config.get("tracing_sampling_rate_error")),
+                )
+            for idx, endpoint in enumerate(integrations.send_traces(self)):
+                config_manager.add_traces_forwarding(endpoint, identifier=str(idx))
+            integrations.send_charm_traces(self)
 
         # Dashboards setup
-        integrations.forward_dashboards(self)
+        with perf.phase("dashboards") as p:
+            integrations.forward_dashboards(self)
+            p["n_relations"] = len(self.model.relations.get("grafana-dashboards-consumer", []))
 
         # GrafanaCloudIntegrator setup
-        cloud_integrator_data = integrations.cloud_integrator(self)
-        config_manager.add_cloud_integrator(
-            username=cloud_integrator_data.username,
-            password=cloud_integrator_data.password,
-            prometheus_url=cloud_integrator_data.prometheus_url,
-            loki_url=cloud_integrator_data.loki_url,
-            tempo_url=cloud_integrator_data.tempo_url,
-        )
+        with perf.phase("cloud_integrator"):
+            cloud_integrator_data = integrations.cloud_integrator(self)
+            config_manager.add_cloud_integrator(
+                username=cloud_integrator_data.username,
+                password=cloud_integrator_data.password,
+                prometheus_url=cloud_integrator_data.prometheus_url,
+                loki_url=cloud_integrator_data.loki_url,
+                tempo_url=cloud_integrator_data.tempo_url,
+            )
 
         # Add debug exporters from Juju config
         config_manager.add_debug_exporters(
@@ -345,69 +380,81 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             config_manager.add_custom_processors(custom_processors)
 
         # Push the config and Push the config and deploy/update
-        container.push(CONFIG_PATH, config_manager.config.build(), make_dirs=True)
+        with perf.phase("config_build_and_push") as p:
+            rendered_config = config_manager.config.build()
+            p["config_bytes"] = len(rendered_config)
+            container.push(CONFIG_PATH, rendered_config, make_dirs=True)
 
-        # If the config file or any cert has changed, a change in this environment variable
-        # will trigger a restart
-        pebble_extra_env = {
-            "_reload": ",".join(
-                [
-                    config_manager.config.hash,
-                    receive_ca_certs_hash,
-                    server_cert_hash,
-                ]
+            # If the config file or any cert has changed, a change in this environment variable
+            # will trigger a restart
+            pebble_extra_env = {
+                "_reload": ",".join(
+                    [
+                        config_manager.config.hash,
+                        receive_ca_certs_hash,
+                        server_cert_hash,
+                    ]
+                )
+            }
+            container.add_layer(
+                self._container_name,
+                self._pebble_layer(environment=pebble_extra_env, feature_gates=feature_gates),
+                combine=True,
             )
-        }
-        container.add_layer(
-            self._container_name,
-            self._pebble_layer(environment=pebble_extra_env, feature_gates=feature_gates),
-            combine=True,
-        )
         # TODO: Conditionally open ports based on the otelcol config file rather than opening all ports
-        self.unit.set_ports(*[port.value for port in Port])
+        with perf.phase("set_ports"):
+            self.unit.set_ports(*[port.value for port in Port])
 
-        if self._has_server_cert_relation and not integrations.is_tls_ready(container):
-            # A tls relation to a CA was formed, but we didn't get the cert yet.
-            container.stop(SERVICE_NAME)
-            self.unit.status = WaitingStatus("CSR sent; otelcol down while waiting for a cert")
-        else:
-            container.replan()
-            self.unit.status = ActiveStatus()
-
-        # Mandatory relation pairs
-        missing_relations = _get_missing_mandatory_relations(self)
-        if missing_relations:
-            self.unit.status = BlockedStatus(missing_relations)
-
-        # Cyclic OTLP relations
-        if integrations.cyclic_otlp_relations_exist(self):
-            self.unit.status = BlockedStatus("cyclic OTLP relations exist")
-
-        # Ingress and scaling status
-        if self.model.unit.is_leader():
-            if self.app.planned_units() > 1 and not otelcol_address.ingress:
-                self.unit.status = BlockedStatus(
-                    "Ingress missing - routing only to leader; see debug-log"
+        with perf.phase("replan"):
+            if self._has_server_cert_relation and not integrations.is_tls_ready(container):
+                # A tls relation to a CA was formed, but we didn't get the cert yet.
+                container.stop(SERVICE_NAME)
+                self.unit.status = WaitingStatus(
+                    "CSR sent; otelcol down while waiting for a cert"
                 )
-                logger.warning(
-                    "without ingress and planned_units > 1, all data is forwarded to the leader "
-                    "unit, with nothing sent to non-leader units."
-                )
+            else:
+                container.replan()
+                self.unit.status = ActiveStatus()
+
+        with perf.phase("status_relation_pairs"):
+            # Mandatory relation pairs
+            missing_relations = _get_missing_mandatory_relations(self)
+            if missing_relations:
+                self.unit.status = BlockedStatus(missing_relations)
+
+            # Cyclic OTLP relations
+            if integrations.cyclic_otlp_relations_exist(self):
+                self.unit.status = BlockedStatus("cyclic OTLP relations exist")
+
+            # Ingress and scaling status
+            if self.model.unit.is_leader():
+                if self.app.planned_units() > 1 and not otelcol_address.ingress:
+                    self.unit.status = BlockedStatus(
+                        "Ingress missing - routing only to leader; see debug-log"
+                    )
+                    logger.warning(
+                        "without ingress and planned_units > 1, all data is forwarded to the "
+                        "leader unit, with nothing sent to non-leader units."
+                    )
 
         # Invalid alert rules
-        if self._has_invalid_prometheus_alerts():
-            self.unit.status = BlockedStatus("Invalid Prometheus alerts. See debug-log")
+        with perf.phase("status_invalid_prom_alerts"):
+            if self._has_invalid_prometheus_alerts():
+                self.unit.status = BlockedStatus("Invalid Prometheus alerts. See debug-log")
 
         # Invalid loki alert rules
-        if self._has_invalid_loki_alerts():
-            self.unit.status = BlockedStatus("Invalid Loki alerts. See debug-log")
+        with perf.phase("status_invalid_loki_alerts"):
+            if self._has_invalid_loki_alerts():
+                self.unit.status = BlockedStatus("Invalid Loki alerts. See debug-log")
 
         # Invalid scrape jobs
-        if self._has_invalid_scrape_job():
-            self.unit.status = BlockedStatus("Invalid scrape jobs. See debug-log")
+        with perf.phase("status_invalid_scrape_jobs"):
+            if self._has_invalid_scrape_job():
+                self.unit.status = BlockedStatus("Invalid scrape jobs. See debug-log")
 
         # Workload version
-        self.unit.set_workload_version(self._otelcol_version or "")
+        with perf.phase("workload_version"):
+            self.unit.set_workload_version(self._otelcol_version or "")
 
     def _pebble_layer(self, environment: Dict, feature_gates: Optional[str]) -> Layer:
         """Construct the Pebble layer configuration.
