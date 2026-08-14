@@ -11,7 +11,8 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     Certificate,
     TLSCertificatesRequiresV4,
 )
-from helpers import get_otelcol_file
+from conftest import MockCertificate
+from helpers import get_otelcol_file, trust_stamp_after_reconcile
 from ops.testing import Relation, State
 
 from constants import (
@@ -117,6 +118,28 @@ def test_transitioned_from_http_to_https_to_http(
         get_otelcol_file(state_out, ctx, SERVER_CA_CERT_PATH)
     with pytest.raises(AssertionError, match="file does not exist"):
         get_otelcol_file(state_out, ctx, SERVER_CERT_PRIVATE_KEY_PATH)
+
+
+def test_ca_only_rotation_refreshes_trust_stamp(
+    ctx, otelcol_container, cert_obj, private_key, server_cert
+):
+    """Scenario: the issuing CA rotates while the server cert and private key stay the same."""
+    # GIVEN a tls-certificates relation with an assigned cert, key and CA
+    ssc = Relation(
+        endpoint="receive-server-cert",
+        interface="tls-certificate",
+    )
+    state_in = State(relations=[ssc], containers=otelcol_container)
+
+    # WHEN a reconcile refreshes the trust store with the current CA
+    stamp_before = trust_stamp_after_reconcile(ctx, state_in, cert_obj, private_key)
+    # AND nothing changes, the trust store is left untouched
+    assert trust_stamp_after_reconcile(ctx, state_in, cert_obj, private_key) == stamp_before
+    # WHEN only the CA rotates (same server cert and private key)
+    rotated = MockCertificate(server_cert, "rotated_ca_certificate")
+    stamp_after = trust_stamp_after_reconcile(ctx, state_in, rotated, private_key)
+    # THEN the trust store is refreshed again
+    assert stamp_after != stamp_before
 
 
 @pytest.mark.skip(reason="https://github.com/canonical/operator/issues/1858")

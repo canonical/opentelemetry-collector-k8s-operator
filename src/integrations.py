@@ -670,7 +670,8 @@ def receive_server_cert(
     workload container.
 
     Returns:
-        Hash of server cert and private key, to be used as reload trigger if it changed.
+        Hash of server cert, private key and CA cert, to be used as reload trigger if it
+        changed.
     """
     # Common name length must be >= 1 and <= 64, so fqdn is too long.
     common_name = charm.unit.name.replace("/", "-")
@@ -717,7 +718,9 @@ def receive_server_cert(
 
     # NOTE: we run `update-ca-certificates` in charm code
 
-    return sha256(str(provider_certificate.certificate) + str(private_key))
+    return sha256(
+        str(provider_certificate.certificate) + str(private_key) + str(provider_certificate.ca)
+    )
 
 
 def receive_ca_cert(charm: CharmBase, recv_ca_cert_folder_path: PathProtocol) -> str:
