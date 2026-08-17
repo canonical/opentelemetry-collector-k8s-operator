@@ -10,10 +10,12 @@ import socket
 from typing import Any, Dict, List, Optional, cast
 
 from charmlibs.pathops import ContainerPath
+from charms.loki_k8s.v1.loki_push_api import LokiPushApiProvider
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     KubernetesComputeResourcesPatch,
     adjust_resource_requirements,
 )
+from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointConsumer
 from cosl import JujuTopology, MandatoryRelationPairs
 from lightkube.models.core_v1 import ResourceRequirements
 from ops import BlockedStatus, CharmBase, Container, StatusBase, main
@@ -21,9 +23,10 @@ from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
 
 import integrations
-from config_builder import Port
+from config_builder import Port, sha256
 from config_manager import ConfigManager
 from constants import (
+    CA_TRUST_STAMP_PATH,
     CERTS_DIR,
     CONFIG_PATH,
     EXTERNAL_CONFIG_SECRETS_DIR,
@@ -78,9 +81,34 @@ def charm_address(
     )
 
 
-def refresh_certs(container: Container):
-    """Run `update-ca-certificates` to refresh the trusted system certs."""
+def refresh_certs(container: Container, trust_hash: str):
+    """Refresh the trusted system certs, but only when they actually changed.
+
+    `update-ca-certificates --fresh` rehashes the whole bundle and costs several seconds,
+    yet the vast majority of reconciles do not touch any certificate. The hash of the certs
+    written under the system trust dir is therefore stamped on disk (in the workload
+    container, next to the trust store) and the command is skipped when it is unchanged
+
+    Args:
+        container: the workload container whose trust store is refreshed.
+        trust_hash: a hash summarising every cert that feeds the trust store. When it
+            matches the stamp from a previous run, the refresh is skipped.
+    """
+    stamp = ContainerPath(CA_TRUST_STAMP_PATH, container=container)
+    try:
+        if stamp.read_text() == trust_hash:
+            logger.debug("System trust store unchanged; skipping update-ca-certificates")
+            return
+    except FileNotFoundError:
+        pass
+
     container.exec(["update-ca-certificates", "--fresh"]).wait()
+    # Only stamp after a successful refresh, so a failed run is retried next reconcile.
+    container.push(
+        CA_TRUST_STAMP_PATH,
+        trust_hash.encode("utf-8"),
+        make_dirs=True,
+    )
 
 
 def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
@@ -136,6 +164,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
     _container_name = "otelcol"
+    metrics_consumer: MetricsEndpointConsumer
+    loki_provider: LokiPushApiProvider
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -196,7 +226,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Refresh system certs
         # This must be run after receive_ca_cert and/or receive_server_cert because they update
         # certs in the /usr/local/share/ca-certificates directory
-        refresh_certs(container)
+        refresh_certs(container, sha256(receive_ca_certs_hash + server_cert_hash))
 
         # Address manager
         # NOTE: executed after ingress and TLS events
@@ -390,6 +420,18 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                     "unit, with nothing sent to non-leader units."
                 )
 
+        # Invalid alert rules
+        if self._has_invalid_prometheus_alerts():
+            self.unit.status = BlockedStatus("Invalid Prometheus alerts. See debug-log")
+
+        # Invalid loki alert rules
+        if self._has_invalid_loki_alerts():
+            self.unit.status = BlockedStatus("Invalid Loki alerts. See debug-log")
+
+        # Invalid scrape jobs
+        if self._has_invalid_scrape_job():
+            self.unit.status = BlockedStatus("Invalid scrape jobs. See debug-log")
+
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")
 
@@ -545,6 +587,18 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     @property
     def _has_server_cert_relation(self) -> bool:
         return any(self.model.relations.get("receive-server-cert", []))
+
+    def _has_invalid_prometheus_alerts(self) -> bool:
+        """Check if any metrics-endpoint relation reported invalid alert rules."""
+        return self.metrics_consumer.has_invalid_alert_rules()
+
+    def _has_invalid_loki_alerts(self) -> bool:
+        """Check if any receive-loki-logs relation reported invalid alert rules."""
+        return self.loki_provider.has_invalid_alert_rules()
+
+    def _has_invalid_scrape_job(self) -> bool:
+        """Check if any metrics-endpoint relation reported invalid scrape jobs."""
+        return self.metrics_consumer.has_invalid_scrape_jobs()
 
     def _resource_reqs_from_config(self) -> ResourceRequirements:
         limits = {
