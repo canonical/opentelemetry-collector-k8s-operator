@@ -63,7 +63,7 @@ from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl.rules import JujuTopology
 from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
-from ops.model import Relation
+from ops.model import ModelError, Relation
 
 from config_builder import Port, sha256
 from constants import (
@@ -408,7 +408,26 @@ def _get_dashboards(relations: List[Relation]) -> List[Dict[str, Any]]:
     """Returns a deduplicated list of all dashboards received by this otelcol."""
     aggregate = {}
     for rel in relations:
-        dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
+        if not rel.app:
+            continue
+        try:
+            dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
+        except ModelError as e:
+            # Reading the remote application databag fails with "permission denied"
+            # if the relation is gone or dangling (e.g. a cross-model relation that
+            # was removed while this unit was running a hook), in which case Juju
+            # denies access instead of returning the (stale) data.
+            msg = e.args[0] if e.args else e
+            if isinstance(msg, bytes):
+                msg = msg.decode("utf-8", errors="replace")
+            if "permission denied" in str(msg):
+                logger.warning(
+                    "skipping relation %s: remote application data is not readable (%s)",
+                    rel.id,
+                    str(msg).strip(),
+                )
+                continue
+            raise
         if "templates" not in dashboards:
             continue
         for template in dashboards["templates"]:
