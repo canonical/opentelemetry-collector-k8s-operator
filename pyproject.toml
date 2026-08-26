@@ -18,6 +18,7 @@ dependencies = [
   "charmed-service-mesh-helpers>=0.2.0", # istio-beacon lib requirement"lightkube-extensions@git+https://github.com/canonical/lightkube-extensions.git@main", # istio-beacon lib requirement,
   "lightkube-extensions", # istio-beacon lib requirement
   "charmlibs-interfaces-otlp",
+  "charmlibs-interfaces-certificate_transfer"
 ]
 
 [project.optional-dependencies]
