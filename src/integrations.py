@@ -404,6 +404,19 @@ def send_charm_traces(charm: CharmBase) -> Optional[str]:
     charm.__setattr__("charm_tracing_requirer", charm_tracing_requirer)
 
 
+def _permission_denied_message(e: ModelError) -> Optional[str]:
+    """Return the error message if it is a Juju permission-denied error, else None.
+
+    Workaround for https://github.com/canonical/operator/issues/2709: ops maps the
+    "relation not found" flavor to RelationNotFoundError, but accessing a relation
+    that is gone from state fails with a plain ModelError("permission denied").
+    This helper and the guards that use it can be removed once that issue is
+    resolved and ops maps this flavor to a typed exception.
+    """
+    msg = str(e.args[0]) if e.args else ""
+    return msg if "permission denied" in msg else None
+
+
 def _get_dashboards(relations: List[Relation]) -> List[Dict[str, Any]]:
     """Returns a deduplicated list of all dashboards received by this otelcol."""
     aggregate = {}
@@ -413,18 +426,15 @@ def _get_dashboards(relations: List[Relation]) -> List[Dict[str, Any]]:
         try:
             dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
         except ModelError as e:
-            # Reading the remote application databag fails with "permission denied"
-            # if the relation is gone or dangling (e.g. a cross-model relation that
-            # was removed while this unit was running a hook), in which case Juju
-            # denies access instead of returning the (stale) data.
-            msg = e.args[0] if e.args else e
-            if isinstance(msg, bytes):
-                msg = msg.decode("utf-8", errors="replace")
-            if "permission denied" in str(msg):
+            # The remote application databag is unreadable ("permission denied") if
+            # the relation is gone or dangling: skip it and let the next event
+            # re-reconcile once it is fully removed.
+            # TODO: remove once canonical/operator#2709 is resolved.
+            if msg := _permission_denied_message(e):
                 logger.warning(
                     "skipping relation %s: remote application data is not readable (%s)",
                     rel.id,
-                    str(msg).strip(),
+                    msg.strip(),
                 )
                 continue
             raise
@@ -472,6 +482,32 @@ def _add_dashboards(dashboards: List[Dict[str, str]], dest_path: Path):
             logger.debug("updated dashboard file %s", f.name)
 
 
+def _safe_relations(charm: CharmBase, endpoint: str) -> List[Relation]:
+    """Return the relations of an endpoint, or an empty list if they cannot be listed.
+
+    Constructing the Relation objects of an endpoint can fail with a
+    "permission denied" ModelError if one of the relations is gone (e.g. a
+    cross-model relation removed while this unit was running a hook): ops
+    calls `relation-list` from `Relation.__init__`, and Juju denies access
+    to the gone relation instead of reporting it as missing. Degrade to no
+    relations until the next event, which re-reconciles once the relation is
+    fully removed.
+
+    TODO: remove once canonical/operator#2709 is resolved.
+    """
+    try:
+        return charm.model.relations[endpoint]
+    except ModelError as e:
+        if not (msg := _permission_denied_message(e)):
+            raise
+        logger.warning(
+            "skipping the %s relations this run (%s); they will be retried on the next event",
+            endpoint,
+            msg.strip(),
+        )
+        return []
+
+
 def forward_dashboards(charm: CharmBase):
     """Instantiate the GrafanaDashboardProvider and update the dashboards in the relation databag.
 
@@ -487,7 +523,7 @@ def forward_dashboards(charm: CharmBase):
 
     shutil.copytree(src_path, dest_path, dirs_exist_ok=True)
     _add_dashboards(
-        dashboards=_get_dashboards(charm.model.relations["grafana-dashboards-consumer"]),
+        dashboards=_get_dashboards(_safe_relations(charm, "grafana-dashboards-consumer")),
         dest_path=dest_path,
     )
 
