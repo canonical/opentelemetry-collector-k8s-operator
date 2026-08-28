@@ -4,6 +4,7 @@
 """Feature: Dashboard forwarding to Grafana."""
 
 import json
+from typing import Dict, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -142,12 +143,18 @@ def _unexpected_error_relation_get(
     return _original_relation_get(self, relation_id, member_name, is_app, relation_name=relation_name)
 
 
-def _state_with_dangling_relation(execs: set[Exec]) -> State:
+def _state_with_dangling_relation(
+    execs: set[Exec], provider_app_data: Optional[Dict[str, str]] = None
+) -> State:
     """Return a state with a healthy and a dangling dashboard relation.
 
     A leader unit receiving a dashboard over a healthy relation and a dangling
     cross-model relation, related to a Grafana instance. The dangling relation
     carries a dashboard too, to prove that it is never forwarded.
+
+    Args:
+        execs: the container execs the charm is allowed to run.
+        provider_app_data: the dashboards already published to Grafana, if any.
     """
     data = {
         idx: {
@@ -171,7 +178,7 @@ def _state_with_dangling_relation(execs: set[Exec]) -> State:
         remote_app_data={"dashboards": json.dumps(data[1])},
         id=DANGLING_RELATION_ID,
     )
-    provider = Relation("grafana-dashboards-provider")
+    provider = Relation("grafana-dashboards-provider", local_app_data=provider_app_data or {})
     return State(
         relations=[consumer_healthy, consumer_dangling, provider],
         leader=True,
@@ -200,31 +207,61 @@ def test_dashboard_propagation_with_dangling_relation(ctx, execs):
             assert "dashboard-1" not in dashboard_str
 
 
-def test_hook_survives_when_listing_the_dangling_relation_fails(ctx, execs):
-    """Scenario: The hook survives even if listing a dangling relation's units fails.
+def test_already_forwarded_dashboards_survive_when_listing_relations_fails(ctx, execs):
+    """Scenario: A dangling relation does not delete the dashboards already sent to Grafana.
 
-    A dangling relation can be in a state where even `relation-list` is
-    denied ("permission denied"), so the construction of the endpoint's
-    Relation objects fails when the charm first accesses `model.relations`.
-    The endpoint is then treated as empty for this run; dashboards flow
-    again on the next event, once the relation is fully removed.
+    A dangling relation can be in a state where even `relation-list` is denied
+    ("permission denied"), so the construction of the endpoint's Relation
+    objects fails when the charm first accesses `model.relations`. Since ops
+    builds the whole endpoint at once, the received dashboards are unknown for
+    this run, which is not the same as "there are no dashboards": republishing
+    an empty set would delete from Grafana the dashboards of the healthy
+    relations, which are still valid. The previously published dashboards are
+    left untouched instead.
     """
-    # GIVEN a healthy relation with a dashboard, a dangling cross-model relation
-    # (which also carries a dashboard), and a Grafana instance to forward them to
+    # GIVEN dashboards already published to Grafana
+    already_published = {
+        "templates": {
+            "file:juju_file:dashboard-0-some-charm-100": {
+                "charm": "some-charm",
+                "content": encode_as_dashboard({"whoami": "0"}),
+            },
+            "file:overview-dashboard": {
+                "charm": "opentelemetry-collector-k8s",
+                "content": encode_as_dashboard({"whoami": "overview"}),
+            },
+        },
+        "uuid": "some-uuid",
+    }
+    provider_app_data = {"dashboards": json.dumps(already_published)}
+    # AND a healthy relation with a dashboard and a dangling cross-model relation
+    state = _state_with_dangling_relation(execs, provider_app_data=provider_app_data)
+    # WHEN any event executes the reconciler while the dangling relation's units
+    # cannot even be listed (e.g. `relation-list` denied during its teardown)
+    with patch.object(_MockModelBackend, "relation_list", _permission_denied_relation_list):
+        with ctx(ctx.on.update_status(), state=state) as mgr:
+            state_out = mgr.run()
+    # THEN the hook does not fail and the published dashboards are left untouched
+    for rel in state_out.relations:
+        if "-provider" in rel.endpoint:
+            assert rel.local_app_data == provider_app_data
+
+
+def test_hook_survives_when_listing_the_dangling_relation_fails(ctx, execs):
+    """Scenario: The hook survives even if listing a dangling relation's units fails."""
+    # GIVEN nothing has been forwarded to Grafana yet
     state = _state_with_dangling_relation(execs)
     # WHEN any event executes the reconciler while the dangling relation's units
     # cannot even be listed (e.g. `relation-list` denied during its teardown)
     with patch.object(_MockModelBackend, "relation_list", _permission_denied_relation_list):
         with ctx(ctx.on.update_status(), state=state) as mgr:
             state_out = mgr.run()
-    # THEN the hook does not fail and Grafana receives otelcol's bundled dashboard
+    # THEN the hook does not fail and nothing is published for this endpoint,
+    # not even otelcol's bundled dashboards: they are forwarded on the next
+    # event, once the dangling relation is fully removed
     for rel in state_out.relations:
         if "-provider" in rel.endpoint:
-            dashboard_str = rel.local_app_data["dashboards"]
-            assert "file:overview-dashboard" in dashboard_str
-            # AND no dashboard from this endpoint is forwarded until the next event
-            assert "dashboard-0" not in dashboard_str
-            assert "dashboard-1" not in dashboard_str
+            assert "dashboards" not in rel.local_app_data
 
 
 def test_unexpected_model_error_fails_the_hook(ctx, execs):
