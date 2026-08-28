@@ -1,7 +1,7 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Feature: A scaled otelcol shares incoming telemetry instead of duplicating it."""
+"""Feature: A scaled up otelcol shares incoming telemetry."""
 
 import logging
 from typing import Dict, List
