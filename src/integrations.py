@@ -482,16 +482,21 @@ def _add_dashboards(dashboards: List[Dict[str, str]], dest_path: Path):
             logger.debug("updated dashboard file %s", f.name)
 
 
-def _safe_relations(charm: CharmBase, endpoint: str) -> List[Relation]:
-    """Return the relations of an endpoint, or an empty list if they cannot be listed.
+def _safe_relations(charm: CharmBase, endpoint: str) -> Optional[List[Relation]]:
+    """Return the relations of an endpoint, or None if they cannot be listed.
 
     Constructing the Relation objects of an endpoint can fail with a
     "permission denied" ModelError if one of the relations is gone (e.g. a
     cross-model relation removed while this unit was running a hook): ops
     calls `relation-list` from `Relation.__init__`, and Juju denies access
-    to the gone relation instead of reporting it as missing. Degrade to no
-    relations until the next event, which re-reconciles once the relation is
-    fully removed.
+    to the gone relation instead of reporting it as missing. Since ops builds
+    every relation of the endpoint in one go, a single dangling relation makes
+    the whole endpoint unreadable.
+
+    ``None`` means "unknown", which callers must not confuse with "no
+    relations": the data received over the healthy relations of the endpoint
+    is still valid, so it must be left untouched rather than recomputed from
+    an empty list.
 
     TODO: remove once canonical/operator#2709 is resolved.
     """
@@ -500,12 +505,9 @@ def _safe_relations(charm: CharmBase, endpoint: str) -> List[Relation]:
     except ModelError as e:
         if not (msg := _permission_denied_message(e)):
             raise
-        logger.warning(
-            "skipping the %s relations this run: %s",
-            endpoint,
-            msg.strip(),
-        )
-        return []
+
+        logger.warning("cannot list the %s relations: %s", endpoint, msg.strip())
+        return None
 
 
 def forward_dashboards(charm: CharmBase):
@@ -521,9 +523,18 @@ def forward_dashboards(charm: CharmBase):
     if not charm.unit.is_leader():
         return
 
+    consumer_relations = _safe_relations(charm, "grafana-dashboards-consumer")
+    if consumer_relations is None:
+        # The received dashboards are unknown this run, which is not the same as
+        # "there are no dashboards": rewriting the databag now would delete from
+        # Grafana the dashboards of the healthy relations, which are still valid.
+        # Leave the previously published dashboards in place instead.
+        logger.warning("skipping the dashboards sync this run: no dashboards were deleted")
+        return
+
     shutil.copytree(src_path, dest_path, dirs_exist_ok=True)
     _add_dashboards(
-        dashboards=_get_dashboards(_safe_relations(charm, "grafana-dashboards-consumer")),
+        dashboards=_get_dashboards(consumer_relations),
         dest_path=dest_path,
     )
 
