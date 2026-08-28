@@ -656,6 +656,7 @@ def cloud_integrator(charm: CharmBase) -> CloudIntegratorData:
 
 def receive_server_cert(
     charm: CharmBase,
+    service_fqdn: str,
     server_cert_path: PathProtocol,
     private_key_path: PathProtocol,
     root_ca_cert_path: PathProtocol,
@@ -664,6 +665,14 @@ def receive_server_cert(
 
     Thes key and certs are obtained via the tls_certificates(v4) library, and pushed to the
     workload container.
+
+    Args:
+        charm: the otel-collector charm object
+        service_fqdn: the Kubernetes Service name this app is reachable at, included in the
+            CSR alongside this unit's own pod name
+        server_cert_path: where to write the signed server certificate
+        private_key_path: where to write the private key
+        root_ca_cert_path: where to write the issuing CA certificate
 
     Returns:
         Hash of server cert, private key and CA cert, to be used as reload trigger if it
@@ -677,7 +686,7 @@ def receive_server_cert(
     # connection.
     csr_attrs = CertificateRequestAttributes(
         common_name=common_name,
-        sans_dns=frozenset({unit_fqdn(), service_fqdn(charm)}),
+        sans_dns=frozenset({unit_fqdn(), service_fqdn}),
     )
     certificates = TLSCertificatesRequiresV4(
         charm=charm,
@@ -798,13 +807,13 @@ def _static_ingress_config() -> dict:
     return {"entryPoints": entry_points}
 
 
-def _build_lb_server_config(charm: CharmBase, scheme: str, port: int) -> List[Dict[str, str]]:
+def _build_lb_server_config(service_fqdn: str, scheme: str, port: int) -> List[Dict[str, str]]:
     """Build the server portion of the loadbalancer config of Traefik ingress.
 
     The leader provides the kubernetes service address to Traefik, so that Traefik
     balances ingressed traffic across all units instead of pinning it to the leader's pod.
     """
-    return [{"url": f"{scheme}://{service_fqdn(charm)}:{port}"}]
+    return [{"url": f"{scheme}://{service_fqdn}:{port}"}]
 
 
 def is_tls_ready(container: Container) -> bool:
@@ -825,21 +834,10 @@ def unit_fqdn() -> str:
     return socket.getfqdn()
 
 
-def service_fqdn(charm: CharmBase) -> str:
-    """Return the DNS name of the Kubernetes Service fronting all units of this app.
+def server_cert_sans_dns(container: Container) -> Set[str]:
+    """Return the DNS SANs of the server certificate received over `receive-server-cert`.
 
-    Juju creates a ClusterIP service named after the application, which load-balances
-    across all ready pods. This is the address that must be advertised to remote charms,
-    so that telemetry is distributed over the units instead of being duplicated to each
-    of them (or pinned to the leader).
-    """
-    return f"{charm.app.name}.{charm.model.name}.svc.cluster.local"
-
-
-def _server_cert_sans_dns(container: Container) -> Set[str]:
-    """Return the DNS SANs of the server certificate currently on disk.
-
-    Returns an empty set when there is no readable, parsable certificate.
+    Returns an empty set when there is no readable, parsable certificate on disk.
     """
     try:
         raw = cast(str, container.pull(SERVER_CERT_PATH).read())
@@ -847,23 +845,6 @@ def _server_cert_sans_dns(container: Container) -> Set[str]:
     except Exception:
         logger.warning("Could not read the SANs of the server certificate on disk")
         return set()
-
-
-def internal_host(charm: CharmBase, container: Container) -> str:
-    """Return the in-cluster address that remote charms should use to reach this app.
-
-    This is the Kubernetes Service FQDN, so that traffic is load-balanced across units
-    instead of being duplicated to every unit or pinned to the leader.
-
-    When the server is serving TLS, the Service FQDN is only advertised once the
-    certificate on disk actually lists it as a SAN; otherwise clients would fail hostname
-    verification. Until then we keep advertising the pod FQDN, and switch over
-    automatically on the reconcile that follows the arrival of the widened certificate.
-    """
-    service = service_fqdn(charm)
-    if not is_tls_ready(container):
-        return service
-    return service if service in _server_cert_sans_dns(container) else unit_fqdn()
 
 
 class MultipleIngressesConfigured:
@@ -934,7 +915,9 @@ def _istio_ingress_config(charm: CharmBase) -> IstioIngressRouteConfig:
     )
 
 
-def _traefik_ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> dict:
+def _traefik_ingress_config(
+    charm: CharmBase, ingress: TraefikRouteRequirer, service_fqdn: str, tls: bool
+) -> dict:
     """Build a raw ingress configuration for Traefik."""
     http_routers = {}
     http_services = {}
@@ -969,7 +952,7 @@ def _traefik_ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls
         ] = {
             "loadBalancer": {
                 "servers": _build_lb_server_config(
-                    charm, "http" if not tls else "https", port.value
+                    service_fqdn, "http" if not tls else "https", port.value
                 )
             }
         }
@@ -990,15 +973,20 @@ def _update_ingress_relation(
     charm: CharmBase,
     ingress: TraefikRouteRequirer | IstioIngressRouteRequirer,
     tls: Optional[bool],
+    service_fqdn: Optional[str] = None,
 ) -> None:
-    """Make sure the ingress routes are up-to-date."""
+    """Make sure the ingress routes are up-to-date.
+
+    `service_fqdn` is only needed by Traefik, which is told the backend address
+    explicitly. Istio derives it from the application name instead.
+    """
     if not charm.unit.is_leader():
         return
 
     match ingress:
         case TraefikRouteRequirer():
-            if ingress.is_ready() and tls is not None:
-                config = _traefik_ingress_config(charm, ingress, tls)
+            if ingress.is_ready() and tls is not None and service_fqdn is not None:
+                config = _traefik_ingress_config(charm, ingress, service_fqdn, tls)
                 ingress.submit_to_traefik(config, static=_static_ingress_config())
         case IstioIngressRouteRequirer():
             if ingress.is_ready():
@@ -1015,8 +1003,14 @@ def istio_ingress_ready(ingress: IstioIngressRouteRequirer) -> bool:
     return bool(ingress.is_ready() and ingress.external_host)
 
 
-def setup_traefik_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
+def setup_traefik_ingress(charm: CharmBase, service_fqdn: str, tls: bool) -> TraefikRouteRequirer:
     """Integrate with Traefik to enable ingress.
+
+    Args:
+        charm: the otel-collector charm object
+        service_fqdn: the Kubernetes Service name Traefik should route to, so that
+            ingressed traffic is balanced across all units
+        tls: whether the collector's receivers are serving TLS
 
     Returns:
         A TraefikRouteRequirer instance.
@@ -1027,7 +1021,7 @@ def setup_traefik_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
         "ingress",
     )
     charm.__setattr__("ingress", ingress)
-    _update_ingress_relation(charm, ingress, tls)
+    _update_ingress_relation(charm, ingress, tls, service_fqdn=service_fqdn)
     return ingress
 
 

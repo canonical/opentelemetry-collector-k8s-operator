@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 def charm_address(
-    charm: CharmBase,
+    charm: "OpenTelemetryCollectorK8sCharm",
     container: Container,
     traefik_ingress: integrations.TraefikRouteRequirer,
     istio_ingress: integrations.IstioIngressRouteRequirer,
@@ -72,7 +72,7 @@ def charm_address(
         external_tls = False
         external_host = None
 
-    internal_host = integrations.internal_host(charm, container)
+    internal_host = charm.internal_host(container)
     internal_tls = integrations.is_tls_ready(container)
     resolved_host = external_host if external_host else internal_host
     return integrations.Address(
@@ -178,6 +178,47 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self.external_secret_files: Dict[str, str] = {}
         self._reconcile()
 
+    @property
+    def unit_fqdn(self) -> str:
+        """Return the DNS name of this unit's pod.
+
+        On Kubernetes this resolves to the headless-service address of a single pod, e.g.
+        ``otelcol-0.otelcol-endpoints.mymodel.svc.cluster.local``. It addresses exactly one
+        unit, so it must only be used for unit-local concerns such as the collector's own
+        internal telemetry.
+        """
+        return integrations.unit_fqdn()
+
+    @property
+    def service_fqdn(self) -> str:
+        """Return the DNS name of the Kubernetes Service fronting all units of this app.
+
+        Juju creates a ClusterIP service named after the application, which load-balances
+        across all ready pods. This is the address that must be advertised to remote charms,
+        so that telemetry is distributed over the units instead of being duplicated to each
+        of them (or pinned to the leader).
+        """
+        return f"{self.app.name}.{self.model.name}.svc.cluster.local"
+
+    def internal_host(self, container: Container) -> str:
+        """Return the in-cluster address that remote charms should use to reach this app.
+
+        This is the Kubernetes Service FQDN, so that traffic is load-balanced across units
+        instead of being duplicated to every unit or pinned to the leader.
+
+        When the server is serving TLS, the Service FQDN is only advertised once the
+        certificate on disk actually lists it as a SAN; otherwise clients would fail hostname
+        verification. Until then we keep advertising the pod FQDN, and switch over
+        automatically on the reconcile that follows the arrival of the widened certificate.
+        """
+        if not integrations.is_tls_ready(container):
+            return self.service_fqdn
+        return (
+            self.service_fqdn
+            if self.service_fqdn in integrations.server_cert_sans_dns(container)
+            else self.unit_fqdn
+        )
+
     def _reconcile(self):
         """Recreate the world state for the charm.
 
@@ -210,7 +251,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Ingress integration
         traefik_tls = integrations.is_tls_ready(container)
-        traefik_ingress = integrations.setup_traefik_ingress(self, traefik_tls)
+        traefik_ingress = integrations.setup_traefik_ingress(self, self.service_fqdn, traefik_tls)
         istio_ingress = integrations.setup_istio_ingress(self)
 
         # Integrate with TLS relations
@@ -220,6 +261,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         server_cert_hash = integrations.receive_server_cert(
             self,
+            service_fqdn=self.service_fqdn,
             server_cert_path=ContainerPath(SERVER_CERT_PATH, container=container),
             private_key_path=ContainerPath(SERVER_CERT_PRIVATE_KEY_PATH, container=container),
             root_ca_cert_path=ContainerPath(SERVER_CA_CERT_PATH, container=container),
@@ -268,7 +310,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             queue_size=cast(int, self.config.get("queue_size")),
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
             unit_name=self.unit.name,
-            self_telemetry_host=integrations.unit_fqdn(),
+            self_telemetry_host=self.unit_fqdn,
             topology_labels=topology_labels,
         )
 
@@ -416,7 +458,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if (
             self.app.planned_units() > 1
             and not otelcol_address.ingress
-            and otelcol_address.resolved_host != integrations.service_fqdn(self)
+            and otelcol_address.resolved_host != self.service_fqdn
         ):
             self.unit.status = WaitingStatus(
                 "Waiting for a certificate valid for the Kubernetes Service name"
@@ -425,7 +467,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "The server certificate does not list %s as a SAN, so the pod address is "
                 "advertised instead and all data is routed to the leader unit. This resolves "
                 "itself once the CA issues a certificate for the Kubernetes Service name.",
-                integrations.service_fqdn(self),
+                self.service_fqdn,
             )
 
         # Invalid alert rules
