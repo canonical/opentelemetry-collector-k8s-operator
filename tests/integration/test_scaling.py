@@ -56,7 +56,7 @@ def _assert_single_load_balanced_exporter(
     )
 
 
-def test_scaling_does_not_duplicate_telemetry(
+def test_scaling_without_ingress_does_not_duplicate_telemetry(
     juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]
 ):
     """Scenario: scaling the receiver must not multiply what the sender transmits."""
