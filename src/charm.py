@@ -6,7 +6,6 @@
 import logging
 import os
 import re
-import socket
 from typing import Any, Dict, List, Optional, cast
 
 from charmlibs.pathops import ContainerPath
@@ -41,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 def charm_address(
+    charm: CharmBase,
     container: Container,
     traefik_ingress: integrations.TraefikRouteRequirer,
     istio_ingress: integrations.IstioIngressRouteRequirer,
@@ -48,6 +48,7 @@ def charm_address(
     """Return the Address dataclass from charm context.
 
     Args:
+        charm: the otel-collector charm object
         container: An ops.Container where the TLS certificates exist
         traefik_ingress: A TraefikRouteRequirer containing ingress context
         istio_ingress: An IstioIngressRouteRequirer containing ingress context
@@ -71,7 +72,7 @@ def charm_address(
         external_tls = False
         external_host = None
 
-    internal_host = socket.getfqdn()
+    internal_host = integrations.internal_host(charm, container)
     internal_tls = integrations.is_tls_ready(container)
     resolved_host = external_host if external_host else internal_host
     return integrations.Address(
@@ -230,7 +231,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Address manager
         # NOTE: executed after ingress and TLS events
-        otelcol_address = charm_address(container, traefik_ingress, istio_ingress)
+        otelcol_address = charm_address(self, container, traefik_ingress, istio_ingress)
         match otelcol_address:
             case integrations.MultipleIngressesConfigured():
                 self.unit.status = BlockedStatus(otelcol_address.message)
@@ -267,7 +268,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             queue_size=cast(int, self.config.get("queue_size")),
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
             unit_name=self.unit.name,
-            internal_host=socket.getfqdn(),
+            self_telemetry_host=integrations.unit_fqdn(),
             topology_labels=topology_labels,
         )
 
@@ -322,16 +323,14 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Profiling setup
         if self._incoming_profiles:
             config_manager.add_profile_ingestion()
-            integrations.receive_profiles(self, integrations.is_tls_ready(container))
+            integrations.receive_profiles(self, otelcol_address)
         if profiling_endpoints := integrations.send_profiles(self):
             config_manager.add_profile_forwarding(profiling_endpoints)
         if self._incoming_profiles or integrations.send_profiles(self):
             feature_gates = "service.profilesSupport"
 
         # Tracing setup
-        requested_tracing_protocols = integrations.receive_traces(
-            self, integrations.is_tls_ready(container)
-        )
+        requested_tracing_protocols = integrations.receive_traces(self, otelcol_address)
         if self._incoming_traces:
             config_manager.add_traces_ingestion(requested_tracing_protocols)
             # Add default processors to traces
@@ -409,16 +408,25 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if integrations.cyclic_otlp_relations_exist(self):
             self.unit.status = BlockedStatus("cyclic OTLP relations exist")
 
-        # Ingress and scaling status
-        if self.model.unit.is_leader():
-            if self.app.planned_units() > 1 and not otelcol_address.ingress:
-                self.unit.status = BlockedStatus(
-                    "Ingress missing - routing only to leader; see debug-log"
-                )
-                logger.warning(
-                    "without ingress and planned_units > 1, all data is forwarded to the leader "
-                    "unit, with nothing sent to non-leader units."
-                )
+        # Scaling status
+        # Traffic is normally addressed to the Kubernetes Service, which load-balances over
+        # all units. The exception is a TLS deployment whose certificate does not list the
+        # Service name yet: until the CA issues the widened certificate we must keep
+        # advertising this pod, so all traffic lands on the leader.
+        if (
+            self.app.planned_units() > 1
+            and not otelcol_address.ingress
+            and otelcol_address.resolved_host != integrations.service_fqdn(self)
+        ):
+            self.unit.status = WaitingStatus(
+                "Waiting for a certificate valid for the Kubernetes Service name"
+            )
+            logger.warning(
+                "The server certificate does not list %s as a SAN, so the pod address is "
+                "advertised instead and all data is routed to the leader unit. This resolves "
+                "itself once the CA issues a certificate for the Kubernetes Service name.",
+                integrations.service_fqdn(self),
+            )
 
         # Invalid alert rules
         if self._has_invalid_prometheus_alerts():

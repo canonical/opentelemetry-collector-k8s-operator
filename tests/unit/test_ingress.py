@@ -8,7 +8,6 @@ from typing import Any, List
 from unittest.mock import patch
 
 import pytest
-
 import yaml
 from ops.testing import Relation, State
 
@@ -16,9 +15,16 @@ from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
 
 FQDN = "otelcol-0.otelcol-endpoints.otel.svc.cluster.local"
+CHARM_NAME = "opentelemetry-collector-k8s"
 
 
-def test_blocked_status_when_scaled_without_ingress(ctx, otelcol_container):
+def service_fqdn(state) -> str:
+    """Return the Kubernetes Service FQDN otelcol advertises for the given state."""
+    return f"{CHARM_NAME}.{state.model.name}.svc.cluster.local"
+
+
+def test_active_when_scaled_without_ingress(ctx, otelcol_container):
+    """Scenario: scaling without ingress is fine, because traffic goes to the K8s Service."""
     # GIVEN otelcol is not scaled and has no ingress relation
     state = State(planned_units=1, containers=otelcol_container, leader=True)
 
@@ -26,15 +32,14 @@ def test_blocked_status_when_scaled_without_ingress(ctx, otelcol_container):
     state_out = ctx.run(ctx.on.update_status(), state)
 
     # THEN the charm is Active
-    assert state_out.unit_status.name != "blocked"
+    assert state_out.unit_status.name == "active"
 
-    # AND WHEN otelcol is scaled to 2 units
+    # AND WHEN otelcol is scaled to 2 units without ingress
     state = State(planned_units=2, containers=otelcol_container, leader=True)
     state_out = ctx.run(ctx.on.update_status(), state)
 
-    # THEN the charm is Blocked
-    assert state_out.unit_status.name == "blocked"
-    assert "Ingress missing" in state_out.unit_status.message
+    # THEN the charm is still Active, because the K8s Service load-balances across units
+    assert state_out.unit_status.name == "active"
 
     # AND WHEN otelcol is scaled to 2 units with ingress relation
     ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
@@ -47,7 +52,7 @@ def test_blocked_status_when_scaled_without_ingress(ctx, otelcol_container):
     state_out = ctx.run(ctx.on.update_status(), state)
 
     # THEN the charm is Active
-    assert state_out.unit_status.name != "blocked"
+    assert state_out.unit_status.name == "active"
     assert not state_out.unit_status.message
 
 
@@ -110,7 +115,9 @@ def test_traefik_sent_config(ctx, otelcol_container):
     # GIVEN otelcol deployed in isolation
     ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
     state = State(relations=[ingress], containers=otelcol_container, leader=True)
-    charm_name = "opentelemetry-collector-k8s"
+    charm_name = CHARM_NAME
+    # Traefik must load-balance across all units, so the backend is the K8s Service, not a pod
+    backend = service_fqdn(state)
     expected_rel_data = {
         "http": {
             "routers": {
@@ -157,28 +164,28 @@ def test_traefik_sent_config(ctx, otelcol_container):
             },
             "services": {
                 f"juju-{state.model.name}-{charm_name}-service-health": {
-                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:13133"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{backend}:13133"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-jaeger-grpc": {
-                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:14250"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{backend}:14250"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-jaeger-thrift-http": {
-                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:14268"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{backend}:14268"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-loki-http": {
-                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:3500"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{backend}:3500"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-metrics": {
-                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:8888"}]},
+                    "loadBalancer": {"servers": [{"url": f"http://{backend}:8888"}]},
                 },
                 f"juju-{state.model.name}-{charm_name}-service-otlp-grpc": {
-                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:4317"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{backend}:4317"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-otlp-http": {
-                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:4318"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{backend}:4318"}]}
                 },
                 f"juju-{state.model.name}-{charm_name}-service-zipkin": {
-                    "loadBalancer": {"servers": [{"url": f"http://{FQDN}:9411"}]}
+                    "loadBalancer": {"servers": [{"url": f"http://{backend}:9411"}]}
                 },
             },
         },
@@ -258,9 +265,12 @@ def test_loki_url_in_databag(
 
     # AND WHEN ingress is removed
     out_3 = ctx.run(ctx.on.relation_broken(ingress), state)
-    # THEN the internal URL is present in receive-loki-logs relation databag
+    # THEN the K8s Service URL is present in receive-loki-logs relation databag,
+    # so that logs are load-balanced across units instead of sent to every unit
     receive_logs_out = out_3.get_relations(receive_logs_endpoint.endpoint)[0]
-    expected_data = {"url": f"http://{FQDN}:{Port.loki_http.value}/loki/api/v1/push"}
+    expected_data = {
+        "url": f"http://{service_fqdn(state)}:{Port.loki_http.value}/loki/api/v1/push"
+    }
     assert json.loads(receive_logs_out.local_unit_data["endpoint"]) == expected_data
 
 
@@ -279,7 +289,11 @@ def test_otlp_url_in_databag(
 ):
     def expected_endpoints(traefik: bool, istio: bool) -> List[dict[str, Any]]:
         has_ingress = traefik or istio
-        host = external_host if has_ingress else FQDN
+        # Without ingress, the K8s Service FQDN is advertised so that OTLP data is
+        # load-balanced across units instead of duplicated to each of them.
+        host = (
+            external_host if has_ingress else f"{CHARM_NAME}.{state.model.name}.svc.cluster.local"
+        )
         # since we do not patch integrations.is_tls_ready(container), internal TLS will be False
         insecure = not (tls if has_ingress else False)
         scheme = "http" if insecure else "https"

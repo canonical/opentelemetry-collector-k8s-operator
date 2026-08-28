@@ -55,6 +55,7 @@ from charms.tempo_coordinator_k8s.v0.tracing import (
     receiver_protocol_to_transport_protocol,
 )
 from charms.tls_certificates_interface.v4.tls_certificates import (
+    Certificate,
     CertificateRequestAttributes,
     Mode,
     TLSCertificatesRequiresV4,
@@ -276,34 +277,33 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
     return sorted(remote_write.endpoints, key=lambda endpoint: endpoint["url"])
 
 
-def _get_tracing_receiver_url(protocol: ReceiverProtocol, tls_enabled: bool) -> str:
+def _get_tracing_receiver_url(protocol: ReceiverProtocol, address: "Address") -> str:
     """Build the endpoint URL for a tracing receiver.
 
     Args:
         protocol: The tracing protocol to build the URL for.
-        tls_enabled: Whether to use HTTPS (True) or HTTP (False) for the URL.
-
+        address: a dataclass for determining network addressing.
 
     Returns:
         str: The complete URL for the tracing receiver endpoint.
 
     Note:
-        The method assumes the receiver is in the same model since the charm
-        doesn't have ingress support. The FQDN is used as the hostname.
+        Without ingress the host is the Kubernetes Service FQDN, so that traces are
+        load-balanced across all units rather than sent to every one of them.
     """
-    scheme = "http"
-    if tls_enabled:
-        scheme = "https"
-
     # The correct transport protocol is specified in the tracing library, and it's always
     # either http or grpc.
     if receiver_protocol_to_transport_protocol[protocol] == TransportProtocolType.grpc:
-        return f"{socket.getfqdn()}:{Port.otlp_grpc.value}"
-    return f"{scheme}://{socket.getfqdn()}:{Port.otlp_http.value}"
+        return f"{address.grpc_resolved_url}:{Port.otlp_grpc.value}"
+    return f"{address.http_resolved_url}:{Port.otlp_http.value}"
 
 
-def receive_traces(charm: CharmBase, tls: bool) -> Set:
+def receive_traces(charm: CharmBase, address: "Address") -> Set:
     """Integrate with other charms via the receive-traces relation endpoint.
+
+    Args:
+        charm: the otel-collector charm object
+        address: a dataclass for determining network addressing
 
     Returns:
         All receiver protocols that have been requested.
@@ -326,10 +326,7 @@ def receive_traces(charm: CharmBase, tls: bool) -> Set:
             tuple(
                 (
                     protocol,
-                    _get_tracing_receiver_url(
-                        protocol=protocol,
-                        tls_enabled=tls,
-                    ),
+                    _get_tracing_receiver_url(protocol=protocol, address=address),
                 )
                 for protocol in sorted(requested_tracing_protocols)
             )
@@ -337,18 +334,17 @@ def receive_traces(charm: CharmBase, tls: bool) -> Set:
     return requested_tracing_protocols
 
 
-def receive_profiles(charm: CharmBase, tls: bool) -> None:
+def receive_profiles(charm: CharmBase, address: "Address") -> None:
     """Integrate with other charms over the receive-profiles relation endpoint."""
     if not charm.unit.is_leader():
         # TODO: leader-only because of
         #  https://github.com/canonical/opentelemetry-collector-operator/issues/71
         return
-    fqdn = socket.getfqdn()
-    grpc_endpoint = f"{fqdn}:{Port.otlp_grpc.value}"
+    grpc_endpoint = f"{address.grpc_resolved_url}:{Port.otlp_grpc.value}"
     # this charm lib exposes a holistic API, so we don't need to bind the instance
     ProfilingEndpointProvider(
         charm.model.relations["receive-profiles"], app=charm.app
-    ).publish_endpoint(otlp_grpc_endpoint=grpc_endpoint, insecure=not tls)
+    ).publish_endpoint(otlp_grpc_endpoint=grpc_endpoint, insecure=not address.resolved_tls)
 
 
 def send_profiles(charm: CharmBase) -> List[ProfilingEndpoint]:
@@ -675,8 +671,14 @@ def receive_server_cert(
     """
     # Common name length must be >= 1 and <= 64, so fqdn is too long.
     common_name = charm.unit.name.replace("/", "-")
-    domain = socket.getfqdn()
-    csr_attrs = CertificateRequestAttributes(common_name=common_name, sans_dns=frozenset({domain}))
+    # Every unit gets its own certificate (Mode.UNIT), but each of those certificates must be
+    # valid for BOTH the pod FQDN and the Kubernetes Service FQDN: remote charms are given the
+    # Service FQDN so that traffic is load-balanced, and any unit may end up terminating that
+    # connection.
+    csr_attrs = CertificateRequestAttributes(
+        common_name=common_name,
+        sans_dns=frozenset({unit_fqdn(), service_fqdn(charm)}),
+    )
     certificates = TLSCertificatesRequiresV4(
         charm=charm,
         relationship_name="receive-server-cert",
@@ -796,12 +798,13 @@ def _static_ingress_config() -> dict:
     return {"entryPoints": entry_points}
 
 
-def _build_lb_server_config(scheme: str, port: int) -> List[Dict[str, str]]:
+def _build_lb_server_config(charm: CharmBase, scheme: str, port: int) -> List[Dict[str, str]]:
     """Build the server portion of the loadbalancer config of Traefik ingress.
 
-    The leader provides the kubernetes service address to Traefik to serve as ingress.
+    The leader provides the kubernetes service address to Traefik, so that Traefik
+    balances ingressed traffic across all units instead of pinning it to the leader's pod.
     """
-    return [{"url": f"{scheme}://{socket.getfqdn()}:{port}"}]
+    return [{"url": f"{scheme}://{service_fqdn(charm)}:{port}"}]
 
 
 def is_tls_ready(container: Container) -> bool:
@@ -809,6 +812,58 @@ def is_tls_ready(container: Container) -> bool:
     return container.exists(path=SERVER_CERT_PATH) and container.exists(
         path=SERVER_CERT_PRIVATE_KEY_PATH
     )
+
+
+def unit_fqdn() -> str:
+    """Return the DNS name of this unit's pod.
+
+    On Kubernetes this resolves to the headless-service address of a single pod, e.g.
+    ``otelcol-0.otelcol-endpoints.mymodel.svc.cluster.local``. It addresses exactly one
+    unit, so it must only be used for unit-local concerns such as the collector's own
+    internal telemetry.
+    """
+    return socket.getfqdn()
+
+
+def service_fqdn(charm: CharmBase) -> str:
+    """Return the DNS name of the Kubernetes Service fronting all units of this app.
+
+    Juju creates a ClusterIP service named after the application, which load-balances
+    across all ready pods. This is the address that must be advertised to remote charms,
+    so that telemetry is distributed over the units instead of being duplicated to each
+    of them (or pinned to the leader).
+    """
+    return f"{charm.app.name}.{charm.model.name}.svc.cluster.local"
+
+
+def _server_cert_sans_dns(container: Container) -> Set[str]:
+    """Return the DNS SANs of the server certificate currently on disk.
+
+    Returns an empty set when there is no readable, parsable certificate.
+    """
+    try:
+        raw = cast(str, container.pull(SERVER_CERT_PATH).read())
+        return set(Certificate(raw).sans_dns or set())
+    except Exception:
+        logger.warning("Could not read the SANs of the server certificate on disk")
+        return set()
+
+
+def internal_host(charm: CharmBase, container: Container) -> str:
+    """Return the in-cluster address that remote charms should use to reach this app.
+
+    This is the Kubernetes Service FQDN, so that traffic is load-balanced across units
+    instead of being duplicated to every unit or pinned to the leader.
+
+    When the server is serving TLS, the Service FQDN is only advertised once the
+    certificate on disk actually lists it as a SAN; otherwise clients would fail hostname
+    verification. Until then we keep advertising the pod FQDN, and switch over
+    automatically on the reconcile that follows the arrival of the widened certificate.
+    """
+    service = service_fqdn(charm)
+    if not is_tls_ready(container):
+        return service
+    return service if service in _server_cert_sans_dns(container) else unit_fqdn()
 
 
 class MultipleIngressesConfigured:
@@ -913,7 +968,9 @@ def _traefik_ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls
             f"juju-{charm.model.name}-{charm.model.app.name}-service-{sanitized_protocol}"
         ] = {
             "loadBalancer": {
-                "servers": _build_lb_server_config("http" if not tls else "https", port.value)
+                "servers": _build_lb_server_config(
+                    charm, "http" if not tls else "https", port.value
+                )
             }
         }
 

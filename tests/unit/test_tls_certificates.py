@@ -9,16 +9,19 @@ from unittest.mock import patch
 import pytest
 from charms.tls_certificates_interface.v4.tls_certificates import (
     Certificate,
+    CertificateSigningRequest,
+    PrivateKey,
     TLSCertificatesRequiresV4,
+    generate_csr,
 )
 from conftest import MockCertificate
-from helpers import get_otelcol_file, trust_stamp_after_reconcile
+from helpers import IssuedCertificate, get_otelcol_file, trust_stamp_after_reconcile
 from ops.testing import Relation, State
 
 from constants import (
     CONFIG_PATH,
-    SERVER_CERT_PATH,
     SERVER_CA_CERT_PATH,
+    SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
 
@@ -170,3 +173,125 @@ def test_https_endpoint_is_provided(ctx, otelcol_container, cert_obj, private_ke
     for relation in state_out.relations:
         if relation.endpoint == "receive-loki-logs":
             assert "https" in json.loads(relation.local_unit_data["endpoint"])["url"]
+
+
+FQDN = "otelcol-0.otelcol-endpoints.otel.svc.cluster.local"
+CHARM_NAME = "opentelemetry-collector-k8s"
+
+
+@patch("socket.getfqdn", new=lambda *args: FQDN)
+def test_csr_requests_both_the_pod_and_the_service_name(ctx, otelcol_container):
+    """Scenario: otelcol asks the CA for a certificate valid for the K8s Service too.
+
+    Remote charms are handed the Kubernetes Service name, and any unit may terminate that
+    connection, so every unit's certificate must be valid for it.
+    """
+    # GIVEN a tls-certificates relation
+    ssc = Relation(endpoint="receive-server-cert", interface="tls-certificate")
+    state_in = State(relations=[ssc], containers=otelcol_container, leader=True)
+
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state=state_in)
+
+    # THEN the CSR sent to the CA lists both the pod name and the K8s Service name
+    csrs = json.loads(
+        state_out.get_relation(ssc.id).local_unit_data["certificate_signing_requests"]
+    )
+    assert csrs
+    sans = CertificateSigningRequest.from_string(csrs[0]["certificate_signing_request"]).sans_dns
+    assert sans == {FQDN, f"{CHARM_NAME}.{state_out.model.name}.svc.cluster.local"}
+
+
+@patch("socket.getfqdn", new=lambda *args: FQDN)
+def test_service_name_advertised_only_once_the_certificate_covers_it(ctx, otelcol_container):
+    """Scenario: a charm refreshed from an older revision still holds a pod-only certificate.
+
+    Advertising the Kubernetes Service name while serving a certificate that does not list it
+    would break hostname verification for every client, so otelcol keeps advertising the pod
+    name until the CA hands back a certificate that covers the Service name.
+    """
+    ssc = Relation(endpoint="receive-server-cert", interface="tls-certificate")
+    receive_logs = Relation(endpoint="receive-loki-logs", interface="loki_push_api")
+    state_in = State(relations=[ssc, receive_logs], containers=otelcol_container, leader=True)
+    service = f"{CHARM_NAME}.{state_in.model.name}.svc.cluster.local"
+
+    def advertised_url(issued) -> str:
+        with (
+            patch.object(
+                TLSCertificatesRequiresV4, "_find_available_certificates", return_value=None
+            ),
+            patch.object(
+                TLSCertificatesRequiresV4,
+                "get_assigned_certificate",
+                return_value=(issued, issued.private_key),
+            ),
+        ):
+            state_out = ctx.run(ctx.on.update_status(), state=state_in)
+        logs_out = state_out.get_relation(receive_logs.id)
+        return json.loads(logs_out.local_unit_data["endpoint"])["url"]
+
+    # GIVEN the certificate on disk predates this feature and only covers the pod name
+    # THEN the pod name is advertised, so that TLS clients can still verify the server
+    assert FQDN in advertised_url(IssuedCertificate("otelcol-0", frozenset({FQDN})))
+
+    # WHEN the CA issues the widened certificate
+    # THEN the K8s Service name is advertised, so traffic is load-balanced across units
+    widened = IssuedCertificate("otelcol-0", frozenset({FQDN, service}))
+    assert service in advertised_url(widened)
+
+
+def test_service_name_advertised_when_tls_is_disabled(ctx, otelcol_container):
+    """Scenario: without TLS there is no certificate to satisfy, so no reason to hold back."""
+    # GIVEN otelcol with no tls-certificates relation
+    receive_logs = Relation(endpoint="receive-loki-logs", interface="loki_push_api")
+    state_in = State(relations=[receive_logs], containers=otelcol_container, leader=True)
+
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state=state_in)
+
+    # THEN the K8s Service name is advertised immediately
+    url = json.loads(state_out.get_relation(receive_logs.id).local_unit_data["endpoint"])["url"]
+    assert f"{CHARM_NAME}.{state_out.model.name}.svc.cluster.local" in url
+
+
+@patch("socket.getfqdn", new=lambda *args: FQDN)
+def test_refresh_replaces_a_pod_only_csr(ctx, otelcol_container):
+    """Scenario: refreshing from a revision that only ever asked for the pod name.
+
+    The certificate request is reconciled on every hook, so an existing narrow request is
+    withdrawn and replaced without operator intervention. This is what makes a plain
+    `juju refresh` enough to pick up the fix.
+    """
+    # GIVEN a tls-certificates relation carrying a CSR from the older revision
+    stale_key = PrivateKey.generate()
+    stale_csr = generate_csr(
+        private_key=stale_key, common_name="otelcol-0", sans_dns=frozenset({FQDN})
+    )
+    ssc = Relation(
+        endpoint="receive-server-cert",
+        interface="tls-certificate",
+        local_unit_data={
+            "certificate_signing_requests": json.dumps(
+                [{"certificate_signing_request": str(stale_csr)}]
+            )
+        },
+    )
+    state_in = State(relations=[ssc], containers=otelcol_container, leader=True)
+
+    # WHEN the refreshed charm executes the reconciler
+    state_out = ctx.run(ctx.on.upgrade_charm(), state=state_in)
+
+    # THEN the narrow request is gone, replaced by one that also covers the K8s Service name
+    csrs = json.loads(
+        state_out.get_relation(ssc.id).local_unit_data["certificate_signing_requests"]
+    )
+    all_sans = {
+        san
+        for csr in csrs
+        for san in CertificateSigningRequest.from_string(
+            csr["certificate_signing_request"]
+        ).sans_dns
+    }
+    service = f"{CHARM_NAME}.{state_out.model.name}.svc.cluster.local"
+    assert service in all_sans
+    assert str(stale_csr) not in [csr["certificate_signing_request"] for csr in csrs]

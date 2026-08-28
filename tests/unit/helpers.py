@@ -2,16 +2,40 @@
 # See LICENSE file for licensing details.
 
 
+from datetime import timedelta
 from unittest.mock import patch
 
 import yaml
 from charms.tls_certificates_interface.v4.tls_certificates import (
     Certificate,
+    PrivateKey,
     TLSCertificatesRequiresV4,
+    generate_ca,
+    generate_certificate,
+    generate_csr,
 )
 from ops.testing import Context, State
 
 from constants import CA_TRUST_STAMP_PATH
+
+
+class IssuedCertificate:
+    """A real, parsable server certificate plus its CA, for tests that inspect SANs.
+
+    `MockCertificate` carries opaque strings, which is enough for most tests but not for the
+    ones that assert on which names otelcol's certificate is valid for.
+    """
+
+    def __init__(self, common_name: str, sans_dns: frozenset[str]):
+        ca_key = PrivateKey.generate()
+        ca = generate_ca(private_key=ca_key, validity=timedelta(days=1), common_name="test-ca")
+        key = PrivateKey.generate()
+        csr = generate_csr(private_key=key, common_name=common_name, sans_dns=sans_dns)
+        self.private_key = key
+        self.certificate = generate_certificate(
+            csr=csr, ca=ca, ca_private_key=ca_key, validity=timedelta(days=1)
+        )
+        self.ca = ca
 
 
 def get_otelcol_file(state_out: State, ctx: Context, file_path: str) -> dict:
