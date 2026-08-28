@@ -52,7 +52,7 @@ def _assert_single_load_balanced_exporter(
         f"expected the K8s Service name in {endpoints[0]!r}, got a per-unit address"
     )
     assert "-endpoints." not in endpoints[0], (
-        f"{endpoints[0]!r} is a per-pod headless address, not the K8s Service"
+        f"{endpoints[0]!r} is a per-pod headless address, expected the K8s Service"
     )
 
 
