@@ -63,10 +63,14 @@ def test_scaling_does_not_duplicate_telemetry(
     # GIVEN a single-unit otelcol receiving OTLP from another otelcol
     juju.deploy(charm, "otelcol", resources=charm_resources, trust=True)
     juju.deploy(charm, "sender", resources=charm_resources, trust=True)
+    juju.deploy(charm, "sink", resources=charm_resources, trust=True)
     juju.integrate("sender:send-otlp", "otelcol:receive-otlp")
+    # An incoming relation must be paired with an outgoing one, or the charm blocks on
+    # missing mandatory relations; give otelcol somewhere to forward what it receives.
+    juju.integrate("otelcol:send-otlp", "sink:receive-otlp")
     juju.wait(
-        lambda status: jubilant.all_active(status, "sender"),
-        timeout=600,
+        lambda status: jubilant.all_active(status, "otelcol", "sender"),
+        timeout=900,
         error=jubilant.any_error,
     )
     juju.wait(jubilant.all_agents_idle, timeout=600, error=jubilant.any_error)
