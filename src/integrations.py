@@ -501,7 +501,7 @@ def _safe_relations(charm: CharmBase, endpoint: str) -> List[Relation]:
         if not (msg := _permission_denied_message(e)):
             raise
         logger.warning(
-            "skipping the %s relations this run (%s); they will be retried on the next event",
+            "skipping the %s relations this run: %s",
             endpoint,
             msg.strip(),
         )
