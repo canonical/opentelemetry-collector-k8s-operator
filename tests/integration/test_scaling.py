@@ -4,7 +4,7 @@
 """Feature: A scaled up otelcol shares incoming telemetry."""
 
 import logging
-from typing import Dict, List
+from typing import Dict
 
 import jubilant
 import yaml
@@ -17,42 +17,33 @@ logger = logging.getLogger(__name__)
 # pyright: reportAttributeAccessIssue = false
 
 
-def _otlp_exporter_endpoints(juju: jubilant.Juju, sender: str) -> List[str]:
-    """Return the OTLP exporter endpoints in the sender's rendered collector config.
+@RETRY
+def otlp_exporter_endpoint(juju: jubilant.Juju, sender: str) -> str:
+    """Return the single OTLP exporter endpoint in the sender's rendered collector config.
 
     This is the ground truth for the duplication bug: one exporter per destination means
     each payload is sent once, whereas one exporter per receiving unit means the same
-    payload is sent N times.
+    payload is sent N times. Retried because the config is rewritten asynchronously.
     """
     config_raw = juju.ssh(f"{sender}/leader", command=f"cat {CONFIG_PATH}", container="otelcol")
     exporters = yaml.safe_load(config_raw).get("exporters") or {}
-    return [
+    endpoints = {
         exporter["endpoint"]
         for name, exporter in exporters.items()
         if name.startswith("otlp/") and "endpoint" in exporter
-    ]
+    }
+    assert len(endpoints) == 1, (
+        f"expected {sender} to target exactly one endpoint, got {sorted(endpoints)}"
+    )
+    return endpoints.pop()
 
 
 @RETRY
-def _assert_single_load_balanced_exporter(
-    juju: jubilant.Juju, receiver: str, sender: str
-) -> None:
-    """Assert the sender targets the receiver's K8s Service exactly once."""
-    endpoints = _otlp_exporter_endpoints(juju, sender)
-    assert endpoints, f"{sender} configured no OTLP exporters"
-
-    service_fqdn = f"{receiver}.{juju.model}.svc.cluster.local"
-    assert len(set(endpoints)) == 1, (
-        f"{sender} targets {len(set(endpoints))} distinct endpoints, so telemetry is "
-        f"duplicated rather than load-balanced: {sorted(set(endpoints))}"
-    )
-    # A per-pod headless address (`<app>-0.<app>-endpoints...`) is published once per unit,
-    # which is exactly what made a scaled otelcol receive every payload N times.
-    assert service_fqdn in endpoints[0], (
-        f"expected the K8s Service name in {endpoints[0]!r}, got a per-unit address"
-    )
-    assert "-endpoints." not in endpoints[0], (
-        f"{endpoints[0]!r} is a per-pod headless address, expected the K8s Service"
+def assert_no_tls_verification_errors(juju: jubilant.Juju, sender: str) -> None:
+    """Assert the sender's collector logs contain no certificate verification failures."""
+    logs = juju.ssh(f"{sender}/leader", command="pebble logs -n 1000", container="otelcol")
+    assert "tls: failed to verify certificate" not in logs, (
+        f"{sender} could not verify the receiver's certificate for the K8s Service name"
     )
 
 
@@ -63,10 +54,11 @@ def test_scaling_without_ingress_does_not_duplicate_telemetry(
     # GIVEN a single-unit otelcol receiving OTLP from another otelcol
     juju.deploy(charm, "otelcol", resources=charm_resources, trust=True)
     juju.deploy(charm, "sender", resources=charm_resources, trust=True)
+    # `sink` is a stand-in backend and is not part of what we assert on. It exists only
+    # because an incoming relation must be paired with an outgoing one, otherwise otelcol
+    # blocks on missing mandatory relations and never reaches an active status.
     juju.deploy(charm, "sink", resources=charm_resources, trust=True)
     juju.integrate("sender:send-otlp", "otelcol:receive-otlp")
-    # An incoming relation must be paired with an outgoing one, or the charm blocks on
-    # missing mandatory relations; give otelcol somewhere to forward what it receives.
     juju.integrate("otelcol:send-otlp", "sink:receive-otlp")
     juju.wait(
         lambda status: jubilant.all_active(status, "otelcol", "sender"),
@@ -75,9 +67,17 @@ def test_scaling_without_ingress_does_not_duplicate_telemetry(
     )
     juju.wait(jubilant.all_agents_idle, timeout=600, error=jubilant.any_error)
 
-    # THEN the sender targets the Kubernetes Service
-    _assert_single_load_balanced_exporter(juju, receiver="otelcol", sender="sender")
-    endpoints_at_one_unit = set(_otlp_exporter_endpoints(juju, "sender"))
+    # THEN the sender targets otelcol's Kubernetes Service
+    service_fqdn = f"otelcol.{juju.model}.svc.cluster.local"
+    endpoint_at_one_unit = otlp_exporter_endpoint(juju, "sender")
+    assert service_fqdn in endpoint_at_one_unit, (
+        f"expected the K8s Service name in {endpoint_at_one_unit!r}, got a per-unit address"
+    )
+    # A per-pod headless address (`<app>-0.<app>-endpoints...`) is published once per unit,
+    # which is exactly what made a scaled otelcol receive every payload N times.
+    assert "-endpoints." not in endpoint_at_one_unit, (
+        f"{endpoint_at_one_unit!r} is a per-pod headless address, expected the K8s Service"
+    )
 
     # AND WHEN otelcol is scaled out
     juju.add_unit("otelcol", num_units=2)
@@ -88,10 +88,9 @@ def test_scaling_without_ingress_does_not_duplicate_telemetry(
     )
     juju.wait(jubilant.all_agents_idle, timeout=600, error=jubilant.any_error)
 
-    # THEN the sender's config is unchanged: still one endpoint, so each payload is sent
-    # once and Kubernetes spreads it over the units instead of it being duplicated
-    _assert_single_load_balanced_exporter(juju, receiver="otelcol", sender="sender")
-    assert set(_otlp_exporter_endpoints(juju, "sender")) == endpoints_at_one_unit
+    # THEN the sender's config is unchanged: still that one endpoint, so each payload is
+    # sent once and Kubernetes spreads it over the units instead of it being duplicated
+    assert otlp_exporter_endpoint(juju, "sender") == endpoint_at_one_unit
 
     # AND scaling without ingress no longer blocks the charm
     assert jubilant.all_active(juju.status(), "otelcol")
@@ -117,17 +116,10 @@ def test_every_unit_serves_tls_for_the_shared_address(
     juju.wait(jubilant.all_agents_idle, timeout=600, error=jubilant.any_error)
 
     # THEN the sender still targets the Service name, now over TLS
-    _assert_single_load_balanced_exporter(juju, receiver="otelcol", sender="sender")
+    endpoint = otlp_exporter_endpoint(juju, "sender")
+    assert f"otelcol.{juju.model}.svc.cluster.local" in endpoint
 
     # AND the sender reaches it without certificate errors, whichever unit it lands on.
     # Without the widened SANs this fails hostname verification, since the certificate
     # would only be valid for the pod that happened to serve the request.
-    _assert_no_tls_verification_errors(juju, "sender")
-
-
-@RETRY
-def _assert_no_tls_verification_errors(juju: jubilant.Juju, sender: str) -> None:
-    logs = juju.ssh(f"{sender}/leader", command="pebble logs -n 1000", container="otelcol")
-    assert "tls: failed to verify certificate" not in logs, (
-        f"{sender} could not verify the receiver's certificate for the K8s Service name"
-    )
+    assert_no_tls_verification_errors(juju, "sender")
