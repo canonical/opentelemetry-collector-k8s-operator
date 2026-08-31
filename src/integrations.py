@@ -601,6 +601,12 @@ def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
     directories with ``dirs_exist_ok=True``) and before `send_loki_logs`/`send_remote_write`
     (which read those directories).
 
+    The staging is skipped when no consumer of the files is related: the promql staging is
+    only used by `send_remote_write` and the logql staging only by `send_loki_logs`, both of
+    which read the rule directories from disk. Without either relation (e.g. an aggregator
+    whose only output is `send-otlp`, which reads rules from relation data instead of disk),
+    the staging would be dead work proportional to the number of relations.
+
     Args:
         charm: the otel-collector charm object
         provider: the ``OtlpProvider`` instantiated in `receive_otlp`, reused here to read the
@@ -608,15 +614,25 @@ def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
     """
     if not cast(bool, charm.config.get("forward_alert_rules")):
         return
+
+    has_remote_write = any(charm.model.relations.get("send-remote-write", []))
+    has_loki_logs = any(charm.model.relations.get("send-loki-logs", []))
+
+    if not (has_remote_write or has_loki_logs):
+        logger.debug(
+            "no send-remote-write/send-loki-logs relation: skipping staging of received-otlp rules"
+        )
+        return
+
     charm_root = charm.charm_dir.absolute()
     metrics_dest = charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/"))
     loki_dest = charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/"))
     promql_alerts: Dict[str, Dict] = {}
     logql_alerts: Dict[str, Dict] = {}
     for rel_id, rule_store in provider.rules.items():
-        if (promql := rule_store.promql.as_dict()).get("groups"):
+        if has_remote_write and (promql := rule_store.promql.as_dict()).get("groups"):
             promql_alerts[f"otlp_{rel_id}"] = promql
-        if (logql := rule_store.logql.as_dict()).get("groups"):
+        if has_loki_logs and (logql := rule_store.logql.as_dict()).get("groups"):
             logql_alerts[f"otlp_{rel_id}"] = logql
     if promql_alerts:
         _add_alerts(promql_alerts, metrics_dest)
