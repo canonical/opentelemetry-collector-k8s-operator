@@ -38,6 +38,26 @@ def otlp_exporter_endpoint(juju: jubilant.Juju, sender: str) -> str:
     return endpoints.pop()
 
 
+def wait_settled(juju: jubilant.Juju, *apps: str) -> None:
+    """Wait until the given apps are active AND every agent is idle, at the same time.
+
+    Waiting for the two conditions one after the other is not the same thing: a unit can be
+    active while an agent is still mid-hook that will take it out of active again, so the
+    first wait returns on a state the second never rechecks. Scaling makes that window wide,
+    because the new pods re-run the resources patch and briefly put the application back into
+    waiting.
+
+    `successes` requires the combined condition to hold over that many consecutive polls, so a
+    deployment that is still churning does not end the wait early.
+    """
+    juju.wait(
+        lambda status: jubilant.all_active(status, *apps) and jubilant.all_agents_idle(status),
+        timeout=900,
+        successes=10,
+        error=jubilant.any_error,
+    )
+
+
 @RETRY
 def assert_no_tls_verification_errors(juju: jubilant.Juju, sender: str) -> None:
     """Assert the sender's collector logs contain no certificate verification failures."""
@@ -60,12 +80,7 @@ def test_scaling_without_ingress_does_not_duplicate_telemetry(
     juju.deploy(charm, "sink", resources=charm_resources, trust=True)
     juju.integrate("sender:send-otlp", "otelcol:receive-otlp")
     juju.integrate("otelcol:send-otlp", "sink:receive-otlp")
-    juju.wait(
-        lambda status: jubilant.all_active(status, "otelcol", "sender"),
-        timeout=900,
-        error=jubilant.any_error,
-    )
-    juju.wait(jubilant.all_agents_idle, timeout=600, error=jubilant.any_error)
+    wait_settled(juju, "otelcol", "sender")
 
     # THEN the sender targets otelcol's Kubernetes Service
     service_fqdn = f"otelcol.{juju.model}.svc.cluster.local"
@@ -81,19 +96,13 @@ def test_scaling_without_ingress_does_not_duplicate_telemetry(
 
     # AND WHEN otelcol is scaled out
     juju.add_unit("otelcol", num_units=2)
-    juju.wait(
-        lambda status: jubilant.all_active(status, "otelcol"),
-        timeout=900,
-        error=jubilant.any_error,
-    )
-    juju.wait(jubilant.all_agents_idle, timeout=600, error=jubilant.any_error)
+    # THEN scaling without ingress leaves the charm active, and it stays that way: settling
+    # only to drop out of active again would be just as much of a bug as never settling.
+    wait_settled(juju, "otelcol")
 
-    # THEN the sender's config is unchanged: still that one endpoint, so each payload is
+    # AND the sender's config is unchanged: still that one endpoint, so each payload is
     # sent once and Kubernetes spreads it over the units instead of it being duplicated
     assert otlp_exporter_endpoint(juju, "sender") == endpoint_at_one_unit
-
-    # AND scaling without ingress no longer blocks the charm
-    assert jubilant.all_active(juju.status(), "otelcol")
 
 
 def test_every_unit_serves_tls_for_the_shared_address(
@@ -108,12 +117,7 @@ def test_every_unit_serves_tls_for_the_shared_address(
     juju.deploy("self-signed-certificates", "ssc")
     juju.integrate("otelcol:receive-server-cert", "ssc:certificates")
     juju.integrate("sender:receive-ca-cert", "ssc:send-ca-cert")
-    juju.wait(
-        lambda status: jubilant.all_active(status, "otelcol", "ssc", "sender"),
-        timeout=900,
-        error=jubilant.any_error,
-    )
-    juju.wait(jubilant.all_agents_idle, timeout=600, error=jubilant.any_error)
+    wait_settled(juju, "otelcol", "ssc", "sender")
 
     # THEN the sender still targets the Service name, now over TLS
     endpoint = otlp_exporter_endpoint(juju, "sender")
