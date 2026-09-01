@@ -320,6 +320,80 @@ def test_received_otlp_rules_forwarded_downstream(
         )
 
 
+@pytest.mark.parametrize(
+    "downstream_endpoint, downstream_remote_app, expect_promql_staged, expect_logql_staged",
+    [
+        pytest.param(
+            "send-otlp",
+            "downstream-otelcol",
+            False,
+            False,
+            id="otlp-only-no-staging",
+        ),
+        pytest.param(
+            "send-remote-write",
+            "prometheus",
+            True,
+            False,
+            id="remote-write-stages-promql",
+        ),
+        pytest.param(
+            "send-loki-logs",
+            "loki",
+            False,
+            True,
+            id="loki-stages-logql",
+        ),
+    ],
+)
+def test_staging_skipped_without_file_consumer(
+    ctx,
+    tmp_path,
+    otelcol_container,
+    all_rules,
+    downstream_endpoint,
+    downstream_remote_app,
+    expect_promql_staged,
+    expect_logql_staged,
+):
+    """Rules are staged to disk only when a downstream that reads the files is related.
+
+    The staged files' only readers are `send-remote-write` (promql) and `send-loki-logs`
+    (logql). When the only output is `send-otlp` (which reads rules from relation data,
+    not disk), the staging must be skipped entirely: it would be dead work proportional
+    to the number of relations (the dominant reconcile cost in aggregator deployments).
+    """
+    # GIVEN a receive-otlp relation carrying compressed alert rules
+    receiver = Relation(
+        "receive-otlp",
+        remote_app_data={
+            "rules": json.dumps(LZMABase64.compress(json.dumps(all_rules))),
+            "metadata": json.dumps(OTELCOL_METADATA),
+        },
+    )
+    # * a single downstream forwarding relation
+    downstream_kwargs = {"remote_app_name": downstream_remote_app}
+    if downstream_endpoint == "send-otlp":
+        downstream_kwargs["remote_app_data"] = {"endpoints": "[]"}
+    downstream = Relation(downstream_endpoint, **downstream_kwargs)
+    state = State(
+        relations=[receiver, downstream],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+        config={"forward_alert_rules": True},
+    )
+
+    # WHEN any event executes the reconciler
+    ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN juju_otlp_* files are staged only for the dirs a downstream consumer reads
+    promql_staged = list((tmp_path / "prometheus_alert_rules").glob("juju_otlp_*.rules"))
+    logql_staged = list((tmp_path / "loki_alert_rules").glob("juju_otlp_*.rules"))
+    assert bool(promql_staged) == expect_promql_staged
+    assert bool(logql_staged) == expect_logql_staged
+
+
 @pytest.mark.parametrize("forward_rules", [True, False])
 @pytest.mark.parametrize(
     "source_endpoint, source_remote_app_name, source_remote_app_data, expected_alerts",
