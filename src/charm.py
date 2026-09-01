@@ -199,26 +199,25 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """
         return f"{self.app.name}.{self.model.name}.svc.cluster.local"
 
-    def serves_service_address(self, container: Container) -> bool:
-        """Return whether this unit can serve traffic addressed to the Kubernetes Service.
-
-        Any unit may terminate a connection made to the Service, so a TLS-enabled unit can
-        only do so once its certificate lists the Service name as a SAN. Advertising the
-        Service name earlier (to remote charms or to Traefik) would break clients.
-
-        Without TLS there is no name to verify, so there is nothing to wait for.
-        """
-        if not integrations.is_tls_ready(container):
-            return True
-        return self.service_fqdn in integrations.server_cert_sans_dns(container)
-
-    def internal_host(self, serves_service_address: bool) -> str:
+    def internal_host(self, container: Container) -> str:
         """Return the in-cluster address that remote charms should use to reach this app.
 
-        This is the Kubernetes Service FQDN, so that traffic is load-balanced across units. Until
-        the CA returns a certificate covering the Service name we fall back to this pod's FQDN.
+        This is the Kubernetes Service FQDN, so that traffic is load-balanced across units
+        instead of being duplicated to every unit or pinned to the leader.
+
+        Any unit may terminate a connection made to the Service, so a TLS-enabled unit can only
+        be addressed that way once its certificate lists the Service name as a SAN. Until the CA
+        issues that certificate we keep advertising this pod's FQDN, and switch over on the
+        reconcile that follows its arrival. Without TLS there is no name to verify, so there is
+        nothing to wait for.
         """
-        return self.service_fqdn if serves_service_address else self.unit_fqdn
+        if not integrations.is_tls_ready(container):
+            return self.service_fqdn
+        return (
+            self.service_fqdn
+            if self.service_fqdn in integrations.server_cert_sans_dns(container)
+            else self.unit_fqdn
+        )
 
     def _reconcile(self):
         """Recreate the world state for the charm.
@@ -268,10 +267,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         refresh_certs(container, sha256(receive_ca_certs_hash + server_cert_hash))
 
         # Ingress integration and address manager
-        serves_service_address = self.serves_service_address(container)
-        internal_host = self.internal_host(serves_service_address)
-        tls_ready = integrations.is_tls_ready(container)
-        traefik_ingress = integrations.setup_traefik_ingress(self, internal_host, tls_ready)
+        # NOTE: executed after the TLS integrations. Traefik verifies the hostname of its
+        # backend, so it must be given an address the served certificate is actually valid for.
+        internal_host = self.internal_host(container)
+        traefik_ingress = integrations.setup_traefik_ingress(
+            self, internal_host, integrations.is_tls_ready(container)
+        )
         istio_ingress = integrations.setup_istio_ingress(self)
         otelcol_address = charm_address(container, traefik_ingress, istio_ingress, internal_host)
         match otelcol_address:
@@ -442,7 +443,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             self.unit.status = ActiveStatus()
 
         # Scaling status
-        if self.app.planned_units() > 1 and not serves_service_address:
+        # Traffic is normally addressed to the Kubernetes Service, which load-balances over all
+        # units. The exception is a TLS deployment whose certificate does not list the Service
+        # name yet: until the CA issues the widened certificate every sender, ingressed or not,
+        # is pinned to this one pod.
+        if self.app.planned_units() > 1 and internal_host != self.service_fqdn:
             self.unit.status = WaitingStatus(
                 "Waiting for a certificate valid for the Kubernetes Service name"
             )
