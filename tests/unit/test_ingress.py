@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 import pytest
 import yaml
-from ops.testing import Relation, State
+from helpers import IssuedCertificate, issued_certificate
+from ops.testing import Model, Relation, State
 
 from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
@@ -348,3 +349,78 @@ def test_otlp_url_in_databag(
     receive_otlp_out = out_3.get_relations(receive_otlp.endpoint)[0]
     endpoints = json.loads(receive_otlp_out.local_app_data.get("endpoints", "[]"))
     assert endpoints == expected_endpoints(traefik=False, istio=False)
+
+
+def traefik_backends(state_out, ingress) -> set:
+    """Return the distinct backend URLs otelcol told Traefik to route to."""
+    config = yaml.safe_load(state_out.get_relation(ingress.id).local_app_data["config"])
+    return {
+        server["url"]
+        for service in config["http"]["services"].values()
+        for server in service["loadBalancer"]["servers"]
+    }
+
+
+@patch("socket.getfqdn", new=lambda *args: FQDN)
+def test_traefik_backend_waits_for_a_certificate_covering_the_service_name(ctx, otelcol_container):
+    """Scenario: a TLS otelcol refreshed from a revision that only asked for the pod name.
+
+    Traefik verifies the hostname of the backend it connects to, so pointing it at the
+    Kubernetes Service name while the units still serve a pod-only certificate would break
+    ingress outright. The backend must therefore follow the same rule as the address we
+    advertise to in-cluster senders.
+    """
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "https"})
+    ssc = Relation(endpoint="receive-server-cert", interface="tls-certificate")
+    state = State(
+        planned_units=2,
+        relations=[ingress, ssc],
+        containers=otelcol_container,
+        leader=True,
+        model=Model(name="otel"),
+    )
+    service = service_fqdn(state)
+
+    # GIVEN the certificate on disk only covers this pod
+    with issued_certificate(IssuedCertificate("otelcol-0", frozenset({FQDN}))):
+        state_out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN Traefik is pointed at the pod, over HTTPS, so hostname verification still succeeds
+    assert traefik_backends(state_out, ingress) == {
+        f"https://{FQDN}:{port.value}" for port in Port
+    }
+
+    # AND the charm says why scaling is not distributing anything yet
+    assert state_out.unit_status.name == "waiting"
+    assert "Kubernetes Service name" in state_out.unit_status.message
+
+    # WHEN the CA issues a certificate that also covers the K8s Service name
+    with issued_certificate(IssuedCertificate("otelcol-0", frozenset({FQDN, service}))):
+        state_out = ctx.run(ctx.on.update_status(), state)
+
+    # THEN Traefik load-balances across all units via the K8s Service
+    assert traefik_backends(state_out, ingress) == {
+        f"https://{service}:{port.value}" for port in Port
+    }
+    assert state_out.unit_status.name == "active"
+
+
+def test_traefik_backend_scheme_matches_tls_on_the_hook_it_becomes_ready(ctx, otelcol_container):
+    """Scenario: the CA's certificate arrives on this very hook.
+
+    The scheme handed to Traefik is read after the certificate relations are reconciled, so
+    it describes what the receivers serve now not what they served when the hook started.
+    """
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "https"})
+    ssc = Relation(endpoint="receive-server-cert", interface="tls-certificate")
+    state = State(relations=[ingress, ssc], containers=otelcol_container, leader=True)
+    service = service_fqdn(state)
+
+    # GIVEN no certificate on disk yet, WHEN one is assigned during this reconcile
+    with issued_certificate(IssuedCertificate("otelcol-0", frozenset({FQDN, service}))):
+        state_out = ctx.run(ctx.on.relation_changed(ssc), state)
+
+    # THEN Traefik is told to speak HTTPS to the backend, not HTTP
+    assert traefik_backends(state_out, ingress) == {
+        f"https://{service}:{port.value}" for port in Port
+    }

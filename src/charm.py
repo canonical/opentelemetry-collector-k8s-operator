@@ -40,18 +40,18 @@ logger = logging.getLogger(__name__)
 
 
 def charm_address(
-    charm: "OpenTelemetryCollectorK8sCharm",
     container: Container,
     traefik_ingress: integrations.TraefikRouteRequirer,
     istio_ingress: integrations.IstioIngressRouteRequirer,
+    internal_host: str,
 ) -> integrations.Address | integrations.MultipleIngressesConfigured:
     """Return the Address dataclass from charm context.
 
     Args:
-        charm: the otel-collector charm object
         container: An ops.Container where the TLS certificates exist
         traefik_ingress: A TraefikRouteRequirer containing ingress context
         istio_ingress: An IstioIngressRouteRequirer containing ingress context
+        internal_host: the in-cluster address remote charms should use to reach this app
 
     Returns:
         The Address dataclass summarizing the charm's networking context or
@@ -72,7 +72,6 @@ def charm_address(
         external_tls = False
         external_host = None
 
-    internal_host = charm.internal_host(container)
     internal_tls = integrations.is_tls_ready(container)
     resolved_host = external_host if external_host else internal_host
     return integrations.Address(
@@ -206,10 +205,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         This is the Kubernetes Service FQDN, so that traffic is load-balanced across units
         instead of being duplicated to every unit or pinned to the leader.
 
-        When the server is serving TLS, the Service FQDN is only advertised once the
-        certificate on disk actually lists it as a SAN; otherwise clients would fail hostname
-        verification. Until then we keep advertising the pod FQDN, and switch over
-        automatically on the reconcile that follows the arrival of the widened certificate.
+        Any unit may terminate a connection made to the Service, so a TLS-enabled unit can only
+        be addressed that way once its certificate lists the Service name as a SAN. Until the CA
+        issues that certificate we keep advertising this pod's FQDN, and switch over on the
+        reconcile that follows its arrival. Without TLS there is no name to verify, so there is
+        nothing to wait for.
         """
         if not integrations.is_tls_ready(container):
             return self.service_fqdn
@@ -249,11 +249,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Service mesh integration
         integrations.setup_service_mesh(self)
 
-        # Ingress integration
-        traefik_tls = integrations.is_tls_ready(container)
-        traefik_ingress = integrations.setup_traefik_ingress(self, self.service_fqdn, traefik_tls)
-        istio_ingress = integrations.setup_istio_ingress(self)
-
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
             self,
@@ -271,9 +266,15 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # certs in the /usr/local/share/ca-certificates directory
         refresh_certs(container, sha256(receive_ca_certs_hash + server_cert_hash))
 
-        # Address manager
-        # NOTE: executed after ingress and TLS events
-        otelcol_address = charm_address(self, container, traefik_ingress, istio_ingress)
+        # Ingress integration and address manager
+        # NOTE: executed after the TLS integrations. Traefik verifies the hostname of its
+        # backend, so it must be given an address the served certificate is actually valid for.
+        internal_host = self.internal_host(container)
+        traefik_ingress = integrations.setup_traefik_ingress(
+            self, internal_host, integrations.is_tls_ready(container)
+        )
+        istio_ingress = integrations.setup_istio_ingress(self)
+        otelcol_address = charm_address(container, traefik_ingress, istio_ingress, internal_host)
         match otelcol_address:
             case integrations.MultipleIngressesConfigured():
                 self.unit.status = BlockedStatus(otelcol_address.message)
@@ -441,6 +442,22 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             container.replan()
             self.unit.status = ActiveStatus()
 
+        # Scaling status
+        # Traffic is normally addressed to the Kubernetes Service, which load-balances over all
+        # units. The exception is a TLS deployment whose certificate does not list the Service
+        # name yet: until the CA issues the widened certificate every sender, ingressed or not,
+        # is pinned to this one pod.
+        if self.app.planned_units() > 1 and internal_host != self.service_fqdn:
+            self.unit.status = WaitingStatus(
+                "Waiting for a certificate valid for the Kubernetes Service name"
+            )
+            logger.warning(
+                "The server certificate does not list %s as a SAN, so this pod's address is "
+                "advertised instead and traffic is not distributed across units. This resolves "
+                "itself once the CA issues a certificate for the Kubernetes Service name.",
+                self.service_fqdn,
+            )
+
         # Mandatory relation pairs
         missing_relations = _get_missing_mandatory_relations(self)
         if missing_relations:
@@ -449,26 +466,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Cyclic OTLP relations
         if integrations.cyclic_otlp_relations_exist(self):
             self.unit.status = BlockedStatus("cyclic OTLP relations exist")
-
-        # Scaling status
-        # Traffic is normally addressed to the Kubernetes Service, which load-balances over
-        # all units. The exception is a TLS deployment whose certificate does not list the
-        # Service name yet: until the CA issues the widened certificate we must keep
-        # advertising this pod, so all traffic lands on the leader.
-        if (
-            self.app.planned_units() > 1
-            and not otelcol_address.ingress
-            and otelcol_address.resolved_host != self.service_fqdn
-        ):
-            self.unit.status = WaitingStatus(
-                "Waiting for a certificate valid for the Kubernetes Service name"
-            )
-            logger.warning(
-                "The server certificate does not list %s as a SAN, so the pod address is "
-                "advertised instead and all data is routed to the leader unit. This resolves "
-                "itself once the CA issues a certificate for the Kubernetes Service name.",
-                self.service_fqdn,
-            )
 
         # Invalid alert rules
         if self._has_invalid_prometheus_alerts():

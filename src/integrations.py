@@ -36,7 +36,9 @@ from charms.istio_ingress_k8s.v0.istio_ingress_route import (
     ProtocolType,
 )
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
-from charms.opentelemetry_collector_integrator.v0.opentelemetry_collector_integrator import OtelcolIntegratorRequirer
+from charms.opentelemetry_collector_integrator.v0.opentelemetry_collector_integrator import (
+    OtelcolIntegratorRequirer,
+)
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
 )
@@ -889,13 +891,14 @@ def _static_ingress_config() -> dict:
     return {"entryPoints": entry_points}
 
 
-def _build_lb_server_config(service_fqdn: str, scheme: str, port: int) -> List[Dict[str, str]]:
+def _build_lb_server_config(backend_host: str, scheme: str, port: int) -> List[Dict[str, str]]:
     """Build the server portion of the loadbalancer config of Traefik ingress.
 
-    The leader provides the kubernetes service address to Traefik, so that Traefik
-    balances ingressed traffic across all units instead of pinning it to the leader's pod.
+    `backend_host` is normally the kubernetes service address, so that Traefik balances ingressed
+    traffic across all units instead of pinning it to the leader's pod. The caller should fall
+    back to a single pod when the units cannot serve the service address yet.
     """
-    return [{"url": f"{scheme}://{service_fqdn}:{port}"}]
+    return [{"url": f"{scheme}://{backend_host}:{port}"}]
 
 
 def is_tls_ready(container: Container) -> bool:
@@ -998,7 +1001,7 @@ def _istio_ingress_config(charm: CharmBase) -> IstioIngressRouteConfig:
 
 
 def _traefik_ingress_config(
-    charm: CharmBase, ingress: TraefikRouteRequirer, service_fqdn: str, tls: bool
+    charm: CharmBase, ingress: TraefikRouteRequirer, backend_host: str, tls: bool
 ) -> dict:
     """Build a raw ingress configuration for Traefik."""
     http_routers = {}
@@ -1034,7 +1037,7 @@ def _traefik_ingress_config(
         ] = {
             "loadBalancer": {
                 "servers": _build_lb_server_config(
-                    service_fqdn, "http" if not tls else "https", port.value
+                    backend_host, "http" if not tls else "https", port.value
                 )
             }
         }
@@ -1051,30 +1054,6 @@ def _traefik_ingress_config(
     }
 
 
-def _update_ingress_relation(
-    charm: CharmBase,
-    ingress: TraefikRouteRequirer | IstioIngressRouteRequirer,
-    tls: Optional[bool],
-    service_fqdn: Optional[str] = None,
-) -> None:
-    """Make sure the ingress routes are up-to-date.
-
-    `service_fqdn` is only needed by Traefik, which is told the backend address
-    explicitly. Istio derives it from the application name instead.
-    """
-    if not charm.unit.is_leader():
-        return
-
-    match ingress:
-        case TraefikRouteRequirer():
-            if ingress.is_ready() and tls is not None and service_fqdn is not None:
-                config = _traefik_ingress_config(charm, ingress, service_fqdn, tls)
-                ingress.submit_to_traefik(config, static=_static_ingress_config())
-        case IstioIngressRouteRequirer():
-            if ingress.is_ready():
-                ingress.submit_config(_istio_ingress_config(charm))
-
-
 def traefik_ingress_ready(ingress: TraefikRouteRequirer) -> bool:
     """Check if Traefik ingress is ready."""
     return bool(ingress.is_ready() and ingress.scheme and ingress.external_host)
@@ -1085,13 +1064,18 @@ def istio_ingress_ready(ingress: IstioIngressRouteRequirer) -> bool:
     return bool(ingress.is_ready() and ingress.external_host)
 
 
-def setup_traefik_ingress(charm: CharmBase, service_fqdn: str, tls: bool) -> TraefikRouteRequirer:
+def setup_traefik_ingress(charm: CharmBase, backend_host: str, tls: bool) -> TraefikRouteRequirer:
     """Integrate with Traefik to enable ingress.
+
+    Must be called after the certificate relations have been reconciled: Traefik verifies the
+    hostname of the backend it connects to, so handing it an address the served certificate is
+    not valid for breaks ingress entirely.
 
     Args:
         charm: the otel-collector charm object
-        service_fqdn: the Kubernetes Service name Traefik should route to, so that
-            ingressed traffic is balanced across all units
+        backend_host: the address Traefik should route to. Normally the Kubernetes Service
+            name, so that ingressed traffic is balanced across all units; a single pod when
+            the units cannot serve the Service name yet.
         tls: whether the collector's receivers are serving TLS
 
     Returns:
@@ -1103,7 +1087,11 @@ def setup_traefik_ingress(charm: CharmBase, service_fqdn: str, tls: bool) -> Tra
         "ingress",
     )
     charm.__setattr__("ingress", ingress)
-    _update_ingress_relation(charm, ingress, tls, service_fqdn=service_fqdn)
+    if charm.unit.is_leader() and ingress.is_ready():
+        ingress.submit_to_traefik(
+            _traefik_ingress_config(charm, ingress, backend_host, tls),
+            static=_static_ingress_config(),
+        )
     return ingress
 
 
@@ -1115,5 +1103,6 @@ def setup_istio_ingress(charm: CharmBase) -> IstioIngressRouteRequirer:
     """
     ingress = IstioIngressRouteRequirer(charm, relation_name="istio-ingress")
     charm.__setattr__("istio_ingress", ingress)
-    _update_ingress_relation(charm, ingress, tls=None)
+    if charm.unit.is_leader() and ingress.is_ready():
+        ingress.submit_config(_istio_ingress_config(charm))
     return ingress
