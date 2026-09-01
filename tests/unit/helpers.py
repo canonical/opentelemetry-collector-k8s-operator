@@ -2,6 +2,7 @@
 # See LICENSE file for licensing details.
 
 
+from contextlib import contextmanager
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -36,6 +37,25 @@ class IssuedCertificate:
             csr=csr, ca=ca, ca_private_key=ca_key, validity=timedelta(days=1)
         )
         self.ca = ca
+
+
+@contextmanager
+def issued_certificate(issued: IssuedCertificate):
+    """Run the reconciler as if the CA had assigned `issued` over `receive-server-cert`.
+
+    Yields inside a patch of `TLSCertificatesRequiresV4`, so the charm writes a real,
+    parsable certificate to disk and the code that reads its SANs back is exercised for
+    real rather than falling back to the "unparsable cert" branch.
+    """
+    with (
+        patch.object(TLSCertificatesRequiresV4, "_find_available_certificates", return_value=None),
+        patch.object(
+            TLSCertificatesRequiresV4,
+            "get_assigned_certificate",
+            return_value=(issued, issued.private_key),
+        ),
+    ):
+        yield issued
 
 
 def get_otelcol_file(state_out: State, ctx: Context, file_path: str) -> dict:
