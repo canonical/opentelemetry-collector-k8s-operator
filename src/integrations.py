@@ -66,7 +66,7 @@ from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl.rules import JujuTopology
 from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
-from ops.model import Relation
+from ops.model import ModelError, Relation
 
 from config_builder import Port, sha256
 from constants import (
@@ -402,11 +402,40 @@ def send_charm_traces(charm: CharmBase) -> Optional[str]:
     charm.__setattr__("charm_tracing_requirer", charm_tracing_requirer)
 
 
+def _permission_denied_message(e: ModelError) -> Optional[str]:
+    """Return the error message if it is a Juju permission-denied error, else None.
+
+    Workaround for https://github.com/canonical/operator/issues/2709: ops maps the
+    "relation not found" flavor to RelationNotFoundError, but accessing a relation
+    that is gone from state fails with a plain ModelError("permission denied").
+    This helper and the guards that use it can be removed once that issue is
+    resolved and ops maps this flavor to a typed exception.
+    """
+    msg = str(e.args[0]) if e.args else ""
+    return msg if "permission denied" in msg else None
+
+
 def _get_dashboards(relations: List[Relation]) -> List[Dict[str, Any]]:
     """Returns a deduplicated list of all dashboards received by this otelcol."""
     aggregate = {}
     for rel in relations:
-        dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
+        if not rel.app:
+            continue
+        try:
+            dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
+        except ModelError as e:
+            # The remote application databag is unreadable ("permission denied") if
+            # the relation is gone or dangling: skip it and let the next event
+            # re-reconcile once it is fully removed.
+            # TODO: remove once canonical/operator#2709 is resolved.
+            if msg := _permission_denied_message(e):
+                logger.warning(
+                    "skipping relation %s: remote application data is not readable (%s)",
+                    rel.id,
+                    msg.strip(),
+                )
+                continue
+            raise
         if "templates" not in dashboards:
             continue
         for template in dashboards["templates"]:
@@ -451,6 +480,34 @@ def _add_dashboards(dashboards: List[Dict[str, str]], dest_path: Path):
             logger.debug("updated dashboard file %s", f.name)
 
 
+def _safe_relations(charm: CharmBase, endpoint: str) -> Optional[List[Relation]]:
+    """Return the relations of an endpoint, or None if they cannot be listed.
+
+    Constructing the Relation objects of an endpoint can fail with a
+    "permission denied" ModelError if one of the relations is gone (e.g. a
+    cross-model relation removed while this unit was running a hook): ops
+    calls `relation-list` from `Relation.__init__`, and Juju denies access
+    to the gone relation instead of reporting it as missing. Since ops builds
+    every relation of the endpoint in one go, a single dangling relation makes
+    the whole endpoint unreadable.
+
+    ``None`` means "unknown", which callers must not confuse with "no
+    relations": the data received over the healthy relations of the endpoint
+    is still valid, so it must be left untouched rather than recomputed from
+    an empty list.
+
+    TODO: remove once canonical/operator#2709 is resolved.
+    """
+    try:
+        return charm.model.relations[endpoint]
+    except ModelError as e:
+        if not (msg := _permission_denied_message(e)):
+            raise
+
+        logger.warning("cannot list the %s relations: %s", endpoint, msg.strip())
+        return None
+
+
 def forward_dashboards(charm: CharmBase):
     """Instantiate the GrafanaDashboardProvider and update the dashboards in the relation databag.
 
@@ -464,9 +521,18 @@ def forward_dashboards(charm: CharmBase):
     if not charm.unit.is_leader():
         return
 
+    consumer_relations = _safe_relations(charm, "grafana-dashboards-consumer")
+    if consumer_relations is None:
+        # The received dashboards are unknown this run, which is not the same as
+        # "there are no dashboards": rewriting the databag now would delete from
+        # Grafana the dashboards of the healthy relations, which are still valid.
+        # Leave the previously published dashboards in place instead.
+        logger.warning("skipping the dashboards sync this run: no dashboards were deleted")
+        return
+
     shutil.copytree(src_path, dest_path, dirs_exist_ok=True)
     _add_dashboards(
-        dashboards=_get_dashboards(charm.model.relations["grafana-dashboards-consumer"]),
+        dashboards=_get_dashboards(consumer_relations),
         dest_path=dest_path,
     )
 
@@ -533,6 +599,12 @@ def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
     directories with ``dirs_exist_ok=True``) and before `send_loki_logs`/`send_remote_write`
     (which read those directories).
 
+    The staging is skipped when no consumer of the files is related: the promql staging is
+    only used by `send_remote_write` and the logql staging only by `send_loki_logs`, both of
+    which read the rule directories from disk. Without either relation (e.g. an aggregator
+    whose only output is `send-otlp`, which reads rules from relation data instead of disk),
+    the staging would be dead work proportional to the number of relations.
+
     Args:
         charm: the otel-collector charm object
         provider: the ``OtlpProvider`` instantiated in `receive_otlp`, reused here to read the
@@ -540,15 +612,25 @@ def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
     """
     if not cast(bool, charm.config.get("forward_alert_rules")):
         return
+
+    has_remote_write = any(charm.model.relations.get("send-remote-write", []))
+    has_loki_logs = any(charm.model.relations.get("send-loki-logs", []))
+
+    if not (has_remote_write or has_loki_logs):
+        logger.debug(
+            "no send-remote-write/send-loki-logs relation: skipping staging of received-otlp rules"
+        )
+        return
+
     charm_root = charm.charm_dir.absolute()
     metrics_dest = charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/"))
     loki_dest = charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/"))
     promql_alerts: Dict[str, Dict] = {}
     logql_alerts: Dict[str, Dict] = {}
     for rel_id, rule_store in provider.rules.items():
-        if (promql := rule_store.promql.as_dict()).get("groups"):
+        if has_remote_write and (promql := rule_store.promql.as_dict()).get("groups"):
             promql_alerts[f"otlp_{rel_id}"] = promql
-        if (logql := rule_store.logql.as_dict()).get("groups"):
+        if has_loki_logs and (logql := rule_store.logql.as_dict()).get("groups"):
             logql_alerts[f"otlp_{rel_id}"] = logql
     if promql_alerts:
         _add_alerts(promql_alerts, metrics_dest)
