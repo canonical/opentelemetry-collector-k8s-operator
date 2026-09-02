@@ -310,7 +310,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
         remote_write_endpoints = integrations.send_remote_write(self)
-        config_manager.add_remote_write(remote_write_endpoints)
+        config_manager.add_remote_write(
+            remote_write_endpoints,
+            mimir_tenant_id=cast(str, self.config.get("mimir_tenant_id")),
+        )
 
         # External-config setup
         self.external_configs, self.external_secret_files = integrations.receive_external_configs(
