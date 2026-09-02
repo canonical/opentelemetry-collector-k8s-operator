@@ -382,20 +382,23 @@ class ConfigManager:
             pipelines=[f"metrics/{self._unit_name}"],
         )
 
-    def add_remote_write(self, endpoints: List[Dict[str, str]]):
+    def add_remote_write(self, endpoints: List[Dict[str, str]], mimir_tenant_id: Optional[str] = None):
         """Configure forwarding alert rules to prometheus/mimir via remote-write."""
         # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/prometheusremotewriteexporter
         for idx, endpoint in enumerate(endpoints):
+            exporter_config = {
+                "endpoint": endpoint["url"],
+                "tls": {"insecure_skip_verify": self._insecure_skip_verify},
+                "add_metric_suffixes": False,
+                **self.prometheus_remotewrite_wal_config,
+                **self.remote_write_queue_config,
+            }
+            if mimir_tenant_id:
+                exporter_config["headers"] = {"X-Scope-OrgID": mimir_tenant_id}
             self.config.add_component(
                 Component.exporter,
                 f"prometheusremotewrite/send-remote-write/{idx}",
-                {
-                    "endpoint": endpoint["url"],
-                    "tls": {"insecure_skip_verify": self._insecure_skip_verify},
-                    "add_metric_suffixes": False,
-                    **self.prometheus_remotewrite_wal_config,
-                    **self.remote_write_queue_config,
-                },
+                exporter_config,
                 pipelines=[f"metrics/{self._unit_name}"],
             )
 

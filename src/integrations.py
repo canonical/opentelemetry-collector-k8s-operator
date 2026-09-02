@@ -269,6 +269,7 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
             cast(str, charm.model.config.get("extra_alert_labels", ""))
         ),
         peer_relation_name="peers",
+        mimir_tenant_id=cast(str, charm.model.config.get("mimir_tenant_id", "")),
     )
     charm.__setattr__("remote_write", remote_write)
     # TODO: Luca: probably don't need this anymore
