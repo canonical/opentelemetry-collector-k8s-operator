@@ -264,6 +264,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             global_scrape_timeout=global_configs["global_scrape_timeout"],
             receiver_tls=integrations.is_tls_ready(container),
             insecure_skip_verify=cast(bool, self.config.get("tls_insecure_skip_verify")),
+            enable_queue=cast(bool, self.config.get("enable_queue")),
             queue_size=cast(int, self.config.get("queue_size")),
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
             unit_name=self.unit.name,

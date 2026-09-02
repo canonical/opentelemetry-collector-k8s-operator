@@ -280,6 +280,10 @@ config:
       default: 5
       description: |
         Maximum time in minutes to wait for the storage backend. After this time, data loss will occur.
+    enable_queue:
+      type: boolean
+      default: true
+      description: Enable the sending queue.
     queue_size:
       type: int
       default: 1000

@@ -112,6 +112,7 @@ class ConfigManager:
         global_scrape_timeout: str,
         receiver_tls: bool = False,
         insecure_skip_verify: bool = False,
+        enable_queue: bool = True,
         queue_size: int = 1000,
         max_elapsed_time_min: int = 5,
         internal_host: str = "localhost",
@@ -127,6 +128,7 @@ class ConfigManager:
             global_scrape_timeout: set a global scrape timeout for all prometheus receivers on build
             receiver_tls: whether to inject TLS config in all receivers on build
             insecure_skip_verify: value for `insecure_skip_verify` in all exporters
+            enable_queue: enable the sending queue
             queue_size: size of the sending queue for exporters
             max_elapsed_time_min: maximum elapsed time for retrying failed requests in minutes
             internal_host: the unit FQDN the OTLP receiver's server cert is valid for
@@ -135,6 +137,7 @@ class ConfigManager:
         """
         self._unit_name = unit_name
         self._insecure_skip_verify = insecure_skip_verify
+        self._enable_queue = enable_queue
         self._queue_size = queue_size
         self._max_elapsed_time_min = max_elapsed_time_min
         self.config = ConfigBuilder(
@@ -154,7 +157,7 @@ class ConfigManager:
         """Return the default sending queue configuration."""
         return {
             "sending_queue": {
-                "enabled": True,
+                "enabled": True if self._enable_queue else False,
                 "queue_size": self._queue_size,
                 "storage": "file_storage",
             },
