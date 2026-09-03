@@ -193,20 +193,22 @@ def test_internal_logs_without_topology_labels_are_unchanged():
 
 
 def test_default_internal_logs_self_export_tls():
-    # GIVEN a default config WITH receiver TLS and the unit FQDN the server cert is valid for
+    # GIVEN a default config WITH receiver TLS and the pod FQDN this unit's cert is valid for
     config = ConfigBuilder(
         unit_name="fake/0",
         global_scrape_interval="",
         global_scrape_timeout="",
         receiver_tls=True,
-        internal_host="otelcol-0.otelcol-endpoints.o11y.svc.cluster.local",
+        self_telemetry_host="otelcol-0.otelcol-endpoints.o11y.svc.cluster.local",
     )
     config.add_default_config()
     otlp = config._config["service"]["telemetry"]["logs"]["processors"][0]["batch"]["exporter"][
         "otlp"
     ]
-    # THEN the loopback endpoint targets the FQDN (a name present in the cert SANs) over HTTPS, so
-    # verification succeeds -- NOT `localhost`, which would fail ("valid for <fqdn>, not localhost")
+    # THEN the loopback endpoint targets THIS pod's FQDN (a name present in the cert SANs) over
+    # HTTPS, so verification succeeds -- NOT `localhost`, which would fail ("valid for <fqdn>, not
+    # localhost"), and NOT the K8s Service FQDN, which would route this unit's own telemetry to a
+    # different unit
     assert (
         otlp["endpoint"]
         == "https://otelcol-0.otelcol-endpoints.o11y.svc.cluster.local:4318"
