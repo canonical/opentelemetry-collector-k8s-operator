@@ -27,10 +27,12 @@ def otlp_exporter_endpoint(juju: jubilant.Juju, sender: str) -> str:
     """
     config_raw = juju.ssh(f"{sender}/leader", command=f"cat {CONFIG_PATH}", container="otelcol")
     exporters = yaml.safe_load(config_raw).get("exporters") or {}
+    # Behind Traefik (no gRPC support) only the "otlphttp/..." exporter is configured, so
+    # both prefixes must be matched, otherwise an ingressed sender looks like it has none.
     endpoints = {
         exporter["endpoint"]
         for name, exporter in exporters.items()
-        if name.startswith("otlp/") and "endpoint" in exporter
+        if name.startswith(("otlp/", "otlphttp/")) and "endpoint" in exporter
     }
     assert len(endpoints) == 1, (
         f"expected {sender} to target exactly one endpoint, got {sorted(endpoints)}"

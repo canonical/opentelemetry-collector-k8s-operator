@@ -101,7 +101,7 @@ def test_scaling_behind_traefik_ingress_with_tls(juju: jubilant.Juju):
 
     # THEN the sender still targets Traefik's external host, now over TLS
     endpoint = otlp_exporter_endpoint(juju, "sender")
-    assert "https://" in endpoint or ":443" not in endpoint
+    assert endpoint.startswith("https://"), f"expected TLS in {endpoint!r}"
 
     # AND the sender reaches it without certificate errors, whichever unit answers
     assert_no_tls_verification_errors(juju, "sender")
@@ -154,7 +154,7 @@ def test_scaling_behind_istio_ingress_with_tls(juju: jubilant.Juju):
 
     # THEN the sender still targets Istio's external host, now over TLS
     endpoint = otlp_exporter_endpoint(juju, "sender")
-    assert "https://" in endpoint or ":443" not in endpoint
+    assert endpoint.startswith("https://"), f"expected TLS in {endpoint!r}"
 
     # AND the sender reaches it without certificate errors, whichever unit answers
     assert_no_tls_verification_errors(juju, "sender")
