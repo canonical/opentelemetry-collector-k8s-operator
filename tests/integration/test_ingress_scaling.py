@@ -58,7 +58,10 @@ def sender_and_sink(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, 
     juju.deploy(charm, "sink", resources=charm_resources, trust=True)
     juju.integrate("sender:send-otlp", "otelcol:receive-otlp")
     juju.integrate("otelcol:send-otlp", "sink:receive-otlp")
-    wait_settled(juju, "otelcol", "sender", "sink")
+    # `sink` stays blocked forever: it is a bare otelcol whose own receive-otlp relation
+    # (from the collector it fronts) has no outgoing relation to pair with. That is
+    # expected and mirrors test_scaling.py, which does not wait on it either.
+    wait_settled(juju, "otelcol", "sender")
 
 
 @pytest.mark.usefixtures("sender_and_sink")
