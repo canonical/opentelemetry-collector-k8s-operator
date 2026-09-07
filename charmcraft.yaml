@@ -370,6 +370,11 @@ config:
         flooding. This can be avoided with the correct usage of the `path_exclude` config option.
       type: boolean
       default: false
+    mimir_tenant_id:
+      description: >
+        The tenant ID to be used by the OpenTelemetry Collector.
+      type: string
+      default: ""
 
 actions:
   reconcile:
