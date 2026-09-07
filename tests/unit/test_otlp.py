@@ -110,29 +110,31 @@ def test_send_otlp(ctx, otelcol_container):
 
 @patch("socket.getfqdn", new=lambda *args: "fqdn")
 def test_receive_otlp(ctx, otelcol_container):
-    expected_endpoints = {
-        "endpoints": [
-            {
-                "protocol": "http",
-                "endpoint": "http://fqdn:4318",
-                "telemetries": ["metrics", "logs", "traces"],
-                "insecure": True,
-            },
-            {
-                "protocol": "grpc",
-                "endpoint": "fqdn:4317",
-                "telemetries": ["metrics", "logs", "traces"],
-                "insecure": True,
-            }
-        ],
-    }
-
     # GIVEN a receive-otlp relation and no TLS relations
     state = State(
         leader=True,
         containers=otelcol_container,
         relations=[RECEIVE_OTLP],
     )
+    # Without ingress, otelcol advertises the K8s Service FQDN so that OTLP data is
+    # load-balanced across units instead of duplicated to each of them.
+    service = f"opentelemetry-collector-k8s.{state.model.name}.svc.cluster.local"
+    expected_endpoints = {
+        "endpoints": [
+            {
+                "protocol": "http",
+                "endpoint": f"http://{service}:4318",
+                "telemetries": ["metrics", "logs", "traces"],
+                "insecure": True,
+            },
+            {
+                "protocol": "grpc",
+                "endpoint": f"{service}:4317",
+                "telemetries": ["metrics", "logs", "traces"],
+                "insecure": True,
+            },
+        ],
+    }
 
     # WHEN any event executes the reconciler
     state_out = ctx.run(ctx.on.update_status(), state=state)
