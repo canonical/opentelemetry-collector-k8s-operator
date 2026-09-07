@@ -98,7 +98,7 @@ class ConfigBuilder:
         global_scrape_timeout: str,
         receiver_tls: bool = False,
         exporter_skip_verify: bool = False,
-        internal_host: str = "localhost",
+        self_telemetry_host: str = "localhost",
         topology_labels: Optional[Dict[str, str]] = None,
     ):
         """Generate an empty OpenTelemetry collector config.
@@ -109,7 +109,10 @@ class ConfigBuilder:
             global_scrape_timeout: value for `scrape_timeout` in all prometheus receivers
             receiver_tls: whether to inject TLS config in all receivers on build
             exporter_skip_verify: value for `insecure_skip_verify` in all exporters
-            internal_host: the unit FQDN the OTLP receiver's server cert is valid for
+            self_telemetry_host: the FQDN of THIS pod, used to loop the collector's own
+                telemetry back into its own OTLP receiver. Must not be the Kubernetes
+                Service FQDN, or a unit's internal telemetry would be load-balanced away
+                to a different unit.
             topology_labels: this collector's own deployment topology. Attached to the collector's
                 internal telemetry so logs from multiple otelcol apps/units are distinguishable.
         """
@@ -129,7 +132,7 @@ class ConfigBuilder:
         self._topology_labels = dict(topology_labels or {})
         self._receiver_tls = receiver_tls
         self._exporter_skip_verify = exporter_skip_verify
-        self._internal_host = internal_host
+        self._self_telemetry_host = self_telemetry_host
         self._scrape_interval = global_scrape_interval
         self._scrape_timeout = global_scrape_timeout
 
@@ -259,7 +262,7 @@ class ConfigBuilder:
         internal_logs_otlp_exporter: Dict[str, Any] = {
             "protocol": "http/protobuf",
             "endpoint": (
-                f"https://{self._internal_host}:{Port.otlp_http.value}"
+                f"https://{self._self_telemetry_host}:{Port.otlp_http.value}"
                 if self._receiver_tls
                 else f"http://localhost:{Port.otlp_http.value}"
             ),

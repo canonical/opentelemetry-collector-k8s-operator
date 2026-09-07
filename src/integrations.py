@@ -36,7 +36,9 @@ from charms.istio_ingress_k8s.v0.istio_ingress_route import (
     ProtocolType,
 )
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
-from charms.opentelemetry_collector_integrator.v0.opentelemetry_collector_integrator import OtelcolIntegratorRequirer
+from charms.opentelemetry_collector_integrator.v0.opentelemetry_collector_integrator import (
+    OtelcolIntegratorRequirer,
+)
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
 )
@@ -55,6 +57,7 @@ from charms.tempo_coordinator_k8s.v0.tracing import (
     receiver_protocol_to_transport_protocol,
 )
 from charms.tls_certificates_interface.v4.tls_certificates import (
+    Certificate,
     CertificateRequestAttributes,
     Mode,
     TLSCertificatesRequiresV4,
@@ -276,34 +279,33 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
     return sorted(remote_write.endpoints, key=lambda endpoint: endpoint["url"])
 
 
-def _get_tracing_receiver_url(protocol: ReceiverProtocol, tls_enabled: bool) -> str:
+def _get_tracing_receiver_url(protocol: ReceiverProtocol, address: "Address") -> str:
     """Build the endpoint URL for a tracing receiver.
 
     Args:
         protocol: The tracing protocol to build the URL for.
-        tls_enabled: Whether to use HTTPS (True) or HTTP (False) for the URL.
-
+        address: a dataclass for determining network addressing.
 
     Returns:
         str: The complete URL for the tracing receiver endpoint.
 
     Note:
-        The method assumes the receiver is in the same model since the charm
-        doesn't have ingress support. The FQDN is used as the hostname.
+        Without ingress the host is the Kubernetes Service FQDN, so that traces are
+        load-balanced across all units rather than sent to every one of them.
     """
-    scheme = "http"
-    if tls_enabled:
-        scheme = "https"
-
     # The correct transport protocol is specified in the tracing library, and it's always
     # either http or grpc.
     if receiver_protocol_to_transport_protocol[protocol] == TransportProtocolType.grpc:
-        return f"{socket.getfqdn()}:{Port.otlp_grpc.value}"
-    return f"{scheme}://{socket.getfqdn()}:{Port.otlp_http.value}"
+        return f"{address.grpc_resolved_url}:{Port.otlp_grpc.value}"
+    return f"{address.http_resolved_url}:{Port.otlp_http.value}"
 
 
-def receive_traces(charm: CharmBase, tls: bool) -> Set:
+def receive_traces(charm: CharmBase, address: "Address") -> Set:
     """Integrate with other charms via the receive-traces relation endpoint.
+
+    Args:
+        charm: the otel-collector charm object
+        address: a dataclass for determining network addressing
 
     Returns:
         All receiver protocols that have been requested.
@@ -326,10 +328,7 @@ def receive_traces(charm: CharmBase, tls: bool) -> Set:
             tuple(
                 (
                     protocol,
-                    _get_tracing_receiver_url(
-                        protocol=protocol,
-                        tls_enabled=tls,
-                    ),
+                    _get_tracing_receiver_url(protocol=protocol, address=address),
                 )
                 for protocol in sorted(requested_tracing_protocols)
             )
@@ -337,18 +336,17 @@ def receive_traces(charm: CharmBase, tls: bool) -> Set:
     return requested_tracing_protocols
 
 
-def receive_profiles(charm: CharmBase, tls: bool) -> None:
+def receive_profiles(charm: CharmBase, address: "Address") -> None:
     """Integrate with other charms over the receive-profiles relation endpoint."""
     if not charm.unit.is_leader():
         # TODO: leader-only because of
         #  https://github.com/canonical/opentelemetry-collector-operator/issues/71
         return
-    fqdn = socket.getfqdn()
-    grpc_endpoint = f"{fqdn}:{Port.otlp_grpc.value}"
+    grpc_endpoint = f"{address.grpc_resolved_url}:{Port.otlp_grpc.value}"
     # this charm lib exposes a holistic API, so we don't need to bind the instance
     ProfilingEndpointProvider(
         charm.model.relations["receive-profiles"], app=charm.app
-    ).publish_endpoint(otlp_grpc_endpoint=grpc_endpoint, insecure=not tls)
+    ).publish_endpoint(otlp_grpc_endpoint=grpc_endpoint, insecure=not address.resolved_tls)
 
 
 def send_profiles(charm: CharmBase) -> List[ProfilingEndpoint]:
@@ -742,6 +740,7 @@ def cloud_integrator(charm: CharmBase) -> CloudIntegratorData:
 
 def receive_server_cert(
     charm: CharmBase,
+    service_fqdn: str,
     server_cert_path: PathProtocol,
     private_key_path: PathProtocol,
     root_ca_cert_path: PathProtocol,
@@ -751,14 +750,28 @@ def receive_server_cert(
     Thes key and certs are obtained via the tls_certificates(v4) library, and pushed to the
     workload container.
 
+    Args:
+        charm: the otel-collector charm object
+        service_fqdn: the Kubernetes Service name this app is reachable at, included in the
+            CSR alongside this unit's own pod name
+        server_cert_path: where to write the signed server certificate
+        private_key_path: where to write the private key
+        root_ca_cert_path: where to write the issuing CA certificate
+
     Returns:
         Hash of server cert, private key and CA cert, to be used as reload trigger if it
         changed.
     """
     # Common name length must be >= 1 and <= 64, so fqdn is too long.
     common_name = charm.unit.name.replace("/", "-")
-    domain = socket.getfqdn()
-    csr_attrs = CertificateRequestAttributes(common_name=common_name, sans_dns=frozenset({domain}))
+    # Every unit gets its own certificate (Mode.UNIT), but each of those certificates must be
+    # valid for BOTH the pod FQDN and the Kubernetes Service FQDN: remote charms are given the
+    # Service FQDN so that traffic is load-balanced, and any unit may end up terminating that
+    # connection.
+    csr_attrs = CertificateRequestAttributes(
+        common_name=common_name,
+        sans_dns=frozenset({unit_fqdn(), service_fqdn}),
+    )
     certificates = TLSCertificatesRequiresV4(
         charm=charm,
         relationship_name="receive-server-cert",
@@ -878,12 +891,14 @@ def _static_ingress_config() -> dict:
     return {"entryPoints": entry_points}
 
 
-def _build_lb_server_config(scheme: str, port: int) -> List[Dict[str, str]]:
+def _build_lb_server_config(backend_host: str, scheme: str, port: int) -> List[Dict[str, str]]:
     """Build the server portion of the loadbalancer config of Traefik ingress.
 
-    The leader provides the kubernetes service address to Traefik to serve as ingress.
+    `backend_host` is normally the kubernetes service address, so that Traefik balances ingressed
+    traffic across all units instead of pinning it to the leader's pod. The caller should fall
+    back to a single pod when the units cannot serve the service address yet.
     """
-    return [{"url": f"{scheme}://{socket.getfqdn()}:{port}"}]
+    return [{"url": f"{scheme}://{backend_host}:{port}"}]
 
 
 def is_tls_ready(container: Container) -> bool:
@@ -891,6 +906,30 @@ def is_tls_ready(container: Container) -> bool:
     return container.exists(path=SERVER_CERT_PATH) and container.exists(
         path=SERVER_CERT_PRIVATE_KEY_PATH
     )
+
+
+def unit_fqdn() -> str:
+    """Return the DNS name of this unit's pod.
+
+    On Kubernetes this resolves to the headless-service address of a single pod, e.g.
+    ``otelcol-0.otelcol-endpoints.mymodel.svc.cluster.local``. It addresses exactly one
+    unit, so it must only be used for unit-local concerns such as the collector's own
+    internal telemetry.
+    """
+    return socket.getfqdn()
+
+
+def server_cert_sans_dns(container: Container) -> Set[str]:
+    """Return the DNS SANs of the server certificate received over `receive-server-cert`.
+
+    Returns an empty set when there is no readable, parsable certificate on disk.
+    """
+    try:
+        raw = cast(str, container.pull(SERVER_CERT_PATH).read())
+        return set(Certificate(raw).sans_dns or set())
+    except Exception:
+        logger.warning("Could not read the SANs of the server certificate on disk")
+        return set()
 
 
 class MultipleIngressesConfigured:
@@ -961,7 +1000,9 @@ def _istio_ingress_config(charm: CharmBase) -> IstioIngressRouteConfig:
     )
 
 
-def _traefik_ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> dict:
+def _traefik_ingress_config(
+    charm: CharmBase, ingress: TraefikRouteRequirer, backend_host: str, tls: bool
+) -> dict:
     """Build a raw ingress configuration for Traefik."""
     http_routers = {}
     http_services = {}
@@ -995,7 +1036,9 @@ def _traefik_ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls
             f"juju-{charm.model.name}-{charm.model.app.name}-service-{sanitized_protocol}"
         ] = {
             "loadBalancer": {
-                "servers": _build_lb_server_config("http" if not tls else "https", port.value)
+                "servers": _build_lb_server_config(
+                    backend_host, "http" if not tls else "https", port.value
+                )
             }
         }
 
@@ -1011,25 +1054,6 @@ def _traefik_ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls
     }
 
 
-def _update_ingress_relation(
-    charm: CharmBase,
-    ingress: TraefikRouteRequirer | IstioIngressRouteRequirer,
-    tls: Optional[bool],
-) -> None:
-    """Make sure the ingress routes are up-to-date."""
-    if not charm.unit.is_leader():
-        return
-
-    match ingress:
-        case TraefikRouteRequirer():
-            if ingress.is_ready() and tls is not None:
-                config = _traefik_ingress_config(charm, ingress, tls)
-                ingress.submit_to_traefik(config, static=_static_ingress_config())
-        case IstioIngressRouteRequirer():
-            if ingress.is_ready():
-                ingress.submit_config(_istio_ingress_config(charm))
-
-
 def traefik_ingress_ready(ingress: TraefikRouteRequirer) -> bool:
     """Check if Traefik ingress is ready."""
     return bool(ingress.is_ready() and ingress.scheme and ingress.external_host)
@@ -1040,8 +1064,19 @@ def istio_ingress_ready(ingress: IstioIngressRouteRequirer) -> bool:
     return bool(ingress.is_ready() and ingress.external_host)
 
 
-def setup_traefik_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
+def setup_traefik_ingress(charm: CharmBase, backend_host: str, tls: bool) -> TraefikRouteRequirer:
     """Integrate with Traefik to enable ingress.
+
+    Must be called after the certificate relations have been reconciled: Traefik verifies the
+    hostname of the backend it connects to, so handing it an address the served certificate is
+    not valid for breaks ingress entirely.
+
+    Args:
+        charm: the otel-collector charm object
+        backend_host: the address Traefik should route to. Normally the Kubernetes Service
+            name, so that ingressed traffic is balanced across all units; a single pod when
+            the units cannot serve the Service name yet.
+        tls: whether the collector's receivers are serving TLS
 
     Returns:
         A TraefikRouteRequirer instance.
@@ -1052,7 +1087,11 @@ def setup_traefik_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
         "ingress",
     )
     charm.__setattr__("ingress", ingress)
-    _update_ingress_relation(charm, ingress, tls)
+    if charm.unit.is_leader() and ingress.is_ready():
+        ingress.submit_to_traefik(
+            _traefik_ingress_config(charm, ingress, backend_host, tls),
+            static=_static_ingress_config(),
+        )
     return ingress
 
 
@@ -1064,5 +1103,6 @@ def setup_istio_ingress(charm: CharmBase) -> IstioIngressRouteRequirer:
     """
     ingress = IstioIngressRouteRequirer(charm, relation_name="istio-ingress")
     charm.__setattr__("istio_ingress", ingress)
-    _update_ingress_relation(charm, ingress, tls=None)
+    if charm.unit.is_leader() and ingress.is_ready():
+        ingress.submit_config(_istio_ingress_config(charm))
     return ingress
