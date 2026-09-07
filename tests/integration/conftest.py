@@ -15,6 +15,7 @@ from typing import Dict
 import pytest
 import yaml
 import jubilant
+from helpers import wait_settled
 
 logger = logging.getLogger(__name__)
 
@@ -95,3 +96,21 @@ def juju():
     keep_models: bool = os.environ.get("KEEP_MODELS") is not None
     with jubilant.temp_model(keep=keep_models) as juju:
         yield juju
+
+
+@pytest.fixture(scope="module")
+def sender_and_sink(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):
+    """Deploy otelcol plus a sender and a sink, and wire sender -> otelcol -> sink.
+
+    Module-scoped, to match the lifetime of the `juju` model it deploys into.
+
+    `sink` is a stand-in backend, not something tests assert on: otelcol needs an outgoing
+    relation to pair with each incoming one, or it blocks. `sink` itself stays blocked for
+    that same reason, which is expected, so it is not waited on.
+    """
+    juju.deploy(charm, "otelcol", resources=charm_resources, trust=True)
+    juju.deploy(charm, "sender", resources=charm_resources, trust=True)
+    juju.deploy(charm, "sink", resources=charm_resources, trust=True)
+    juju.integrate("sender:send-otlp", "otelcol:receive-otlp")
+    juju.integrate("otelcol:send-otlp", "sink:receive-otlp")
+    wait_settled(juju, "otelcol", "sender")
