@@ -13,7 +13,6 @@ import jubilant
 import pytest
 import sh
 from helpers import (
-    WAIT_FAILURES,
     assert_health_reachable_through_ingress,
     assert_loki_logs_accepted_through_ingress,
     assert_no_tls_verification_errors,
@@ -26,6 +25,11 @@ from helpers import (
 
 logger = logging.getLogger(__name__)
 
+# Istio needs a platform override where CNI files are in non-standard locations. MicroK8s is such
+# a platform; Canonical K8s is not, hence the charm's default of "".
+# https://istio.io/latest/docs/ambient/install/platform-prerequisites/
+ISTIO_PLATFORM = {"microk8s": "microk8s", "k8s": ""}
+
 # This is needed for sh.kubectl
 # pyright: reportAttributeAccessIssue = false
 
@@ -35,15 +39,17 @@ def test_istio_ingress_advertises_the_external_host(juju: jubilant.Juju, preset:
     """Scenario: an ingressed otelcol advertises the gateway's host, not the Service."""
     # GIVEN otelcol is fronted by Istio
     juju.deploy("istio-ingress-k8s", "istio-ingress", channel="dev/edge", trust=True)
-    juju.deploy("istio-k8s", channel="dev/edge", trust=True)
-    if preset == "k8s":
-        # https://canonical-service-mesh-documentation.readthedocs-hosted.com/latest/how-to/use-charmed-istio-with-canonical-kubernetes/
-        juju.config("istio-k8s", {"platform": ""})
+    platform = ISTIO_PLATFORM[preset]
+    juju.deploy(
+        "istio-k8s",
+        channel="dev/edge",
+        trust=True,
+        config={"platform": platform} if platform else None,
+    )
     juju.integrate("otelcol:istio-ingress", "istio-ingress:istio-ingress-route")
     try:
-        wait_settled(juju, "otelcol", "istio-k8s", "istio-ingress")
-    except WAIT_FAILURES:
-        # A substrate mismatch is otherwise indistinguishable from any other failure to settle
+        wait_settled(juju, "otelcol", "istio-k8s", "istio-ingress", error_on=("otelcol", "sender"))
+    except TimeoutError:
         status = juju.status()
         for unit in status.apps["istio-k8s"].units.values():
             if "platform mismatch" in unit.workload_status.message.lower():
@@ -141,7 +147,8 @@ def test_removing_istio_ingress_falls_back_to_the_service(juju: jubilant.Juju):
     juju.remove_relation("otelcol:istio-ingress", "istio-ingress:istio-ingress-route")
     juju.remove_application("istio-ingress")
     juju.remove_application("istio-k8s")
-    wait_settled(juju, "otelcol", "sender")
+    # An app on its way out can report error, which says nothing about otelcol
+    wait_settled(juju, "otelcol", "sender", error_on=("otelcol", "sender"))
 
     # THEN the sender falls back to the in-cluster Service, over TLS and without certificate
     # errors, since every unit's certificate also covers the Service name

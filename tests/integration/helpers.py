@@ -4,7 +4,7 @@
 
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 import jubilant
 import requests
@@ -52,24 +52,25 @@ def assert_pebble_service_active(
     )
 
 
-def wait_settled(juju: jubilant.Juju, *apps: str) -> None:
+def wait_settled(
+    juju: jubilant.Juju, *apps: str, error_on: Optional[Sequence[str]] = None
+) -> None:
     """Wait until the given apps are active AND every agent is idle, at the same time.
 
     Checking the two conditions one after the other would let a unit that is active but still
     mid-hook end the wait, which scaling makes likely: new pods re-run the resources patch and
     briefly go back to waiting. `successes` requires the condition to hold over several polls.
+
+    `error_on` narrows which apps' error status aborts the wait; by default any app in the model
+    does. Narrow it to the apps under test when a dependency is known to thrash on the way up, or
+    while another app is being removed, so that only the subject's errors are treated as failures.
     """
     juju.wait(
         lambda status: jubilant.all_active(status, *apps) and jubilant.all_agents_idle(status),
         timeout=900,
         successes=10,
-        error=jubilant.any_error,
+        error=lambda status: jubilant.any_error(status, *(error_on or ())),
     )
-
-
-# What `wait_settled` raises: a TimeoutError when apps merely stay non-active, a WaitError when
-# one of them goes into error. Catch both to report on a deployment that never settles.
-WAIT_FAILURES = (TimeoutError, jubilant.WaitError)
 
 
 @RETRY

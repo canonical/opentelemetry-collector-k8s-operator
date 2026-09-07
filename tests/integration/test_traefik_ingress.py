@@ -116,7 +116,8 @@ def test_removing_traefik_ingress_falls_back_to_the_service(juju: jubilant.Juju)
     # WHEN Traefik and its ingress relation are removed
     juju.remove_relation("otelcol:ingress", "traefik")
     juju.remove_application("traefik")
-    wait_settled(juju, "otelcol", "sender")
+    # An app on its way out can report error, which says nothing about otelcol
+    wait_settled(juju, "otelcol", "sender", error_on=("otelcol", "sender"))
 
     # THEN the sender falls back to the in-cluster Service, over TLS and without certificate
     # errors, since every unit's certificate also covers the Service name. gRPC wins again now

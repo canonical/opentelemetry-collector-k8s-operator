@@ -35,7 +35,7 @@ def pytest_addoption(parser):
 
 @pytest.fixture(scope="session")
 def preset(request) -> str:
-    """Return the substrate preset (default: microk8s)."""
+    """Return the substrate preset (default: k8s)."""
     return request.config.getoption("--preset")
 
 store = defaultdict(str)
