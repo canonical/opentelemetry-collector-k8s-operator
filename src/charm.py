@@ -437,18 +437,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if integrations.cyclic_otlp_relations_exist(self):
             self.unit.status = BlockedStatus("cyclic OTLP relations exist")
 
-        # Invalid alert rules
-        if self._has_invalid_prometheus_alerts():
-            self.unit.status = BlockedStatus("Invalid Prometheus alerts. See debug-log")
-
-        # Invalid loki alert rules
-        if self._has_invalid_loki_alerts():
-            self.unit.status = BlockedStatus("Invalid Loki alerts. See debug-log")
-
-        # Invalid scrape jobs
-        if self._has_invalid_scrape_job():
-            self.unit.status = BlockedStatus("Invalid scrape jobs. See debug-log")
-
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")
 

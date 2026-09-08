@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import yaml
 from charms.tls_certificates_interface.v4.tls_certificates import (
-    Certificate,
     PrivateKey,
     TLSCertificatesRequiresV4,
     generate_ca,
