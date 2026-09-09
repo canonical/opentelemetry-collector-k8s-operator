@@ -114,7 +114,7 @@ class ConfigManager:
         insecure_skip_verify: bool = False,
         queue_size: int = 1000,
         max_elapsed_time_min: int = 5,
-        internal_host: str = "localhost",
+        self_telemetry_host: str = "localhost",
         topology_labels: Optional[Dict[str, str]] = None,
     ):
         """Generate a default OpenTelemetry collector ConfigManager.
@@ -129,7 +129,8 @@ class ConfigManager:
             insecure_skip_verify: value for `insecure_skip_verify` in all exporters
             queue_size: size of the sending queue for exporters
             max_elapsed_time_min: maximum elapsed time for retrying failed requests in minutes
-            internal_host: the unit FQDN the OTLP receiver's server cert is valid for
+            self_telemetry_host: the FQDN of THIS pod, used to loop the collector's own
+                telemetry back into its own OTLP receiver
             topology_labels: this collector's own Juju topology labels, attached to its internal
                 telemetry so logs from multiple otelcol apps/units are distinguishable in Loki
         """
@@ -143,7 +144,7 @@ class ConfigManager:
             global_scrape_timeout=global_scrape_timeout,
             receiver_tls=receiver_tls,
             exporter_skip_verify=insecure_skip_verify,
-            internal_host=internal_host,
+            self_telemetry_host=self_telemetry_host,
             topology_labels=topology_labels,
         )
         self.config.add_default_config()
