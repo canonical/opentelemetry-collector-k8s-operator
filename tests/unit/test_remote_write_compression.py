@@ -67,3 +67,74 @@ def test_alert_rules_are_compressed_only_for_a_capable_provider(
 
     # AND the rules themselves are unaffected by the encoding
     assert rules["groups"]
+
+
+@pytest.mark.parametrize(
+    "remote_app_data, compressed",
+    [
+        pytest.param({}, False, id="plain"),
+        pytest.param(LZMA_ADVERTISED, True, id="compressed"),
+    ],
+)
+def test_metrics_endpoint_rules_are_forwarded_over_remote_write(
+    ctx, otelcol_container, remote_app_data, compressed
+):
+    """Rules received over `metrics-endpoint` must reach the `send-remote-write` databag.
+
+    The rules this charm forwards, rather than its own, are the ones that make a payload
+    large enough to need compressing. `test_alert_rule_filtering` covers this path but
+    asserts the unit status only, and `test_otlp` covers forwarding from `receive-otlp`.
+    """
+    # GIVEN an app sending its alert rules to this charm over metrics-endpoint,
+    # AND a remote-write provider that may or may not be able to read them compressed
+    scrape_relation = Relation(
+        "metrics-endpoint",
+        remote_app_name="workload",
+        remote_app_data={
+            "alert_rules": json.dumps(
+                {
+                    "groups": [
+                        {
+                            "name": "forwarded-group",
+                            "rules": [
+                                {
+                                    "alert": "WorkloadDown",
+                                    "expr": 'up{juju_application="workload"} < 1',
+                                    "for": "0m",
+                                    "labels": {"severity": "critical"},
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ),
+            "scrape_metadata": json.dumps(
+                {
+                    "model": MODEL.name,
+                    "model_uuid": MODEL.uuid,
+                    "application": "workload",
+                    "charm_name": "workload-charm",
+                }
+            ),
+        },
+    )
+    remote_write_relation = Relation(
+        "send-remote-write", remote_app_name="prometheus", remote_app_data=remote_app_data
+    )
+    state = State(
+        leader=True,
+        model=MODEL,
+        config={"forward_alert_rules": True},
+        relations=[scrape_relation, remote_write_relation],
+        containers=otelcol_container,
+    )
+
+    # WHEN the charm reconciles
+    state_out = ctx.run(ctx.on.relation_changed(relation=scrape_relation), state)
+
+    # THEN the rules received from the workload made it into the payload, in whichever
+    # encoding was negotiated, and under this charm's topology, as otelcol re-labels
+    # what it forwards
+    published = _published_rules(state_out, remote_write_relation)
+    forwarded = json.loads(LZMABase64.decompress(published) if compressed else published)
+    assert any("forwarded_group" in group["name"] for group in forwarded["groups"])
