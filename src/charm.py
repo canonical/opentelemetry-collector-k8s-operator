@@ -570,21 +570,21 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             safe_job_name = job_name.replace("/", "_").replace(" ", "_").replace("-", "_")
             job_cert_paths = {}
 
-            ca_content = tls_config.get("ca")
+            ca_content = tls_config.get("ca_file")
             if ca_content and self._validate_cert(ca_content):
                 ca_cert_path = f"{CERTS_DIR}otel_{safe_job_name}_ca.pem"
                 container.push(ca_cert_path, ca_content, permissions=0o644)
                 job_cert_paths["ca"] = ca_cert_path
                 logger.debug(f"CA certificate for job '{job_name}' written to {ca_cert_path}")
 
-            key_content = tls_config.get("key")
+            key_content = tls_config.get("key_file")
             if key_content and self._validate_private_key(key_content):
                 key_path = f"{CERTS_DIR}otel_{safe_job_name}_key.pem"
                 container.push(key_path, key_content, permissions=0o600)
                 job_cert_paths["key"] = key_path
                 logger.debug(f"Private key for job '{job_name}' written to {key_path}")
 
-            cert_content = tls_config.get("cert")
+            cert_content = tls_config.get("cert_file")
             if cert_content and self._validate_cert(cert_content):
                 cert_path = f"{CERTS_DIR}otel_{safe_job_name}_cert.pem"
                 container.push(cert_path, cert_content, permissions=0o644)

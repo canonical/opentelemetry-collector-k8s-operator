@@ -23,7 +23,7 @@ def mock_charm():
                 {
                     "job_name": "juju-controller",
                     "tls_config": {
-                        "ca": "sample_ca_cert",
+                        "ca_file": "sample_ca_cert",
                         "insecure_skip_verify": False
                     }
                 }
@@ -36,7 +36,7 @@ def mock_charm():
                 {
                     "job_name": "test/job with spaces-and-dashes",
                     "tls_config": {
-                        "ca": "sample_ca_cert",
+                        "ca_file": "sample_ca_cert",
                         "insecure_skip_verify": False
                     }
                 }
@@ -49,14 +49,14 @@ def mock_charm():
                 {
                     "job_name": "job-1",
                     "tls_config": {
-                        "ca": "sample_ca_cert",
+                        "ca_file": "sample_ca_cert",
                         "insecure_skip_verify": False
                     }
                 },
                 {
                     "job_name": "job-2",
                     "tls_config": {
-                        "ca": "second_ca_cert",
+                        "ca_file": "second_ca_cert",
                         "insecure_skip_verify": False
                     }
                 }
@@ -70,12 +70,12 @@ def mock_charm():
     ],
 )
 def test_write_certificates_to_disk_ca_cert_scenarios(mock_charm, mock_container, sample_ca_cert, second_ca_cert, jobs, expected_results, expected_push_count):
-    """Test various scenarios for writing CA certificates to disk (backward compat)."""
+    """Test various scenarios for writing inline CA certs from ca_file to disk."""
     cert_mapping = {"sample_ca_cert": sample_ca_cert, "second_ca_cert": second_ca_cert}
 
     for job in jobs:
-        ca_key = job["tls_config"]["ca"]
-        job["tls_config"]["ca"] = cert_mapping[ca_key]
+        ca_key = job["tls_config"]["ca_file"]
+        job["tls_config"]["ca_file"] = cert_mapping[ca_key]
 
     mock_container.exists.return_value = False
     mock_charm._ensure_certs_dir(mock_container)
@@ -137,9 +137,9 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
                 {
                     "job_name": "mtls-job",
                     "tls_config": {
-                        "ca": "dummy_ca",
-                        "key": "dummy_key",
-                        "cert": "dummy_cert",
+                        "ca_file": "dummy_ca",
+                        "key_file": "dummy_key",
+                        "cert_file": "dummy_cert",
                         "insecure_skip_verify": False
                     }
                 }
@@ -155,16 +155,16 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
         (
             [
                 {
-                    "job_name": "key-only",
+                    "job_name": "cert-only",
                     "tls_config": {
-                        "key": "dummy_key",
+                        "cert_file": "dummy_cert",
                         "insecure_skip_verify": False
                     }
                 }
             ],
             {
-                "key-only": {
-                    "key": "/etc/otelcol/certs/otel_key_only_key.pem",
+                "cert-only": {
+                    "cert": "/etc/otelcol/certs/otel_cert_only_cert.pem",
                 }
             },
         ),
@@ -173,9 +173,9 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
                 {
                     "job_name": "all-three",
                     "tls_config": {
-                        "ca": "dummy_ca",
-                        "key": "dummy_key",
-                        "cert": "dummy_cert",
+                        "ca_file": "dummy_ca",
+                        "key_file": "dummy_key",
+                        "cert_file": "dummy_cert",
                     }
                 }
             ],
@@ -190,12 +190,12 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
     ],
 )
 def test_write_tls_certificates_to_disk_key_cert(mock_charm, mock_container, sample_ca_cert, sample_private_key, sample_client_cert, jobs, expected_job_paths):
-    """Test writing key and client certificate to disk alongside CA."""
+    """Test writing key and client certificate to disk alongside CA from *_file keys."""
     cert_mapping = {"dummy_ca": sample_ca_cert, "dummy_key": sample_private_key, "dummy_cert": sample_client_cert}
 
     for job in jobs:
         tls_config = job["tls_config"]
-        for field in ("ca", "key", "cert"):
+        for field in ("ca_file", "key_file", "cert_file"):
             if field in tls_config:
                 tls_config[field] = cert_mapping[tls_config[field]]
 
@@ -231,7 +231,7 @@ def test_write_tls_certificates_to_disk_key_cert(mock_charm, mock_container, sam
                 {
                     "job_name": "job-with-ca",
                     "tls_config": {
-                        "ca": "original_cert_content",
+                        "ca_file": "original_cert_content",
                         "insecure_skip_verify": False
                     }
                 },
@@ -276,9 +276,9 @@ def test_write_tls_certificates_to_disk_key_cert(mock_charm, mock_container, sam
                 {
                     "job_name": "mtls-job",
                     "tls_config": {
-                        "ca": "original_ca",
-                        "key": "original_key",
-                        "cert": "original_cert",
+                        "ca_file": "original_ca",
+                        "key_file": "original_key",
+                        "cert_file": "original_cert",
                     }
                 }
             ],
@@ -305,7 +305,7 @@ def test_write_tls_certificates_to_disk_key_cert(mock_charm, mock_container, sam
                 {
                     "job_name": "partial-job",
                     "tls_config": {
-                        "key": "original_key",
+                        "key_file": "original_key",
                     }
                 }
             ],
@@ -352,7 +352,7 @@ def test_update_jobs_with_cert_paths_matching(config_manager, job_name, cert_pat
         {
             "job_name": job_name,
             "tls_config": {
-                "ca": "original_cert_content",
+                "ca_file": "original_cert_content",
                 "insecure_skip_verify": False
             }
         }
@@ -366,7 +366,6 @@ def test_update_jobs_with_cert_paths_matching(config_manager, job_name, cert_pat
             assert result[0]["tls_config"][file_key] == cert_paths[job_name][key]
         else:
             assert file_key not in result[0]["tls_config"]
-        assert key not in result[0]["tls_config"]
 
 
 # Tests for _validate_private_key
