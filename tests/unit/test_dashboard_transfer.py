@@ -4,7 +4,7 @@
 """Feature: Dashboard forwarding to Grafana."""
 
 import json
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence, Tuple
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +17,10 @@ from scenario.mocking import _MockModelBackend
 from src.integrations import _get_dashboards
 
 DANGLING_RELATION_ID = 453
+
+# The charm name an upstream otelcol stamps on the templates it forwards, i.e. its
+# own `meta.name`, not the name of the charm the dashboard originally came from.
+UPSTREAM_CHARM = "opentelemetry-collector"
 
 # The error Juju returns for hook commands on a relation that is gone from state.
 PERMISSION_DENIED_ERROR = ModelError("ERROR permission denied ")
@@ -304,3 +308,250 @@ def test_unreadable_remote_databag_without_app_is_skipped():
     # THEN the app-less relation is skipped and the healthy dashboard is returned
     assert [dash["title"] for dash in dashboards] == ["file:dashboard-100"]
 
+
+def _cos_agent_id(title: str, uid: str, app: str, cos_agent_rel_id: int) -> str:
+    """Return the template id an upstream otelcol publishes for a cos-agent dashboard.
+
+    The id embeds the *originating application*, because `cos_agent` sets `charm`
+    to f"{relation_name}-{app_name}", so two applications of the same charm never
+    share an id even when the dashboard is identical. Shape copied verbatim from a
+    real deployment databag.
+    """
+    return f"file:juju_{title.lower()}-cos-agent-{app}-{cos_agent_rel_id}-{uid}"
+
+
+def _cos_agent_templates(
+    title: str, uid: str, apps_and_relids: Sequence[Tuple[str, int]]
+) -> Dict[str, Dict[str, str]]:
+    """Templates for one dashboard forwarded on behalf of several applications.
+
+    Every entry is byte-identical except for its id.
+    """
+    content = encode_as_dashboard({"title": title, "uid": uid, "panels": []})
+    return {
+        _cos_agent_id(title, uid, app, relid): {
+            "charm": UPSTREAM_CHARM,
+            "content": content,
+        }
+        for app, relid in apps_and_relids
+    }
+
+
+def _consumer(templates: Dict[str, Dict[str, str]], rel_id: int) -> Relation:
+    """A consumer relation whose remote app is another aggregator (e.g. a machine otelcol)."""
+    return Relation(
+        "grafana-dashboards-consumer",
+        remote_app_name="otelcol",
+        remote_app_data={"dashboards": json.dumps({"templates": templates})},
+        id=rel_id,
+    )
+
+
+def _mock_relation(rel_id: int, templates: Dict[str, Dict[str, str]]) -> MagicMock:
+    """A mocked consumer relation, for the cases Scenario cannot express."""
+    rel = MagicMock()
+    rel.id = rel_id
+    rel.app.name = "otelcol"
+    rel.data = {rel.app: {"dashboards": json.dumps({"templates": templates})}}
+    return rel
+
+
+def _state_with(*consumers: Relation, execs: set, provider_id: int = 199) -> State:
+    """A leader otelcol related to the given consumers and to one Grafana."""
+    return State(
+        relations=[*consumers, Relation("grafana-dashboards-provider", id=provider_id)],
+        leader=True,
+        containers=[Container("otelcol", can_connect=True, execs=execs)],
+    )
+
+
+def _published_templates(state_out: State) -> Dict[str, Dict[str, str]]:
+    """Return the templates published on the provider relation.
+
+    Asserts the relation was found, so callers cannot pass vacuously.
+    """
+    providers = [
+        rel for rel in state_out.relations if rel.endpoint == "grafana-dashboards-provider"
+    ]
+    assert len(providers) == 1, f"expected exactly one provider relation, got {providers}"
+    databag = providers[0].local_app_data
+    assert "dashboards" in databag, f"nothing was published to Grafana: {databag}"
+    return json.loads(databag["dashboards"])["templates"]
+
+
+# One dashboard, forwarded on behalf of three applications of the same charm, each
+# with its own cos-agent relation id upstream. Copied from a real deployment databag.
+DASHBOARD_TITLE = "pgBackRest"
+DASHBOARD_UID = "4b5991b44a703b4e3b89a60b70bb531c3a1ba8f7"
+PG_APPS = [("pg", 24), ("pgsql", 25), ("postgresql", 10)]
+
+
+def _copies(*apps_and_relids: Tuple[str, int], on_relation: int) -> Relation:
+    """A consumer relation carrying one identical copy of the dashboard per application."""
+    templates = _cos_agent_templates(DASHBOARD_TITLE, DASHBOARD_UID, apps_and_relids)
+    return _consumer(templates, on_relation)
+
+
+def _survivor(app: str, cos_agent_rel_id: int, *, on_relation: int) -> str:
+    """The id Grafana must receive for the copy that survives deduplication.
+
+    otelcol republishes a received template as `juju_{id}-{charm}-{rel_id}`, see
+    `_add_dashboards`.
+    """
+    received = _cos_agent_id(DASHBOARD_TITLE, DASHBOARD_UID, app, cos_agent_rel_id)
+    return f"file:juju_{received}-{UPSTREAM_CHARM}-{on_relation}"
+
+
+@pytest.mark.parametrize(
+    "consumers",
+    [
+        [_copies(("pg", 24), ("pgsql", 25), ("postgresql", 10), on_relation=107)],
+        [_copies(("postgresql", 10), ("pgsql", 25), ("pg", 24), on_relation=107)],
+        [_copies(("pg", 24), on_relation=107), _copies(("pgsql", 25), on_relation=108)],
+    ],
+    ids=["all-three-on-one-relation", "same-three-reversed", "one-each-on-two-relations"],
+)
+def test_identical_dashboards_are_published_once(ctx, execs, consumers):
+    """Scenario: the same dashboard forwarded once per originating application.
+
+    The shape otelcol sees when its client is itself an aggregator. Grafana
+    discards these copies by their `.uid` anyway, so forwarding each of them only
+    inflates the databag and Grafana's rendering work.
+
+    Every case below sends the very same copies, only spread and ordered
+    differently, and expects the very same survivor: the published id embeds the
+    `charm` and `relation_id` of the winner, so a winner that depended on iteration
+    order would rewrite the databag - and churn Grafana - with no semantic change.
+    """
+    # GIVEN consumer relations carrying byte-identical copies of one dashboard
+    received = [
+        template
+        for consumer in consumers
+        for template in json.loads(consumer.remote_app_data["dashboards"])["templates"]
+    ]
+    # (guard: without duplicates to collapse, the case proves nothing)
+    assert len(received) > 1
+    # WHEN any event executes the reconciler
+    with ctx(ctx.on.update_status(), state=_state_with(*consumers, execs=execs)) as mgr:
+        state_out = mgr.run()
+    # THEN however the copies arrived, the same one survives - the lowest
+    # (charm, title), which every case places on relation 107 - next to otelcol's
+    # own bundled dashboard
+    assert sorted(_published_templates(state_out)) == sorted(
+        [_survivor("pg", 24, on_relation=107), "file:overview-dashboard"]
+    )
+
+
+def test_deduplication_ties_are_broken_by_relation_id():
+    """Scenario: two aggregators forward the exact same dashboard under the same id.
+
+    `(charm, title)` does not order these apart, so without the relation id as a
+    final tiebreaker the published id would depend on iteration order.
+
+    Kept as a direct test because Scenario cannot represent an ordering of
+    relations: `State.relations` is a frozenset, so both orders below are the same
+    state to Scenario.
+    """
+    # GIVEN two relations carrying the same dashboard under the very same id
+    templates = _cos_agent_templates(DASHBOARD_TITLE, DASHBOARD_UID, [("pg", 24)])
+    lower = _mock_relation(107, templates)
+    higher = _mock_relation(108, templates)
+    # WHEN the dashboards are collected in either order
+    forward = _get_dashboards([lower, higher])
+    backward = _get_dashboards([higher, lower])
+    # THEN one copy is kept, and it is always the one from the lowest relation id
+    assert len(forward) == len(backward) == 1
+    assert forward[0]["relation_id"] == backward[0]["relation_id"] == 107
+
+
+def test_duplicates_are_not_decompressed(ctx, execs):
+    """Scenario: the copies that are dropped never get decompressed.
+
+    Deduplicating on the compressed blob keeps the per-hook LZMA work proportional
+    to the number of distinct dashboards rather than of applications.
+    `_get_dashboards` is the only decompression in this charm's reconcile path, so
+    the spy cannot be polluted by other integrations.
+    """
+    # GIVEN one dashboard forwarded on behalf of 3 applications
+    templates = _cos_agent_templates(DASHBOARD_TITLE, DASHBOARD_UID, PG_APPS)
+    # WHEN any event executes the reconciler
+    with patch(
+        "src.integrations.LZMABase64.decompress", wraps=LZMABase64.decompress
+    ) as decompress:
+        with ctx(
+            ctx.on.update_status(), state=_state_with(_consumer(templates, 107), execs=execs)
+        ) as mgr:
+            state_out = mgr.run()
+    # THEN only the surviving dashboard was decompressed
+    assert len(_published_templates(state_out)) == 2  # the survivor + otelcol's own
+    assert decompress.call_count == 1
+
+
+def test_distinct_dashboards_sharing_a_template_id_are_both_forwarded(ctx, execs):
+    """Scenario: two charms ship a dashboard under the same file name.
+
+    Regression test: deduplicating by template id collapsed these into one and
+    silently dropped a dashboard Grafana would have displayed. They must also land
+    on disk under different file names to survive all the way to Grafana.
+    """
+    # GIVEN two consumer relations whose dashboards share a template id but differ
+    state = _state_with(
+        *(
+            _consumer(
+                {
+                    "file:overview": {
+                        "charm": f"charm-{suffix}",
+                        "content": encode_as_dashboard({"whoami": suffix}),
+                    }
+                },
+                rel_id,
+            )
+            for suffix, rel_id in (("a", 110), ("b", 111))
+        ),
+        execs=execs,
+    )
+    # WHEN any event executes the reconciler
+    with ctx(ctx.on.update_status(), state=state) as mgr:
+        state_out = mgr.run()
+    # THEN both reach Grafana, distinguished by charm and relation id
+    published = _published_templates(state_out)
+    assert sorted(published) == [
+        "file:juju_file:overview-charm-a-110",
+        "file:juju_file:overview-charm-b-111",
+        "file:overview-dashboard",
+    ]
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"charm": "charm-a"},
+        {"charm": "charm-a", "content": ""},
+        {"charm": "charm-a", "content": 12345},
+        {"charm": "charm-a", "content": "bm90IGx6bWEgYXQgYWxs"},
+        {"charm": "charm-a", "content": encode_as_dashboard({"whoami": "truncated"})[:-4]},
+    ],
+    ids=["no-content", "empty-content", "non-string-content", "not-lzma", "truncated"],
+)
+def test_unusable_dashboards_are_skipped(ctx, execs, broken):
+    """Scenario: a template arrives with content otelcol cannot decode.
+
+    Every case below used to reach the decompressor and take the whole hook down
+    with it, dropping the dashboards of every healthy relation too.
+    """
+    # GIVEN an undecodable template, next to a healthy one
+    templates = {
+        "file:broken": broken,
+        "file:healthy": {"charm": "charm-a", "content": encode_as_dashboard({"whoami": "ok"})},
+    }
+    # WHEN any event executes the reconciler
+    with ctx(
+        ctx.on.update_status(), state=_state_with(_consumer(templates, 107), execs=execs)
+    ) as mgr:
+        state_out = mgr.run()
+    # THEN the broken one is skipped and the healthy one still reaches Grafana
+    published = _published_templates(state_out)
+    assert sorted(published) == [
+        "file:juju_file:healthy-charm-a-107",
+        "file:overview-dashboard",
+    ]
