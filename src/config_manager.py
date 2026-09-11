@@ -634,34 +634,35 @@ class ConfigManager:
                 ],
             )
 
-    def update_jobs_with_ca_paths(
-        self, metrics_consumer_jobs: List[Dict], cert_paths: Dict[str, str]
+    def update_jobs_with_cert_paths(
+        self, metrics_consumer_jobs: List[Dict], cert_paths: Dict[str, Dict[str, str]]
     ) -> List[Dict]:
         """Update jobs to use certificate file paths instead of certificate content.
 
         This method updates the TLS configuration of Prometheus scrape jobs to
-        reference CA certificates by file path instead of containing the
-        certificate content directly.
+        reference CA certificates, private keys, and client certificates by file
+        path instead of containing the certificate content directly.
 
         Args:
             metrics_consumer_jobs: List of scrape job dictionaries from MetricsEndpointConsumer
-            cert_paths: Dictionary mapping job names to their certificate file paths
+            cert_paths: Dictionary mapping job names to dicts of cert type -> file path
 
         Returns:
-            List of updated scrape job dictionaries with ca pointing to file paths
+            List of updated scrape job dictionaries with *_file fields pointing to file paths
         """
         for job in metrics_consumer_jobs:
             job_name = job.get("job_name", "default")
 
             if job_name in cert_paths:
                 tls_config = job.get("tls_config", {})
-                tls_config["ca_file"] = cert_paths[job_name]
-                if "ca" in tls_config:
-                    tls_config.pop("ca")
+                mapping = {"ca": "ca_file", "key": "key_file", "cert": "cert_file"}
+                for key, file_key in mapping.items():
+                    if key in cert_paths[job_name]:
+                        tls_config[file_key] = cert_paths[job_name][key]
+                    if key in tls_config:
+                        tls_config.pop(key)
                 job["tls_config"] = tls_config
-                logger.debug(
-                    f"updated job '{job_name}' to use certificate path: {cert_paths[job_name]}"
-                )
+                logger.debug(f"updated job '{job_name}' with certificate paths")
 
         return metrics_consumer_jobs
 

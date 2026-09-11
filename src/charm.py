@@ -348,8 +348,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         metrics_consumer_jobs = integrations.scrape_metrics(self)
         # Write CA certificates to disk and update job configurations
         self._ensure_certs_dir(container)
-        cert_paths = self._write_ca_certificates_to_disk(metrics_consumer_jobs, container)
-        metrics_consumer_jobs = config_manager.update_jobs_with_ca_paths(
+        cert_paths = self._write_tls_certificates_to_disk(metrics_consumer_jobs, container)
+        metrics_consumer_jobs = config_manager.update_jobs_with_cert_paths(
             metrics_consumer_jobs, cert_paths
         )
         config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
@@ -555,30 +555,44 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         directory = ContainerPath(CERTS_DIR, container=container)
         directory.mkdir(parents=True, exist_ok=True)
 
-    def _write_ca_certificates_to_disk(
+    def _write_tls_certificates_to_disk(
         self, scrape_jobs: List[Dict], container: Container
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Dict[str, str]]:
         cert_paths = {}
 
         if not container.can_connect():
-            logger.warning("Container not accessible, skipping CA certificate processing")
+            logger.warning("Container not accessible, skipping certificate processing")
             return cert_paths
 
         for job in scrape_jobs:
             tls_config = job.get("tls_config", {})
-            ca_content = tls_config.get("ca")
-
-            if not ca_content or not self._validate_cert(ca_content):
-                continue
-
             job_name = job.get("job_name", "default")
-            # Since the `MetricsEndpointProvider` accepts a `jobs` arg, we cannot rely on the job name being safe
             safe_job_name = job_name.replace("/", "_").replace(" ", "_").replace("-", "_")
-            ca_cert_path = f"{CERTS_DIR}otel_{safe_job_name}_ca.pem"
+            job_cert_paths = {}
 
-            container.push(ca_cert_path, ca_content, permissions=0o644)
-            cert_paths[job_name] = ca_cert_path
-            logger.debug(f"CA certificate for job '{job_name}' written to {ca_cert_path}")
+            ca_content = tls_config.get("ca_file")
+            if ca_content and self._validate_cert(ca_content):
+                ca_cert_path = f"{CERTS_DIR}otel_{safe_job_name}_ca.pem"
+                container.push(ca_cert_path, ca_content, permissions=0o644)
+                job_cert_paths["ca"] = ca_cert_path
+                logger.debug(f"CA certificate for job '{job_name}' written to {ca_cert_path}")
+
+            key_content = tls_config.get("key_file")
+            if key_content and self._validate_private_key(key_content):
+                key_path = f"{CERTS_DIR}otel_{safe_job_name}_key.pem"
+                container.push(key_path, key_content, permissions=0o600)
+                job_cert_paths["key"] = key_path
+                logger.debug(f"Private key for job '{job_name}' written to {key_path}")
+
+            cert_content = tls_config.get("cert_file")
+            if cert_content and self._validate_cert(cert_content):
+                cert_path = f"{CERTS_DIR}otel_{safe_job_name}_cert.pem"
+                container.push(cert_path, cert_content, permissions=0o644)
+                job_cert_paths["cert"] = cert_path
+                logger.debug(f"Client certificate for job '{job_name}' written to {cert_path}")
+
+            if job_cert_paths:
+                cert_paths[job_name] = job_cert_paths
 
         return cert_paths
 
@@ -658,6 +672,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _validate_cert(self, cert: str) -> bool:
         pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"
         return bool(re.search(pem_pattern, cert, re.DOTALL))
+
+    @staticmethod
+    def _validate_private_key(key: str) -> bool:
+        pem_pattern = r"-----BEGIN( .*)? PRIVATE KEY-----(.*?)-----END( .*)? PRIVATE KEY-----"
+        return bool(re.search(pem_pattern, key, re.DOTALL))
 
 
 if __name__ == "__main__":
