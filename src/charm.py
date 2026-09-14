@@ -574,8 +574,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         for job in scrape_jobs:
             tls_config = job.get("tls_config", {})
             job_name = job.get("job_name", "default")
-            # Since the `MetricsEndpointProvider` accepts a `jobs` arg, we cannot rely on the job
-            # name being safe
             safe_job_name = job_name.replace("/", "_").replace(" ", "_").replace("-", "_")
             job_cert_paths = {}
 
