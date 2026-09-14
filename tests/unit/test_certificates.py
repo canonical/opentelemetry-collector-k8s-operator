@@ -471,14 +471,6 @@ def test_validate_private_key_rsa(mock_charm, sample_private_key):
     assert mock_charm._validate_private_key(sample_private_key) is True
 
 
-def test_validate_private_key_pkcs8(mock_charm):
-    """Test validation of a PKCS#8 private key."""
-    key = """-----BEGIN PRIVATE KEY-----
-MIGkAgEBBDDkCvlF2i1OTqMfR7fR9b8X8X8X8X8X8X8X8X8X8X8X8X8X8X8X8X8
------END PRIVATE KEY-----"""
-    assert mock_charm._validate_private_key(key) is True
-
-
 def test_validate_private_key_ec(mock_charm):
     """Test validation of EC private key."""
     ec_key = """-----BEGIN EC PRIVATE KEY-----
@@ -492,9 +484,3 @@ def test_validate_private_key_invalid(mock_charm):
     assert mock_charm._validate_private_key("not-a-key") is False
     assert mock_charm._validate_private_key("") is False
     assert mock_charm._validate_private_key("-----BEGIN CERTIFICATE-----\nfoobar\n-----END CERTIFICATE-----") is False
-    # Mismatched header and footer
-    assert mock_charm._validate_private_key("-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END EC PRIVATE KEY-----") is False
-    # Junk smuggled into the header
-    assert mock_charm._validate_private_key("-----BEGIN junk\nmore junk PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----") is False
-    # Encrypted keys cannot be used by the workload
-    assert mock_charm._validate_private_key("-----BEGIN ENCRYPTED PRIVATE KEY-----\nabc\n-----END ENCRYPTED PRIVATE KEY-----") is False

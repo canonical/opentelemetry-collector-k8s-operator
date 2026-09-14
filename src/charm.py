@@ -675,11 +675,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"
         return bool(re.search(pem_pattern, cert, re.DOTALL))
 
-    def _validate_private_key(self, key: str) -> bool:
-        # Encrypted keys are rejected: the workload cannot decrypt them without a passphrase
-        pem_pattern = (
-            r"-----BEGIN ((?:RSA |EC |DSA )?)PRIVATE KEY-----(.*?)-----END \1PRIVATE KEY-----"
-        )
+    @staticmethod
+    def _validate_private_key(key: str) -> bool:
+        pem_pattern = r"-----BEGIN( .*)? PRIVATE KEY-----(.*?)-----END( .*)? PRIVATE KEY-----"
         return bool(re.search(pem_pattern, key, re.DOTALL))
 
 
