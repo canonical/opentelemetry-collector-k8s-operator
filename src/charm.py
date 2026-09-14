@@ -207,9 +207,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         which hard-fails for every hook in the model once an unclean cross-model teardown
         leaves a dangling SAAS reference behind, taking this charm to error state
         (https://github.com/juju/juju/issues/23212). Counting the peers avoids the hook
-        command altogether, and to decide whether traffic is actually spread over several
-        pods the units that have joined are a better answer than the ones Juju plans to
-        create.
+        command altogether.
         """
         peers = self.model.get_relation("peers")
         return len(peers.units) + 1 if peers else 1
