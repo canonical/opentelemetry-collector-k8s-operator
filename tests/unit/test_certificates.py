@@ -262,7 +262,7 @@ def test_write_tls_certificates_to_disk_malformed_pem(mock_charm, mock_container
             "job_name": "broken-job",
             "tls_config": {
                 "ca_file": "-----BEGIN CERTIFICATE-----\ntruncated",
-                "key_file": "-----BEGIN ENCRYPTED PRIVATE KEY-----\nabc\n-----END ENCRYPTED PRIVATE KEY-----",
+                "key_file": "-----BEGIN PRIVATE KEY-----\ntruncated",
                 "cert_file": "-----BEGIN NONSENSE-----\nabc\n-----END NONSENSE-----",
             }
         }
