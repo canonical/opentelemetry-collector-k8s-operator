@@ -657,10 +657,10 @@ class ConfigManager:
                 tls_config = job.get("tls_config", {})
                 mapping = {"ca": "ca_file", "key": "key_file", "cert": "cert_file"}
                 for key, file_key in mapping.items():
-                    if key in cert_paths[job_name]:
-                        tls_config[file_key] = cert_paths[job_name][key]
-                    if key in tls_config:
-                        tls_config.pop(key)
+                    if key not in cert_paths[job_name]:
+                        continue
+                    tls_config.pop(key, None)
+                    tls_config[file_key] = cert_paths[job_name][key]
                 job["tls_config"] = tls_config
                 logger.debug(f"updated job '{job_name}' with certificate paths")
 

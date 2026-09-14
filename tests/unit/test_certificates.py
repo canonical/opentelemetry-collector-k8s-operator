@@ -89,6 +89,13 @@ def test_write_certificates_to_disk_ca_cert_scenarios(mock_charm, mock_container
     mock_container.make_dir.assert_called()
     assert mock_container.push.call_count == expected_push_count
 
+    if expected_push_count == 1:
+        mock_container.push.assert_called_once_with(
+            list(expected_results.values())[0]["ca"],
+            sample_ca_cert,
+            permissions=0o644
+        )
+
 
 @pytest.mark.parametrize(
     "job_name,container_fixture,expected_result",
@@ -211,15 +218,60 @@ def test_write_tls_certificates_to_disk_key_cert(mock_charm, mock_container, sam
     total_expected = sum(len(v) for v in expected_job_paths.values())
     assert mock_container.push.call_count == total_expected
 
-    # Verify key file is pushed with 0o600 permissions
-    for job_name in expected_job_paths:
-        if "key" in expected_job_paths[job_name]:
-            key_path = expected_job_paths[job_name]["key"]
-            found = any(
-                call_args[0] == key_path and call_kwargs.get("permissions") == 0o600
-                for call_args, call_kwargs in mock_container.push.call_args_list
-            )
-            assert found, f"Key file {key_path} not pushed with 0o600 permissions"
+    expected_contents = {"ca": sample_ca_cert, "key": sample_private_key, "cert": sample_client_cert}
+    expected_permissions = {"ca": 0o644, "key": 0o600, "cert": 0o644}
+    pushed = {
+        call_args[0]: (call_args[1], call_kwargs.get("permissions"))
+        for call_args, call_kwargs in mock_container.push.call_args_list
+    }
+    for paths in expected_job_paths.values():
+        for kind, path in paths.items():
+            assert pushed[path] == (expected_contents[kind], expected_permissions[kind])
+
+
+# Tests for _write_tls_certificates_to_disk - inline (non `_file`) tls_config keys
+def test_write_tls_certificates_to_disk_inline_keys(mock_charm, mock_container, sample_ca_cert, sample_private_key, sample_client_cert):
+    """Test that the inline `ca`/`key`/`cert` spellings are written to disk too."""
+    jobs = [
+        {
+            "job_name": "inline-job",
+            "tls_config": {
+                "ca": sample_ca_cert,
+                "key": sample_private_key,
+                "cert": sample_client_cert,
+            }
+        }
+    ]
+
+    result = mock_charm._write_tls_certificates_to_disk(jobs, mock_container)
+
+    assert result == {
+        "inline-job": {
+            "ca": "/etc/otelcol/certs/otel_inline_job_ca.pem",
+            "key": "/etc/otelcol/certs/otel_inline_job_key.pem",
+            "cert": "/etc/otelcol/certs/otel_inline_job_cert.pem",
+        }
+    }
+    assert mock_container.push.call_count == 3
+
+
+def test_write_tls_certificates_to_disk_malformed_pem(mock_charm, mock_container):
+    """Test that malformed PEM content is not written to disk."""
+    jobs = [
+        {
+            "job_name": "broken-job",
+            "tls_config": {
+                "ca_file": "-----BEGIN CERTIFICATE-----\ntruncated",
+                "key_file": "-----BEGIN ENCRYPTED PRIVATE KEY-----\nabc\n-----END ENCRYPTED PRIVATE KEY-----",
+                "cert_file": "-----BEGIN NONSENSE-----\nabc\n-----END NONSENSE-----",
+            }
+        }
+    ]
+
+    result = mock_charm._write_tls_certificates_to_disk(jobs, mock_container)
+
+    assert result == {}
+    mock_container.push.assert_not_called()
 
 
 # Tests for update_jobs_with_cert_paths method
@@ -368,10 +420,63 @@ def test_update_jobs_with_cert_paths_matching(config_manager, job_name, cert_pat
             assert file_key not in result[0]["tls_config"]
 
 
+def test_update_jobs_with_cert_paths_keeps_unwritten_material(config_manager):
+    """Test that TLS material which was not written to disk is left untouched."""
+    jobs = [
+        {
+            "job_name": "partially-written",
+            "tls_config": {
+                "ca": "inline ca which failed validation",
+                "key": "inline key which was written",
+            }
+        }
+    ]
+
+    result = config_manager.update_jobs_with_cert_paths(
+        jobs, {"partially-written": {"key": "/etc/otelcol/certs/otel_partially_written_key.pem"}}
+    )
+
+    assert result[0]["tls_config"] == {
+        "ca": "inline ca which failed validation",
+        "key_file": "/etc/otelcol/certs/otel_partially_written_key.pem",
+    }
+
+
+def test_scrape_job_pem_content_is_not_rendered_in_config(mock_charm, mock_container, config_manager, sample_ca_cert, sample_private_key, sample_client_cert):
+    """Test that no PEM content ends up in the workload config."""
+    jobs = [
+        {
+            "job_name": "mtls-job",
+            "tls_config": {
+                "ca_file": sample_ca_cert,
+                "key_file": sample_private_key,
+                "cert_file": sample_client_cert,
+            }
+        }
+    ]
+
+    cert_paths = mock_charm._write_tls_certificates_to_disk(jobs, mock_container)
+    config_manager.add_prometheus_scrape_jobs(
+        config_manager.update_jobs_with_cert_paths(jobs, cert_paths)
+    )
+
+    rendered = config_manager.config.build()
+    assert "-----BEGIN" not in rendered
+    assert "/etc/otelcol/certs/otel_mtls_job_key.pem" in rendered
+
+
 # Tests for _validate_private_key
 def test_validate_private_key_rsa(mock_charm, sample_private_key):
     """Test validation of RSA private key."""
     assert mock_charm._validate_private_key(sample_private_key) is True
+
+
+def test_validate_private_key_pkcs8(mock_charm):
+    """Test validation of a PKCS#8 private key."""
+    key = """-----BEGIN PRIVATE KEY-----
+MIGkAgEBBDDkCvlF2i1OTqMfR7fR9b8X8X8X8X8X8X8X8X8X8X8X8X8X8X8X8X8
+-----END PRIVATE KEY-----"""
+    assert mock_charm._validate_private_key(key) is True
 
 
 def test_validate_private_key_ec(mock_charm):
@@ -387,3 +492,9 @@ def test_validate_private_key_invalid(mock_charm):
     assert mock_charm._validate_private_key("not-a-key") is False
     assert mock_charm._validate_private_key("") is False
     assert mock_charm._validate_private_key("-----BEGIN CERTIFICATE-----\nfoobar\n-----END CERTIFICATE-----") is False
+    # Mismatched header and footer
+    assert mock_charm._validate_private_key("-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END EC PRIVATE KEY-----") is False
+    # Junk smuggled into the header
+    assert mock_charm._validate_private_key("-----BEGIN junk\nmore junk PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----") is False
+    # Encrypted keys cannot be used by the workload
+    assert mock_charm._validate_private_key("-----BEGIN ENCRYPTED PRIVATE KEY-----\nabc\n-----END ENCRYPTED PRIVATE KEY-----") is False
