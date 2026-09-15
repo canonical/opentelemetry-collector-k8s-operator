@@ -361,8 +361,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         metrics_consumer_jobs = integrations.scrape_metrics(self)
         # Write CA certificates to disk and update job configurations
         self._ensure_certs_dir(container)
-        cert_paths = self._write_ca_certificates_to_disk(metrics_consumer_jobs, container)
-        metrics_consumer_jobs = config_manager.update_jobs_with_ca_paths(
+        cert_paths = self._write_tls_certificates_to_disk(metrics_consumer_jobs, container)
+        metrics_consumer_jobs = config_manager.update_jobs_with_cert_paths(
             metrics_consumer_jobs, cert_paths
         )
         config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
@@ -568,30 +568,44 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         directory = ContainerPath(CERTS_DIR, container=container)
         directory.mkdir(parents=True, exist_ok=True)
 
-    def _write_ca_certificates_to_disk(
+    def _write_tls_certificates_to_disk(
         self, scrape_jobs: List[Dict], container: Container
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Dict[str, str]]:
         cert_paths = {}
 
         if not container.can_connect():
-            logger.warning("Container not accessible, skipping CA certificate processing")
+            logger.warning("Container not accessible, skipping certificate processing")
             return cert_paths
+
+        # Prometheus accepts both the inline (`ca`) and the file (`ca_file`) spelling
+        specs = (
+            ("ca", ("ca_file", "ca"), self._validate_cert, 0o644),
+            ("key", ("key_file", "key"), self._validate_private_key, 0o600),
+            ("cert", ("cert_file", "cert"), self._validate_cert, 0o644),
+        )
 
         for job in scrape_jobs:
             tls_config = job.get("tls_config", {})
-            ca_content = tls_config.get("ca")
-
-            if not ca_content or not self._validate_cert(ca_content):
-                continue
-
             job_name = job.get("job_name", "default")
-            # Since the `MetricsEndpointProvider` accepts a `jobs` arg, we cannot rely on the job name being safe
             safe_job_name = job_name.replace("/", "_").replace(" ", "_").replace("-", "_")
-            ca_cert_path = f"{CERTS_DIR}otel_{safe_job_name}_ca.pem"
+            job_cert_paths = {}
 
-            container.push(ca_cert_path, ca_content, permissions=0o644)
-            cert_paths[job_name] = ca_cert_path
-            logger.debug(f"CA certificate for job '{job_name}' written to {ca_cert_path}")
+            for kind, tls_keys, validate, permissions in specs:
+                content = next((tls_config[key] for key in tls_keys if tls_config.get(key)), None)
+                if not content or "-----BEGIN" not in content:
+                    continue
+                if not validate(content):
+                    logger.warning(
+                        f"Ignoring malformed PEM {kind} for job '{job_name}'; "
+                        "it is passed through to the workload config as-is"
+                    )
+                    continue
+                path = f"{CERTS_DIR}otel_{safe_job_name}_{kind}.pem"
+                container.push(path, content, permissions=permissions)
+                job_cert_paths[kind] = path
+
+            if job_cert_paths:
+                cert_paths[job_name] = job_cert_paths
 
         return cert_paths
 
@@ -671,6 +685,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _validate_cert(self, cert: str) -> bool:
         pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"
         return bool(re.search(pem_pattern, cert, re.DOTALL))
+
+    @staticmethod
+    def _validate_private_key(key: str) -> bool:
+        pem_pattern = r"-----BEGIN( .*)? PRIVATE KEY-----(.*?)-----END( .*)? PRIVATE KEY-----"
+        return bool(re.search(pem_pattern, key, re.DOTALL))
 
 
 if __name__ == "__main__":
