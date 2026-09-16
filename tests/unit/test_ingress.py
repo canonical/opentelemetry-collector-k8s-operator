@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 from helpers import IssuedCertificate, issued_certificate
-from ops.testing import Model, Relation, State
+from ops.testing import Model, PeerRelation, Relation, State
 
 from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
@@ -36,7 +36,12 @@ def test_active_when_scaled_without_ingress(ctx, otelcol_container):
     assert state_out.unit_status.name == "active"
 
     # AND WHEN otelcol is scaled to 2 units without ingress
-    state = State(planned_units=2, containers=otelcol_container, leader=True)
+    state = State(
+        planned_units=2,
+        relations=[PeerRelation("peers", peers_data={1: {}})],
+        containers=otelcol_container,
+        leader=True,
+    )
     state_out = ctx.run(ctx.on.update_status(), state)
 
     # THEN the charm is still Active, because the K8s Service load-balances across units
@@ -46,7 +51,7 @@ def test_active_when_scaled_without_ingress(ctx, otelcol_container):
     ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
     state = State(
         planned_units=2,
-        relations=[ingress],
+        relations=[ingress, PeerRelation("peers", peers_data={1: {}})],
         containers=otelcol_container,
         leader=True,
     )
@@ -374,7 +379,7 @@ def test_traefik_backend_waits_for_a_certificate_covering_the_service_name(ctx, 
     ssc = Relation(endpoint="receive-server-cert", interface="tls-certificate")
     state = State(
         planned_units=2,
-        relations=[ingress, ssc],
+        relations=[ingress, ssc, PeerRelation("peers", peers_data={1: {}})],
         containers=otelcol_container,
         leader=True,
         model=Model(name="otel"),

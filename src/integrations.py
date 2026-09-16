@@ -2,14 +2,16 @@
 # See LICENSE file for licensing details.
 """A helper module to manage integrations for the charm."""
 
+import hashlib
 import json
 import logging
+import lzma
 import shutil
 import socket
 from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, cast, get_args
+from typing import Any, Dict, List, Optional, Set, Tuple, cast, get_args
 from urllib.parse import urlparse
 
 import yaml
@@ -66,7 +68,7 @@ from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl.rules import JujuTopology
 from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
-from ops.model import Relation
+from ops.model import ModelError, Relation
 
 from config_builder import Port, sha256
 from constants import (
@@ -402,26 +404,115 @@ def send_charm_traces(charm: CharmBase) -> Optional[str]:
     charm.__setattr__("charm_tracing_requirer", charm_tracing_requirer)
 
 
+def _permission_denied_message(e: ModelError) -> Optional[str]:
+    """Return the error message if it is a Juju permission-denied error, else None.
+
+    Workaround for https://github.com/canonical/operator/issues/2709: ops maps the
+    "relation not found" flavor to RelationNotFoundError, but accessing a relation
+    that is gone from state fails with a plain ModelError("permission denied").
+    This helper and the guards that use it can be removed once that issue is
+    resolved and ops maps this flavor to a typed exception.
+    """
+    msg = str(e.args[0]) if e.args else ""
+    return msg if "permission denied" in msg else None
+
+
+def _dashboard_sort_key(entry: Dict[str, Any]) -> Tuple[str, str, int]:
+    """Return a total order over dashboard entries, to pick a deterministic winner.
+
+    The copy published for a group of identical ones must not depend on the order
+    in which relations are iterated.
+    """
+    return (entry["charm"], entry["title"], entry["relation_id"])
+
+
 def _get_dashboards(relations: List[Relation]) -> List[Dict[str, Any]]:
-    """Returns a deduplicated list of all dashboards received by this otelcol."""
-    aggregate = {}
+    """Returns a deduplicated list of all dashboards received by this otelcol.
+
+    Deduplication is by content, not by template id. An upstream aggregator (e.g.
+    the machine otelcol forwarding what it received over ``cos-agent``) salts the
+    template id with the originating application, so N applications of the same
+    charm forward N byte-identical copies under N distinct ids. Grafana discards
+    those copies by their ``.uid`` anyway (see
+    ``GrafanaDashboardConsumer.dashboards``), so forwarding them only inflates the
+    databag and Grafana's rendering work.
+
+    Keying by content also avoids the opposite defect of keying by template id:
+    two *different* charms shipping a dashboard with the same file name used to
+    collapse into one, silently dropping a dashboard Grafana would have displayed.
+    """
+    aggregate: Dict[str, Dict[str, Any]] = {}
     for rel in relations:
-        dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
+        if not rel.app:
+            continue
+        try:
+            dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
+        except ModelError as e:
+            # The remote application databag is unreadable ("permission denied") if
+            # the relation is gone or dangling: skip it and let the next event
+            # re-reconcile once it is fully removed.
+            # TODO: remove once canonical/operator#2709 is resolved.
+            if msg := _permission_denied_message(e):
+                logger.warning(
+                    "skipping relation %s: remote application data is not readable (%s)",
+                    rel.id,
+                    msg.strip(),
+                )
+                continue
+            raise
         if "templates" not in dashboards:
             continue
-        for template in dashboards["templates"]:
-            content = json.loads(
-                LZMABase64.decompress(dashboards["templates"][template].get("content"))
-            )
+        for template, dashboard in dashboards["templates"].items():
+            content = dashboard.get("content")
+            if not content or not isinstance(content, str):
+                logger.warning(
+                    "skipping dashboard %r from relation %s: no usable content",
+                    template,
+                    rel.id,
+                )
+                continue
             entry = {
-                "charm": dashboards["templates"][template].get("charm", "charm_name"),
+                "charm": dashboard.get("charm", "charm_name"),
                 "relation_id": rel.id,
                 "title": template,
+                # Kept compressed on purpose: the duplicates are discarded below
+                # without ever being decompressed.
                 "content": content,
             }
-            aggregate[template] = entry
+            # The received content is already an opaque, deterministically encoded
+            # blob, so it can be hashed as-is to detect identical dashboards.
+            key = hashlib.sha256(content.encode()).hexdigest()
+            incumbent = aggregate.get(key)
+            if incumbent is None:
+                aggregate[key] = entry
+            elif _dashboard_sort_key(entry) < _dashboard_sort_key(incumbent):
+                aggregate[key] = entry
 
-    return list(aggregate.values())
+    # Only the deduplicated dashboards are decompressed.
+    collected = []
+    for entry in sorted(aggregate.values(), key=_dashboard_sort_key):
+        try:
+            content = json.loads(LZMABase64.decompress(entry["content"]))
+        except (lzma.LZMAError, ValueError) as e:
+            # ValueError covers the binascii, unicode and JSON decoding errors.
+            # A corrupt dashboard must not fail the hook: that would drop the
+            # dashboards of every healthy relation along with it.
+            logger.warning(
+                "skipping dashboard %r from relation %s: undecodable content (%s)",
+                entry["title"],
+                entry["relation_id"],
+                e,
+            )
+            continue
+        collected.append(
+            {
+                "charm": entry["charm"],
+                "relation_id": entry["relation_id"],
+                "title": entry["title"],
+                "content": content,
+            }
+        )
+    return collected
 
 
 def _add_dashboards(dashboards: List[Dict[str, str]], dest_path: Path):
@@ -451,6 +542,34 @@ def _add_dashboards(dashboards: List[Dict[str, str]], dest_path: Path):
             logger.debug("updated dashboard file %s", f.name)
 
 
+def _safe_relations(charm: CharmBase, endpoint: str) -> Optional[List[Relation]]:
+    """Return the relations of an endpoint, or None if they cannot be listed.
+
+    Constructing the Relation objects of an endpoint can fail with a
+    "permission denied" ModelError if one of the relations is gone (e.g. a
+    cross-model relation removed while this unit was running a hook): ops
+    calls `relation-list` from `Relation.__init__`, and Juju denies access
+    to the gone relation instead of reporting it as missing. Since ops builds
+    every relation of the endpoint in one go, a single dangling relation makes
+    the whole endpoint unreadable.
+
+    ``None`` means "unknown", which callers must not confuse with "no
+    relations": the data received over the healthy relations of the endpoint
+    is still valid, so it must be left untouched rather than recomputed from
+    an empty list.
+
+    TODO: remove once canonical/operator#2709 is resolved.
+    """
+    try:
+        return charm.model.relations[endpoint]
+    except ModelError as e:
+        if not (msg := _permission_denied_message(e)):
+            raise
+
+        logger.warning("cannot list the %s relations: %s", endpoint, msg.strip())
+        return None
+
+
 def forward_dashboards(charm: CharmBase):
     """Instantiate the GrafanaDashboardProvider and update the dashboards in the relation databag.
 
@@ -464,9 +583,18 @@ def forward_dashboards(charm: CharmBase):
     if not charm.unit.is_leader():
         return
 
+    consumer_relations = _safe_relations(charm, "grafana-dashboards-consumer")
+    if consumer_relations is None:
+        # The received dashboards are unknown this run, which is not the same as
+        # "there are no dashboards": rewriting the databag now would delete from
+        # Grafana the dashboards of the healthy relations, which are still valid.
+        # Leave the previously published dashboards in place instead.
+        logger.warning("skipping the dashboards sync this run: no dashboards were deleted")
+        return
+
     shutil.copytree(src_path, dest_path, dirs_exist_ok=True)
     _add_dashboards(
-        dashboards=_get_dashboards(charm.model.relations["grafana-dashboards-consumer"]),
+        dashboards=_get_dashboards(consumer_relations),
         dest_path=dest_path,
     )
 
