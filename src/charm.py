@@ -169,6 +169,19 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """
         return f"{self.app.name}.{self.model.name}.svc.cluster.local"
 
+    @property
+    def _joined_units(self) -> int:
+        """Return how many units of this application are currently in the peer relation.
+
+        Deliberately not ``self.app.planned_units()``: that shells out to ``goal-state``,
+        which hard-fails for every hook in the model once an unclean cross-model teardown
+        leaves a dangling SAAS reference behind, taking this charm to error state
+        (https://github.com/juju/juju/issues/23212). Counting the peers avoids the hook
+        command altogether.
+        """
+        peers = self.model.get_relation("peers")
+        return len(peers.units) + 1 if peers else 1
+
     def internal_host(self, container: Container) -> str:
         """Return the in-cluster address that remote charms should use to reach this app.
 
@@ -417,7 +430,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # units. The exception is a TLS deployment whose certificate does not list the Service
         # name yet: until the CA issues the widened certificate every sender, ingressed or not,
         # is pinned to this one pod.
-        if self.app.planned_units() > 1 and internal_host != self.service_fqdn:
+        if self._joined_units > 1 and internal_host != self.service_fqdn:
             self.unit.status = WaitingStatus(
                 "Waiting for a certificate valid for the Kubernetes Service name"
             )
