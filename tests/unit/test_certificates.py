@@ -144,9 +144,9 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
                 {
                     "job_name": "mtls-job",
                     "tls_config": {
-                        "ca_file": "dummy_ca",
-                        "key_file": "dummy_key",
-                        "cert_file": "dummy_cert",
+                        "ca_file": "placeholder_ca",
+                        "key_file": "placeholder_key",
+                        "cert_file": "placeholder_cert",
                         "insecure_skip_verify": False
                     }
                 }
@@ -164,7 +164,7 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
                 {
                     "job_name": "cert-only",
                     "tls_config": {
-                        "cert_file": "dummy_cert",
+                        "cert_file": "placeholder_cert",
                         "insecure_skip_verify": False
                     }
                 }
@@ -180,9 +180,9 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
                 {
                     "job_name": "all-three",
                     "tls_config": {
-                        "ca_file": "dummy_ca",
-                        "key_file": "dummy_key",
-                        "cert_file": "dummy_cert",
+                        "ca_file": "placeholder_ca",
+                        "key_file": "placeholder_key",
+                        "cert_file": "placeholder_cert",
                     }
                 }
             ],
@@ -198,7 +198,7 @@ def test_write_certificates_to_disk_no_work(mock_charm, job_name, container_fixt
 )
 def test_write_tls_certificates_to_disk_key_cert(mock_charm, mock_container, sample_ca_cert, sample_private_key, sample_client_cert, jobs, expected_job_paths):
     """Test writing key and client certificate to disk alongside CA from *_file keys."""
-    cert_mapping = {"dummy_ca": sample_ca_cert, "dummy_key": sample_private_key, "dummy_cert": sample_client_cert}
+    cert_mapping = {"placeholder_ca": sample_ca_cert, "placeholder_key": sample_private_key, "placeholder_cert": sample_client_cert}
 
     for job in jobs:
         tls_config = job["tls_config"]
