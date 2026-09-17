@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import yaml
 from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer, RuleStore
 from charmlibs.pathops import PathProtocol
-from charms.certificate_transfer_interface.v1.certificate_transfer import (
+from charmlibs.interfaces.certificate_transfer import (
     CertificateTransferRequires,
 )
 from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
@@ -185,7 +185,7 @@ def send_loki_logs(charm: CharmBase) -> List[Dict]:
     charm.__setattr__("loki_consumer", loki_consumer)
     # TODO: Luca: probably don't need this anymore
     loki_consumer.reload_alerts()
-    return loki_consumer.loki_endpoints
+    return sorted(loki_consumer.loki_endpoints, key=lambda endpoint: endpoint.get("url", ""))
 
 
 def key_value_pair_string_to_dict(key_value_pair: str) -> dict:
@@ -278,7 +278,7 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
     charm.__setattr__("remote_write", remote_write)
     # TODO: Luca: probably don't need this anymore
     remote_write.reload_alerts()
-    return remote_write.endpoints
+    return sorted(remote_write.endpoints, key=lambda endpoint: endpoint["url"])
 
 
 def _get_tracing_receiver_url(protocol: ReceiverProtocol, address: "Address") -> str:
@@ -332,7 +332,7 @@ def receive_traces(charm: CharmBase, address: "Address") -> Set:
                     protocol,
                     _get_tracing_receiver_url(protocol=protocol, address=address),
                 )
-                for protocol in requested_tracing_protocols
+                for protocol in sorted(requested_tracing_protocols)
             )
         )
     return requested_tracing_protocols
@@ -889,7 +889,7 @@ def receive_ca_cert(charm: CharmBase, recv_ca_cert_folder_path: PathProtocol) ->
     # Obtain certs from relation data
     certificate_transfer = CertificateTransferRequires(charm, "receive-ca-cert")
     charm.__setattr__("certificate_transfer", certificate_transfer)
-    ca_certs = certificate_transfer.get_all_certificates()
+    ca_certs = sorted(certificate_transfer.get_all_certificates())
 
     # Clean-up previously existing certs
     if recv_ca_cert_folder_path.exists():
