@@ -705,6 +705,56 @@ def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
     )
 
 
+def _dedupe_rule_groups(
+    entries: List[Tuple[str, Dict[str, Any]]], query_type: str
+) -> List[Dict[str, Any]]:
+    """Deduplicate alert/recording rule groups by content, renaming any remaining name clashes.
+
+    Args:
+        entries: an iterable of (source, group) pairs. `source` is a short, human-readable
+            label (e.g. "relation 12") used only for deterministic ordering and for the
+            warning message below -- it is never published.
+        query_type: "promql" or "logql", used only for logging.
+
+    Returns:
+        The deduplicated list of groups. Every group in the returned list has a unique name.
+    """
+    # Byte-identical groups collapse to a single copy, regardless of name or source.
+    by_content: Dict[str, Tuple[str, Dict[str, Any]]] = {}
+    for source, group in entries:
+        content_key = hashlib.sha256(json.dumps(group, sort_keys=True).encode()).hexdigest()
+        if content_key not in by_content:
+            by_content[content_key] = (source, group)
+
+    by_name: Dict[str, List[Tuple[str, str, Dict[str, Any]]]] = {}
+    for content_key, (source, group) in by_content.items():
+        by_name.setdefault(group["name"], []).append((content_key, source, group))
+
+    deduped: List[Dict[str, Any]] = []
+    for name, candidates in sorted(by_name.items()):
+        if len(candidates) == 1:
+            deduped.append(candidates[0][2])
+            continue
+        # Same name, different content. Keep every alert/recording rule,
+        # but disambiguate all but one name so the published rules file stays valid.
+        candidates.sort(key=lambda c: (c[1], c[0]))
+        logger.warning(
+            "%d distinct %s alert rule groups from different sources collided on group name "
+            "%r; renaming all but one to avoid dropping alert rules (sources: %s)",
+            len(candidates),
+            query_type,
+            name,
+            [source for _, source, _ in candidates],
+        )
+        _, _, primary_group = candidates[0]
+        deduped.append(primary_group)
+        for content_key, _, group in candidates[1:]:
+            renamed = dict(group)
+            renamed["name"] = f"{name}_{content_key[:8]}"
+            deduped.append(renamed)
+    return deduped
+
+
 def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoint]:
     """Instantiate the OtlpRequirer.
 
@@ -721,16 +771,38 @@ def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoin
     """
     # Gather our bundled rules
     charm_root = charm.charm_dir.absolute()
-    rules = (
+    own_rules = (
         RuleStore(JujuTopology.from_charm(charm))
         .add_logql_path(charm_root.joinpath(LOKI_RULES_SRC_PATH), recursive=True)
         .add_promql_path(charm_root.joinpath(METRICS_RULES_SRC_PATH), recursive=True)
     )
 
+    # Collect (source, group) pairs -- keeping track of provenance, rather than blindly
+    # combining, is what lets `_dedupe_rule_groups` tell a genuine cross-relation group-name
+    # collision apart from a group forwarded twice, and log something actionable if one occurs.
+    logql_entries: List[Tuple[str, Dict[str, Any]]] = [
+        ("charm's own bundled rules", group) for group in own_rules.logql.groups
+    ]
+    promql_entries: List[Tuple[str, Dict[str, Any]]] = [
+        ("charm's own bundled rules", group) for group in own_rules.promql.groups
+    ]
+
     # Gather the requirer charm's rules from the databag if forwarding is desired
     if cast(bool, charm.config.get("forward_alert_rules")):
-        for rule_store in provider.rules.values():
-            rules.combine(rule_store)
+        for rel_id, rule_store in provider.rules.items():
+            logql_entries.extend(
+                (f"relation {rel_id}", group) for group in rule_store.logql.groups
+            )
+            promql_entries.extend(
+                (f"relation {rel_id}", group) for group in rule_store.promql.groups
+            )
+
+    # Deduplicate defensively: a single duplicate group name would otherwise invalidate the
+    # whole rules file for every one of the (potentially hundreds of) aggregated relations. See
+    # `_dedupe_rule_groups` for why this must be content-based rather than name-based.
+    rules = RuleStore(JujuTopology.from_charm(charm))
+    rules.logql.groups = _dedupe_rule_groups(logql_entries, "logql")
+    rules.promql.groups = _dedupe_rule_groups(promql_entries, "promql")
 
     # Publish rules for the provider
     extra_alert_labels = cast(str, charm.model.config.get("extra_alert_labels", ""))
