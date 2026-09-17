@@ -11,6 +11,11 @@ SERVER_CA_CERT_PATH: Final[str] = (
 SERVER_CERT_PATH: Final[str] = "/etc/otelcol/otelcol-server-cert.crt"
 SERVER_CERT_PRIVATE_KEY_PATH: Final[str] = "/etc/otelcol/otelcol-private-key.key"
 CONFIG_PATH: Final[str] = "/etc/otelcol/config.yaml"
+# Records the hash of the certs last applied to the system trust store, so that
+# `update-ca-certificates` (which costs several seconds) is only run when they change.
+# Kept in the workload container, alongside the trust store it guards, so a recreated
+# container drops the stamp and the trust store is rebuilt on the next reconcile.
+CA_TRUST_STAMP_PATH: Final[str] = "/etc/otelcol/.ca-trust-hash"
 METRICS_RULES_SRC_PATH: Final[str] = "src/prometheus_alert_rules"
 METRICS_RULES_DEST_PATH: Final[str] = "prometheus_alert_rules"
 LOKI_RULES_SRC_PATH: Final[str] = "src/loki_alert_rules"
