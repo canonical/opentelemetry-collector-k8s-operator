@@ -4,17 +4,24 @@
 """Feature: OTLP endpoints and rules transfer."""
 
 import dataclasses
+import hashlib
 import json
-from typing import Mapping
+from typing import List, Mapping, Tuple
 from unittest.mock import PropertyMock, patch
 
 import pytest
 from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, RuleStore
 from cosl.rules import JujuTopology
+from cosl.types import OfficialRuleFileFormat, OfficialRuleFileItem
 from cosl.utils import LZMABase64
 from ops.testing import Model, Relation, State
 
-from src.integrations import cyclic_otlp_relations_exist, send_otlp
+from src.integrations import (
+    _dedupe_rule_groups,
+    _unique_group_name,
+    cyclic_otlp_relations_exist,
+    send_otlp,
+)
 
 MODEL_NAME = "foo-model"
 MODEL_UUID = "f4d59020-c8e7-4053-8044-a2c1e5591c7f"
@@ -548,21 +555,9 @@ def test_forwarded_rules_have_topology(ctx, otelcol_container):
 
 
 def test_duplicate_rule_groups_are_deduplicated_before_publish(ctx, otelcol_container):
-    """A single duplicate group name must not invalidate the whole aggregated rules file.
-
-    If the same upstream relation's already-labeled `RuleStore` ends up folded into the
-    aggregate more than once (see `otelcol-aggregator-alert-rules-failure.md`), its group
-    name is preserved verbatim on every occurrence (already-labeled groups are not
-    re-labeled). CosTool rejects a rules file with any duplicate group name *in its
-    entirety*, which would otherwise silently drop every alert rule aggregated from every
-    other, perfectly healthy, relation too -- not just the offending one.
-
-    `send_otlp` must therefore deduplicate identical group names defensively before
-    publishing, mirroring the content-based deduplication already applied to dashboards in
-    `_get_dashboards`.
-    """
+    """A single duplicate group name must not invalidate the whole aggregated rules file."""
     # GIVEN a RuleStore with an already-labeled (topology-tagged) group name
-    already_labeled_group = {
+    already_labeled_group: OfficialRuleFileFormat = {
         "groups": [
             {
                 "name": "leafapp_12345678_metrics_rules",
@@ -591,9 +586,7 @@ def test_duplicate_rule_groups_are_deduplicated_before_publish(ctx, otelcol_cont
         config={"forward_alert_rules": True},
     )
 
-    # WHEN `provider.rules` folds the *same* RuleStore into the aggregate under two
-    # different relation ids -- simulating the still-uninvestigated root cause of the
-    # double-fold bug, whatever it may be, without depending on how it is triggered
+    # WHEN `provider.rules` has the same rule under two different relation ids
     with patch.object(
         OtlpProvider,
         "rules",
@@ -612,17 +605,7 @@ def test_duplicate_rule_groups_are_deduplicated_before_publish(ctx, otelcol_cont
 def test_rule_groups_that_collide_by_name_but_differ_in_content_are_all_kept(
     ctx, otelcol_container
 ):
-    """Deduplication must be content-based, not name-based.
-
-    See `otelcol-aggregator-rule-dedup-by-name-unsafe.md`.
-
-    `cosl.rules.Rules._is_already_modified()` is only a shape check (an 8-hex-char segment
-    bounded by underscores, ending in "rules"), not a proof that the hex segment is actually
-    derived from a real Juju topology. `OtlpProvider.rules` never re-stamps incoming group
-    names with the sender's own topology either. So two independent, individually valid
-    `receive-otlp` relations can legitimately submit a group under the exact same name with
-    different alerts in it -- deduplicating by name alone would silently drop one of them.
-    """
+    """Deduplication must be content-based, not name-based."""
     # GIVEN two independent relations whose RuleStores each contain one already-labeled
     # promql group under the exact same name, but with different alerts inside
     topology_1 = JujuTopology(
@@ -686,7 +669,7 @@ def test_rule_groups_that_collide_by_name_but_differ_in_content_are_all_kept(
     ):
         state_out = ctx.run(ctx.on.update_status(), state=state)
 
-    # THEN both alerts are published -- neither is silently dropped -- and every published
+    # THEN both alerts are published and every published
     # group name is unique, as required by Prometheus/Loki
     out_relation = state_out.get_relation(sender.id)
     published = _decompress(out_relation.local_app_data["rules"])
@@ -701,3 +684,102 @@ def test_rule_groups_that_collide_by_name_but_differ_in_content_are_all_kept(
     }
     assert "AlertFromLeaf" in published_alerts
     assert "AlertFromLeaf2" in published_alerts
+
+
+def test_unique_group_name_extends_the_disambiguator_until_unused():
+    """`_unique_group_name` extends past 8 hex chars, then falls back to a counter."""
+    content_key = hashlib.sha256(b"content").hexdigest()
+
+    # GIVEN the 8-char name is already used, but a longer prefix isn't
+    used_names = {f"foo_{content_key[:8]}"}
+    assert _unique_group_name("foo", content_key, used_names) == f"foo_{content_key[:9]}"
+
+    # GIVEN even the full content hash is already used
+    used_names = {f"foo_{content_key[:n]}" for n in range(8, len(content_key) + 1)}
+    assert _unique_group_name("foo", content_key, used_names) == f"foo_{content_key}_1"
+
+
+def test_dedupe_rule_groups_disambiguated_name_avoids_colliding_with_another_group():
+    """A disambiguated name must not collide with any other group's name."""
+    # GIVEN two groups colliding on name "foo", and a third, unrelated group whose name
+    # happens to equal the 8-char name the second "foo" would otherwise be renamed to
+    colliding: Tuple[str, OfficialRuleFileItem] = (
+        "rel2",
+        {"name": "foo", "rules": [{"alert": "A2", "expr": "up == 0"}]},
+    )
+    content_key = hashlib.sha256(json.dumps(colliding[1], sort_keys=True).encode()).hexdigest()
+    entries: List[Tuple[str, OfficialRuleFileItem]] = [
+        ("rel1", {"name": "foo", "rules": [{"alert": "A1", "expr": "up == 0"}]}),
+        colliding,
+        (
+            "rel3",
+            {"name": f"foo_{content_key[:8]}", "rules": [{"alert": "A3", "expr": "up == 0"}]},
+        ),
+    ]
+
+    # WHEN the groups are deduplicated
+    groups = _dedupe_rule_groups(entries, "promql")
+
+    # THEN every published group name is unique
+    names = [g["name"] for g in groups]
+    assert len(names) == len(set(names))
+
+
+def test_dedupe_rule_groups_keeps_every_group_in_a_three_way_collision():
+    """A three-way name collision keeps all three groups, not just two."""
+    # GIVEN three groups from different sources sharing the same name but different content
+    entries: List[Tuple[str, OfficialRuleFileItem]] = [
+        (f"rel{i}", {"name": "foo", "rules": [{"alert": f"Alert{i}", "expr": "up == 0"}]})
+        for i in range(3)
+    ]
+
+    # WHEN the groups are deduplicated
+    groups = _dedupe_rule_groups(entries, "promql")
+
+    # THEN all three are kept, each under a unique name
+    names = [g["name"] for g in groups]
+    assert len(names) == len(set(names)) == 3
+    alerts = {rule["alert"] for group in groups for rule in group["rules"] if "alert" in rule}
+    assert alerts == {"Alert0", "Alert1", "Alert2"}
+
+
+def test_duplicate_logql_rule_groups_are_deduplicated_before_publish(ctx, otelcol_container):
+    """Deduplication applies to logql groups too, not just promql."""
+    # GIVEN a RuleStore with an already-labeled logql group
+    topology = JujuTopology(
+        model="leaf-model", model_uuid="12345678-1234-4123-8123-1234567890ab", application="leaf"
+    )
+    duplicated_store = RuleStore(topology).add_logql(
+        {
+            "groups": [
+                {
+                    "name": "leafapp_12345678_loki_rules",
+                    "rules": [{"alert": "DuplicatedAlert", "expr": '{job="leaf"} |= "error"'}],
+                }
+            ]
+        }
+    )
+
+    sender = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
+    state = State(
+        relations=[sender],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+        config={"forward_alert_rules": True},
+    )
+
+    # WHEN the same RuleStore is folded into the aggregate under two relation ids
+    with patch.object(
+        OtlpProvider,
+        "rules",
+        new_callable=PropertyMock,
+        return_value={101: duplicated_store, 202: duplicated_store},
+    ):
+        state_out = ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN the published rules file contains the group only once
+    out_relation = state_out.get_relation(sender.id)
+    published = _decompress(out_relation.local_app_data["rules"])
+    group_names = [g["name"] for g in published["logql"]["groups"]]
+    assert group_names.count("leafapp_12345678_loki_rules") == 1
