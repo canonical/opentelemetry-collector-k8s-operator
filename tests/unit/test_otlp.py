@@ -15,11 +15,13 @@ from cosl.rules import JujuTopology
 from cosl.types import OfficialRuleFileFormat, OfficialRuleFileItem
 from cosl.utils import LZMABase64
 from ops.testing import Model, Relation, State
+from scenario import ActiveStatus, BlockedStatus
 
 from src.integrations import (
     _dedupe_rule_groups,
     _unique_group_name,
     cyclic_otlp_relations_exist,
+    has_invalid_otlp_rules,
     send_otlp,
 )
 
@@ -783,3 +785,110 @@ def test_duplicate_logql_rule_groups_are_deduplicated_before_publish(ctx, otelco
     published = _decompress(out_relation.local_app_data["rules"])
     group_names = [g["name"] for g in published["logql"]["groups"]]
     assert group_names.count("leafapp_12345678_loki_rules") == 1
+
+
+def test_invalid_otlp_rules_reported_by_remote_sets_blocked_status(ctx, otelcol_container):
+    """If the remote `send-otlp` provider rejects our rules, the charm is blocked."""
+    # GIVEN a send-otlp relation whose remote provider reported a validation error
+    sender = Relation(
+        "send-otlp",
+        remote_app_data={
+            "endpoints": "[]",
+            "event": json.dumps({"errors": "group name collides: otelcol_deadbeef_rules"}),
+        },
+    )
+    state = State(
+        relations=[sender],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+    )
+
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN the charm enters BlockedStatus
+    assert isinstance(state_out.unit_status, BlockedStatus)
+    assert "Invalid OTLP alert rules" in state_out.unit_status.message
+
+
+def test_valid_otlp_rules_no_blocked_status(ctx, otelcol_container):
+    """No `event`/`errors` key on `send-otlp` relations must not block the charm."""
+    # GIVEN a send-otlp relation with no validation error reported
+    sender = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
+    state = State(
+        relations=[sender],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+    )
+
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN the charm remains Active
+    assert isinstance(state_out.unit_status, ActiveStatus)
+
+
+@pytest.mark.parametrize(
+    "remote_app_data, expected",
+    (
+        pytest.param({"endpoints": "[]"}, False, id="no-event-key"),
+        pytest.param(
+            {"endpoints": "[]", "event": json.dumps(["not", "a", "dict"])},
+            False,
+            id="event-with-unexpected-shape",
+        ),
+        pytest.param(
+            {"endpoints": "[]", "event": json.dumps({"other_key": "oops"})},
+            False,
+            id="event-without-errors-key",
+        ),
+        pytest.param(
+            {"endpoints": "[]", "event": json.dumps({"errors": "boom"})},
+            True,
+            id="event-with-errors-key",
+        ),
+    ),
+)
+def test_has_invalid_otlp_rules(ctx, otelcol_container, remote_app_data, expected):
+    """`has_invalid_otlp_rules` only reports True for a well-formed `errors` event."""
+    # GIVEN a send-otlp relation with the given remote app data
+    sender = Relation("send-otlp", remote_app_data=remote_app_data)
+    state = State(
+        relations=[sender],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+    )
+
+    # WHEN has_invalid_otlp_rules is evaluated
+    with ctx(ctx.on.update_status(), state=state) as mgr:
+        mgr.run()
+        result = has_invalid_otlp_rules(mgr.charm)
+
+    # THEN it reports an error iff the event carries a well-formed `errors` message
+    assert result == expected
+
+
+def test_has_invalid_otlp_rules_ignored_on_non_leader(ctx, otelcol_container):
+    """Only the leader unit evaluates and reports `send-otlp` validation errors."""
+    # GIVEN a send-otlp relation reporting an error, but this unit isn't the leader
+    sender = Relation(
+        "send-otlp",
+        remote_app_data={"endpoints": "[]", "event": json.dumps({"errors": "boom"})},
+    )
+    state = State(
+        relations=[sender],
+        leader=False,
+        containers=otelcol_container,
+        model=MODEL,
+    )
+
+    # WHEN has_invalid_otlp_rules is evaluated
+    with ctx(ctx.on.update_status(), state=state) as mgr:
+        mgr.run()
+        result = has_invalid_otlp_rules(mgr.charm)
+
+    # THEN it returns False regardless of the reported error
+    assert result is False

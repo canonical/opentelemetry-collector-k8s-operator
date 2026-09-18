@@ -725,7 +725,7 @@ def _dedupe_rule_groups(
 ) -> List[OfficialRuleFileItem]:
     """Deduplicate alert/recording rule groups by content, renaming any remaining name clashes.
 
-    A single duplicate group name invalidates the entire rules file on the receiving end. 
+    A single duplicate group name invalidates the entire rules file on the receiving end.
     Deduplication is by content: two groups from unrelated sources could have the same name.
 
     Args:
@@ -851,6 +851,41 @@ def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
     send_apps = {rel.app.name for rel in send_relations if rel.app}
 
     return not receive_apps.isdisjoint(send_apps)
+
+
+def has_invalid_otlp_rules(charm: CharmBase) -> bool:
+    """Check whether any `send-otlp` relation reported invalid alert rules.
+
+    Returns:
+        True if any related OTLP provider reported an alert-rule validation error.
+    """
+    if not charm.unit.is_leader():
+        return False
+
+    for relation in charm.model.relations.get("send-otlp", []):
+        if not relation.app:
+            continue
+        app_data = relation.data.get(relation.app)
+        if not app_data:
+            continue
+
+        event_raw = app_data.get("event", "{}")
+        try:
+            event_data = json.loads(event_raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event_data, dict):
+            continue
+
+        if error_msg := event_data.get("errors"):
+            logger.error(
+                "Alert rule validation error reported on send-otlp relation %s: %s",
+                relation.id,
+                error_msg,
+            )
+            return True
+
+    return False
 
 
 # TODO: Luca: move this into the GrafanCloudIntegrator library

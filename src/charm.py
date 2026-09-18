@@ -492,6 +492,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if self._has_invalid_scrape_job():
             self.unit.status = BlockedStatus("Invalid scrape jobs. See debug-log")
 
+        # Invalid OTLP alert rules (rejected by the remote `send-otlp` provider)
+        if self._has_invalid_otlp_rules():
+            self.unit.status = BlockedStatus("Invalid OTLP alert rules. See debug-log")
+
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")
 
@@ -673,6 +677,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _has_invalid_scrape_job(self) -> bool:
         """Check if any metrics-endpoint relation reported invalid scrape jobs."""
         return self.metrics_consumer.has_invalid_scrape_jobs()
+
+    def _has_invalid_otlp_rules(self) -> bool:
+        """Check if any send-otlp relation reported invalid alert rules."""
+        return integrations.has_invalid_otlp_rules(self)
 
     def _resource_reqs_from_config(self) -> ResourceRequirements:
         limits = {
