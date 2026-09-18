@@ -4,16 +4,26 @@
 """Feature: OTLP endpoints and rules transfer."""
 
 import dataclasses
+import hashlib
 import json
-from typing import Mapping
-from unittest.mock import patch
+from typing import List, Mapping, Tuple
+from unittest.mock import PropertyMock, patch
 
 import pytest
-from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider
+from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, RuleStore
+from cosl.rules import JujuTopology
+from cosl.types import OfficialRuleFileFormat, OfficialRuleFileItem
 from cosl.utils import LZMABase64
 from ops.testing import Model, Relation, State
+from scenario import ActiveStatus, BlockedStatus
 
-from src.integrations import cyclic_otlp_relations_exist, send_otlp
+from src.integrations import (
+    _dedupe_rule_groups,
+    _unique_group_name,
+    cyclic_otlp_relations_exist,
+    has_invalid_otlp_rules,
+    send_otlp,
+)
 
 MODEL_NAME = "foo-model"
 MODEL_UUID = "f4d59020-c8e7-4053-8044-a2c1e5591c7f"
@@ -544,3 +554,341 @@ def test_forwarded_rules_have_topology(ctx, otelcol_container):
         if relation.endpoint == "send-otlp":
             # THEN otelcol adds its own topology metadata to the databag
             assert json.loads(relation.local_app_data.get("metadata")) == OTELCOL_METADATA
+
+
+def test_duplicate_rule_groups_are_deduplicated_before_publish(ctx, otelcol_container):
+    """A single duplicate group name must not invalidate the whole aggregated rules file."""
+    # GIVEN a RuleStore with an already-labeled (topology-tagged) group name
+    already_labeled_group: OfficialRuleFileFormat = {
+        "groups": [
+            {
+                "name": "leafapp_12345678_metrics_rules",
+                "rules": [
+                    {
+                        "alert": "DuplicatedAlert",
+                        "expr": "up == 0",
+                        "for": "0m",
+                        "labels": {"severity": "critical"},
+                    }
+                ],
+            }
+        ]
+    }
+    topology = JujuTopology(
+        model="leaf-model", model_uuid="12345678-1234-4123-8123-1234567890ab", application="leaf"
+    )
+    duplicated_store = RuleStore(topology).add_promql(already_labeled_group)
+
+    sender = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
+    state = State(
+        relations=[sender],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+        config={"forward_alert_rules": True},
+    )
+
+    # WHEN `provider.rules` has the same rule under two different relation ids
+    with patch.object(
+        OtlpProvider,
+        "rules",
+        new_callable=PropertyMock,
+        return_value={101: duplicated_store, 202: duplicated_store},
+    ):
+        state_out = ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN the published rules file contains the group only once
+    out_relation = state_out.get_relation(sender.id)
+    published = _decompress(out_relation.local_app_data["rules"])
+    group_names = [g["name"] for g in published["promql"]["groups"]]
+    assert group_names.count("leafapp_12345678_metrics_rules") == 1
+
+
+def test_rule_groups_that_collide_by_name_but_differ_in_content_are_all_kept(
+    ctx, otelcol_container
+):
+    """Deduplication must be content-based, not name-based."""
+    # GIVEN two independent relations whose RuleStores each contain one already-labeled
+    # promql group under the exact same name, but with different alerts inside
+    topology_1 = JujuTopology(
+        model="leaf-model", model_uuid="12345678-1234-4123-8123-1234567890ab", application="leaf"
+    )
+    store_1 = RuleStore(topology_1).add_promql(
+        {
+            "groups": [
+                {
+                    "name": "collision_deadbeef_demo_rules",
+                    "rules": [
+                        {
+                            "alert": "AlertFromLeaf",
+                            "expr": "up == 0",
+                            "for": "0m",
+                            "labels": {"severity": "critical"},
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    topology_2 = JujuTopology(
+        model="leaf2-model",
+        model_uuid="87654321-4321-4321-8321-ba0987654321",
+        application="leaf2",
+    )
+    store_2 = RuleStore(topology_2).add_promql(
+        {
+            "groups": [
+                {
+                    "name": "collision_deadbeef_demo_rules",
+                    "rules": [
+                        {
+                            "alert": "AlertFromLeaf2",
+                            "expr": "up == 0",
+                            "for": "0m",
+                            "labels": {"severity": "critical"},
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    sender = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
+    state = State(
+        relations=[sender],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+        config={"forward_alert_rules": True},
+    )
+
+    # WHEN the aggregator reconciles with both relations' rules present
+    with patch.object(
+        OtlpProvider,
+        "rules",
+        new_callable=PropertyMock,
+        return_value={101: store_1, 202: store_2},
+    ):
+        state_out = ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN both alerts are published and every published
+    # group name is unique, as required by Prometheus/Loki
+    out_relation = state_out.get_relation(sender.id)
+    published = _decompress(out_relation.local_app_data["rules"])
+    group_names = [g["name"] for g in published["promql"]["groups"]]
+    assert len(group_names) == len(set(group_names))
+
+    published_alerts = {
+        rule["alert"]
+        for group in published["promql"]["groups"]
+        for rule in group["rules"]
+        if "alert" in rule
+    }
+    assert "AlertFromLeaf" in published_alerts
+    assert "AlertFromLeaf2" in published_alerts
+
+
+def test_unique_group_name_extends_the_disambiguator_until_unused():
+    """`_unique_group_name` extends past 8 hex chars, then falls back to a counter."""
+    content_key = hashlib.sha256(b"content").hexdigest()
+
+    # GIVEN the 8-char name is already used, but a longer prefix isn't
+    used_names = {f"foo_{content_key[:8]}"}
+    assert _unique_group_name("foo", content_key, used_names) == f"foo_{content_key[:9]}"
+
+    # GIVEN even the full content hash is already used
+    used_names = {f"foo_{content_key[:n]}" for n in range(8, len(content_key) + 1)}
+    assert _unique_group_name("foo", content_key, used_names) == f"foo_{content_key}_1"
+
+
+def test_dedupe_rule_groups_disambiguated_name_avoids_colliding_with_another_group():
+    """A disambiguated name must not collide with any other group's name."""
+    # GIVEN two groups colliding on name "foo", and a third, unrelated group whose name
+    # happens to equal the 8-char name the second "foo" would otherwise be renamed to
+    colliding: Tuple[str, OfficialRuleFileItem] = (
+        "rel2",
+        {"name": "foo", "rules": [{"alert": "A2", "expr": "up == 0"}]},
+    )
+    content_key = hashlib.sha256(json.dumps(colliding[1], sort_keys=True).encode()).hexdigest()
+    entries: List[Tuple[str, OfficialRuleFileItem]] = [
+        ("rel1", {"name": "foo", "rules": [{"alert": "A1", "expr": "up == 0"}]}),
+        colliding,
+        (
+            "rel3",
+            {"name": f"foo_{content_key[:8]}", "rules": [{"alert": "A3", "expr": "up == 0"}]},
+        ),
+    ]
+
+    # WHEN the groups are deduplicated
+    groups = _dedupe_rule_groups(entries, "promql")
+
+    # THEN every published group name is unique
+    names = [g["name"] for g in groups]
+    assert len(names) == len(set(names))
+
+
+def test_dedupe_rule_groups_keeps_every_group_in_a_three_way_collision():
+    """A three-way name collision keeps all three groups, not just two."""
+    # GIVEN three groups from different sources sharing the same name but different content
+    entries: List[Tuple[str, OfficialRuleFileItem]] = [
+        (f"rel{i}", {"name": "foo", "rules": [{"alert": f"Alert{i}", "expr": "up == 0"}]})
+        for i in range(3)
+    ]
+
+    # WHEN the groups are deduplicated
+    groups = _dedupe_rule_groups(entries, "promql")
+
+    # THEN all three are kept, each under a unique name
+    names = [g["name"] for g in groups]
+    assert len(names) == len(set(names)) == 3
+    alerts = {rule["alert"] for group in groups for rule in group["rules"] if "alert" in rule}
+    assert alerts == {"Alert0", "Alert1", "Alert2"}
+
+
+def test_duplicate_logql_rule_groups_are_deduplicated_before_publish(ctx, otelcol_container):
+    """Deduplication applies to logql groups too, not just promql."""
+    # GIVEN a RuleStore with an already-labeled logql group
+    topology = JujuTopology(
+        model="leaf-model", model_uuid="12345678-1234-4123-8123-1234567890ab", application="leaf"
+    )
+    duplicated_store = RuleStore(topology).add_logql(
+        {
+            "groups": [
+                {
+                    "name": "leafapp_12345678_loki_rules",
+                    "rules": [{"alert": "DuplicatedAlert", "expr": '{job="leaf"} |= "error"'}],
+                }
+            ]
+        }
+    )
+
+    sender = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
+    state = State(
+        relations=[sender],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+        config={"forward_alert_rules": True},
+    )
+
+    # WHEN the same RuleStore is folded into the aggregate under two relation ids
+    with patch.object(
+        OtlpProvider,
+        "rules",
+        new_callable=PropertyMock,
+        return_value={101: duplicated_store, 202: duplicated_store},
+    ):
+        state_out = ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN the published rules file contains the group only once
+    out_relation = state_out.get_relation(sender.id)
+    published = _decompress(out_relation.local_app_data["rules"])
+    group_names = [g["name"] for g in published["logql"]["groups"]]
+    assert group_names.count("leafapp_12345678_loki_rules") == 1
+
+
+def test_invalid_otlp_rules_reported_by_remote_sets_blocked_status(ctx, otelcol_container):
+    """If the remote `send-otlp` provider rejects our rules, the charm is blocked."""
+    # GIVEN a send-otlp relation whose remote provider reported a validation error
+    sender = Relation(
+        "send-otlp",
+        remote_app_data={
+            "endpoints": "[]",
+            "event": json.dumps({"errors": "group name collides: otelcol_deadbeef_rules"}),
+        },
+    )
+    state = State(
+        relations=[sender],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+    )
+
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN the charm enters BlockedStatus
+    assert isinstance(state_out.unit_status, BlockedStatus)
+    assert "Invalid OTLP alert rules" in state_out.unit_status.message
+
+
+def test_valid_otlp_rules_no_blocked_status(ctx, otelcol_container):
+    """No `event`/`errors` key on `send-otlp` relations must not block the charm."""
+    # GIVEN a send-otlp relation with no validation error reported
+    sender = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
+    state = State(
+        relations=[sender],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+    )
+
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN the charm remains Active
+    assert isinstance(state_out.unit_status, ActiveStatus)
+
+
+@pytest.mark.parametrize(
+    "remote_app_data, expected",
+    (
+        pytest.param({"endpoints": "[]"}, False, id="no-event-key"),
+        pytest.param(
+            {"endpoints": "[]", "event": json.dumps(["not", "a", "dict"])},
+            False,
+            id="event-with-unexpected-shape",
+        ),
+        pytest.param(
+            {"endpoints": "[]", "event": json.dumps({"other_key": "oops"})},
+            False,
+            id="event-without-errors-key",
+        ),
+        pytest.param(
+            {"endpoints": "[]", "event": json.dumps({"errors": "boom"})},
+            True,
+            id="event-with-errors-key",
+        ),
+    ),
+)
+def test_has_invalid_otlp_rules(ctx, otelcol_container, remote_app_data, expected):
+    """`has_invalid_otlp_rules` only reports True for a well-formed `errors` event."""
+    # GIVEN a send-otlp relation with the given remote app data
+    sender = Relation("send-otlp", remote_app_data=remote_app_data)
+    state = State(
+        relations=[sender],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+    )
+
+    # WHEN has_invalid_otlp_rules is evaluated
+    with ctx(ctx.on.update_status(), state=state) as mgr:
+        mgr.run()
+        result = has_invalid_otlp_rules(mgr.charm)
+
+    # THEN it reports an error iff the event carries a well-formed `errors` message
+    assert result == expected
+
+
+def test_has_invalid_otlp_rules_ignored_on_non_leader(ctx, otelcol_container):
+    """Only the leader unit evaluates and reports `send-otlp` validation errors."""
+    # GIVEN a send-otlp relation reporting an error, but this unit isn't the leader
+    sender = Relation(
+        "send-otlp",
+        remote_app_data={"endpoints": "[]", "event": json.dumps({"errors": "boom"})},
+    )
+    state = State(
+        relations=[sender],
+        leader=False,
+        containers=otelcol_container,
+        model=MODEL,
+    )
+
+    # WHEN has_invalid_otlp_rules is evaluated
+    with ctx(ctx.on.update_status(), state=state) as mgr:
+        mgr.run()
+        result = has_invalid_otlp_rules(mgr.charm)
+
+    # THEN it returns False regardless of the reported error
+    assert result is False
