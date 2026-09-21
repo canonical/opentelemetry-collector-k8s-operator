@@ -787,6 +787,61 @@ def test_duplicate_logql_rule_groups_are_deduplicated_before_publish(ctx, otelco
     assert group_names.count("leafapp_12345678_loki_rules") == 1
 
 
+def test_diamond_topology_duplicates_are_deduplicated_via_real_relations(
+    ctx, otelcol_container, all_rules
+):
+    """Regression test for the realistic case that motivated deduplication.
+
+    A diamond-shaped aggregation topology, where the exact same  leaf rules reach this 
+    aggregator twice, over two independent `receive-otlp` relations from two aggregators.
+    """
+    # GIVEN the exact same compressed rules payload arriving over two distinct receive-otlp
+    # relations, from two different remote applications (e.g. two aggregators upstream of a
+    # single, shared leaf charm)
+    payload = json.dumps(LZMABase64.compress(json.dumps(all_rules)))
+    metadata = json.dumps(OTELCOL_METADATA)
+    receiver_path_a = Relation(
+        "receive-otlp",
+        remote_app_name="aggregator-path-a",
+        remote_app_data={"rules": payload, "metadata": metadata},
+    )
+    receiver_path_b = Relation(
+        "receive-otlp",
+        remote_app_name="aggregator-path-b",
+        remote_app_data={"rules": payload, "metadata": metadata},
+    )
+    sender = Relation("send-otlp", remote_app_data={"endpoints": "[]"})
+    state = State(
+        relations=[receiver_path_a, receiver_path_b, sender],
+        leader=True,
+        containers=otelcol_container,
+        model=MODEL,
+        config={"forward_alert_rules": True},
+    )
+
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN every published group name is unique for both query types, i.e. the rules
+    # forwarded twice were collapsed into a single copy rather than duplicated
+    out_relation = state_out.get_relation(sender.id)
+    published = _decompress(out_relation.local_app_data["rules"])
+    for query_type in ("promql", "logql"):
+        group_names = [g["name"] for g in published[query_type]["groups"]]
+        assert len(group_names) == len(set(group_names)), (
+            f"{query_type} groups were duplicated instead of deduplicated: {group_names}"
+        )
+
+    # AND the alerts from the (deduplicated) leaf rules are still present exactly once
+    published_promql_alerts = [
+        rule["alert"]
+        for group in published["promql"]["groups"]
+        for rule in group["rules"]
+        if "alert" in rule
+    ]
+    assert published_promql_alerts.count("Workload Missing") == 1
+
+
 def test_invalid_otlp_rules_reported_by_remote_sets_blocked_status(ctx, otelcol_container):
     """If the remote `send-otlp` provider rejects our rules, the charm is blocked."""
     # GIVEN a send-otlp relation whose remote provider reported a validation error
