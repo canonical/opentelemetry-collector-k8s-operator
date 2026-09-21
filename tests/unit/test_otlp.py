@@ -792,7 +792,7 @@ def test_diamond_topology_duplicates_are_deduplicated_via_real_relations(
 ):
     """Regression test for the realistic case that motivated deduplication.
 
-    A diamond-shaped aggregation topology, where the exact same  leaf rules reach this 
+    A diamond-shaped aggregation topology, where the exact same  leaf rules reach this
     aggregator twice, over two independent `receive-otlp` relations from two aggregators.
     """
     # GIVEN the exact same compressed rules payload arriving over two distinct receive-otlp
