@@ -9,10 +9,12 @@ import re
 from typing import Any, Dict, List, Optional, cast
 
 from charmlibs.pathops import ContainerPath
+from charms.loki_k8s.v1.loki_push_api import LokiPushApiProvider
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     KubernetesComputeResourcesPatch,
     adjust_resource_requirements,
 )
+from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointConsumer
 from cosl import JujuTopology, MandatoryRelationPairs
 from lightkube.models.core_v1 import ResourceRequirements
 from ops import BlockedStatus, CharmBase, Container, StatusBase, main
@@ -162,6 +164,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
     _container_name = "otelcol"
+    metrics_consumer: MetricsEndpointConsumer
+    loki_provider: LokiPushApiProvider
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -476,6 +480,22 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if integrations.cyclic_otlp_relations_exist(self):
             self.unit.status = BlockedStatus("cyclic OTLP relations exist")
 
+        # Invalid alert rules
+        if self._has_invalid_prometheus_alerts():
+            self.unit.status = BlockedStatus("Invalid Prometheus alerts. See debug-log")
+
+        # Invalid loki alert rules
+        if self._has_invalid_loki_alerts():
+            self.unit.status = BlockedStatus("Invalid Loki alerts. See debug-log")
+
+        # Invalid scrape jobs
+        if self._has_invalid_scrape_job():
+            self.unit.status = BlockedStatus("Invalid scrape jobs. See debug-log")
+
+        # Invalid OTLP alert rules (rejected by the remote `send-otlp` provider)
+        if self._has_invalid_otlp_rules():
+            self.unit.status = BlockedStatus("Invalid OTLP alert rules. See debug-log")
+
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")
 
@@ -645,6 +665,22 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     @property
     def _has_server_cert_relation(self) -> bool:
         return any(self.model.relations.get("receive-server-cert", []))
+
+    def _has_invalid_prometheus_alerts(self) -> bool:
+        """Check if any metrics-endpoint relation reported invalid alert rules."""
+        return self.metrics_consumer.has_invalid_alert_rules()
+
+    def _has_invalid_loki_alerts(self) -> bool:
+        """Check if any receive-loki-logs relation reported invalid alert rules."""
+        return self.loki_provider.has_invalid_alert_rules()
+
+    def _has_invalid_scrape_job(self) -> bool:
+        """Check if any metrics-endpoint relation reported invalid scrape jobs."""
+        return self.metrics_consumer.has_invalid_scrape_jobs()
+
+    def _has_invalid_otlp_rules(self) -> bool:
+        """Check if any send-otlp relation reported invalid alert rules."""
+        return integrations.has_invalid_otlp_rules(self)
 
     def _resource_reqs_from_config(self) -> ResourceRequirements:
         limits = {
