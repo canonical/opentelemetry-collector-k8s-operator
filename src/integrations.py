@@ -66,6 +66,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
 )
 from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl.rules import JujuTopology
+from cosl.types import OfficialRuleFileItem
 from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
 from ops.model import ModelError, Relation
@@ -705,6 +706,75 @@ def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
     )
 
 
+def _unique_group_name(base: str, content_key: str, used_names: Set[str]) -> str:
+    """Return a name derived from `base`/`content_key` that isn't already in `used_names`."""
+    for length in range(8, len(content_key) + 1):
+        candidate = f"{base}_{content_key[:length]}"
+        if candidate not in used_names:
+            return candidate
+    # The full content hash also collided with an existing name: fall back to a counter.
+    candidate, suffix = f"{base}_{content_key}", 0
+    while candidate in used_names:
+        suffix += 1
+        candidate = f"{base}_{content_key}_{suffix}"
+    return candidate
+
+
+def _dedupe_rule_groups(
+    entries: List[Tuple[str, OfficialRuleFileItem]], query_type: str
+) -> List[OfficialRuleFileItem]:
+    """Deduplicate alert/recording rule groups by content, renaming any remaining name clashes.
+
+    A single duplicate group name invalidates the entire rules file on the receiving end.
+    Deduplication is by content: two groups from unrelated sources could have the same name.
+
+    Args:
+        entries: an iterable of (source, group) pairs. `source` is a short, human-readable
+            label (e.g. "relation 12") used only for deterministic ordering and for the
+            warning message below -- it is never published.
+        query_type: "promql" or "logql", used only for logging.
+
+    Returns:
+        The deduplicated list of groups. Every group in the returned list has a unique name.
+    """
+    # Byte-identical groups collapse to a single copy, regardless of name or source.
+    by_content: Dict[str, Tuple[str, OfficialRuleFileItem]] = {}
+    for source, group in entries:
+        content_key = hashlib.sha256(json.dumps(group, sort_keys=True).encode()).hexdigest()
+        if content_key not in by_content:
+            by_content[content_key] = (source, group)
+
+    by_name: Dict[str, List[Tuple[str, str, OfficialRuleFileItem]]] = {}
+    for content_key, (source, group) in by_content.items():
+        by_name.setdefault(group["name"], []).append((content_key, source, group))
+
+    used_names: Set[str] = set(by_name.keys())
+
+    deduped: List[OfficialRuleFileItem] = []
+    for name, candidates in sorted(by_name.items()):
+        if len(candidates) == 1:
+            deduped.append(candidates[0][2])
+            continue
+        # Same name, different content. Keep every alert/recording rule,
+        # but disambiguate all but one name so the published rules file stays valid.
+        candidates.sort(key=lambda c: (c[1], c[0]))
+        logger.warning(
+            "%d distinct %s alert rule groups from different sources collided on group name "
+            "%r; renaming all but one to avoid dropping alert rules (sources: %s)",
+            len(candidates),
+            query_type,
+            name,
+            [source for _, source, _ in candidates],
+        )
+        _, _, primary_group = candidates[0]
+        deduped.append(primary_group)
+        for content_key, _, group in candidates[1:]:
+            new_name = _unique_group_name(name, content_key, used_names)
+            used_names.add(new_name)
+            deduped.append(cast(OfficialRuleFileItem, {**group, "name": new_name}))
+    return deduped
+
+
 def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoint]:
     """Instantiate the OtlpRequirer.
 
@@ -721,16 +791,33 @@ def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoin
     """
     # Gather our bundled rules
     charm_root = charm.charm_dir.absolute()
-    rules = (
+    own_rules = (
         RuleStore(JujuTopology.from_charm(charm))
         .add_logql_path(charm_root.joinpath(LOKI_RULES_SRC_PATH), recursive=True)
         .add_promql_path(charm_root.joinpath(METRICS_RULES_SRC_PATH), recursive=True)
     )
 
+    logql_entries: List[Tuple[str, OfficialRuleFileItem]] = [
+        ("charm's own bundled rules", group) for group in own_rules.logql.groups
+    ]
+    promql_entries: List[Tuple[str, OfficialRuleFileItem]] = [
+        ("charm's own bundled rules", group) for group in own_rules.promql.groups
+    ]
+
     # Gather the requirer charm's rules from the databag if forwarding is desired
     if cast(bool, charm.config.get("forward_alert_rules")):
-        for rule_store in provider.rules.values():
-            rules.combine(rule_store)
+        for rel_id, rule_store in provider.rules.items():
+            logql_entries.extend(
+                (f"relation {rel_id}", group) for group in rule_store.logql.groups
+            )
+            promql_entries.extend(
+                (f"relation {rel_id}", group) for group in rule_store.promql.groups
+            )
+
+    # Deduplicate rules by content
+    rules = RuleStore(JujuTopology.from_charm(charm))
+    rules.logql.groups = _dedupe_rule_groups(logql_entries, "logql")
+    rules.promql.groups = _dedupe_rule_groups(promql_entries, "promql")
 
     # Publish rules for the provider
     extra_alert_labels = cast(str, charm.model.config.get("extra_alert_labels", ""))
@@ -764,6 +851,41 @@ def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
     send_apps = {rel.app.name for rel in send_relations if rel.app}
 
     return not receive_apps.isdisjoint(send_apps)
+
+
+def has_invalid_otlp_rules(charm: CharmBase) -> bool:
+    """Check whether any `send-otlp` relation reported invalid alert rules.
+
+    Returns:
+        True if any related OTLP provider reported an alert-rule validation error.
+    """
+    if not charm.unit.is_leader():
+        return False
+
+    for relation in charm.model.relations.get("send-otlp", []):
+        if not relation.app:
+            continue
+        app_data = relation.data.get(relation.app)
+        if not app_data:
+            continue
+
+        event_raw = app_data.get("event", "{}")
+        try:
+            event_data = json.loads(event_raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event_data, dict):
+            continue
+
+        if error_msg := event_data.get("errors"):
+            logger.error(
+                "Alert rule validation error reported on send-otlp relation %s: %s",
+                relation.id,
+                error_msg,
+            )
+            return True
+
+    return False
 
 
 # TODO: Luca: move this into the GrafanCloudIntegrator library
