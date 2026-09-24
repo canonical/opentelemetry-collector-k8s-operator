@@ -558,6 +558,7 @@ class PrometheusRemoteWriteConsumer(Object):
         peer_relation_name: str,
         forward_alert_rules: bool = True,
         extra_alert_labels: Dict = {},
+        mimir_tenant_id: Optional[str] = None,
     ):
         """API to manage a required relation with the `prometheus_remote_write` interface.
 
@@ -574,6 +575,9 @@ class PrometheusRemoteWriteConsumer(Object):
             peer_relation_name: Name of the peer relation containing units of this charm.
             forward_alert_rules: Flag to toggle forwarding of charmed alert rules.
             extra_alert_labels: Dict of extra labels to inject alert rules with.
+            mimir_tenant_id: The Mimir tenant ID to be announced to the remote-write
+                provider (e.g. Mimir) over the relation app data bag. If empty or None,
+                no tenant ID is sent.
 
         Raises:
             RelationNotFoundError: If there is no relation in the charm's metadata.yaml
@@ -604,6 +608,7 @@ class PrometheusRemoteWriteConsumer(Object):
         self._alert_rules_path = alert_rules_path
         self._forward_alert_rules = forward_alert_rules
         self._extra_alert_labels = extra_alert_labels
+        self._mimir_tenant_id = mimir_tenant_id or ""
         self._peer_relation_name = peer_relation_name
         self.topology = JujuTopology.from_charm(charm)
         self._tool = CosTool("promql")
@@ -685,6 +690,12 @@ class PrometheusRemoteWriteConsumer(Object):
         relation.data[self._charm.app][ALERT_RULES_KEY] = _encode_alert_rules(
             alert_rules_as_dict, _best_alert_rules_encoding(remote_app_databag)
         )
+
+        # Announce the Mimir tenant ID (if any) to the provider side (e.g. Mimir).
+        if self._mimir_tenant_id:
+            relation.data[self._charm.app]["mimir_tenant_id"] = self._mimir_tenant_id
+        elif "mimir_tenant_id" in relation.data[self._charm.app]:
+            del relation.data[self._charm.app]["mimir_tenant_id"]
 
     def reload_alerts(self) -> None:
         """Reload alert rules from disk and push to relation data."""
@@ -1251,4 +1262,24 @@ class PrometheusRemoteWriteProvider(Object):
                 return True
 
         return False
+
+    @property
+    def mimir_tenant_ids(self) -> List[str]:
+        """Map relation IDs to the Mimir tenant IDs reported by consumers.
+
+        Consumers announce the tenant ID they are configured with (e.g. via a
+        ``mimir_tenant_id`` config option) over the relation app data bag. This
+        helper exposes the ids announced by each related consumer.
+
+        Returns:
+            A mapping of relation ID to tenant ID for each relation whose consumer
+            announced a non-empty tenant ID.
+        """
+        tenants: List[str] = []
+        for relation in self._charm.model.relations.get(self._relation_name, []):
+            if not relation.app:
+                continue
+            if tenant := relation.data[relation.app].get("mimir_tenant_id", ""):
+                tenants.append(tenant)
+        return tenants
 
