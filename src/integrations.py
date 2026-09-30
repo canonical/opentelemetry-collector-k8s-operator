@@ -877,7 +877,7 @@ def has_invalid_otlp_rules(charm: CharmBase) -> bool:
         event_raw = app_data.get("event", "{}")
         try:
             event_data = json.loads(event_raw)
-        except json.JSONDecodeError, TypeError:
+        except (json.JSONDecodeError, TypeError):
             continue
         if not isinstance(event_data, dict):
             continue
