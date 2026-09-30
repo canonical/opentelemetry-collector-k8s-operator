@@ -11,6 +11,11 @@ SERVER_CA_CERT_PATH: Final[str] = (
 SERVER_CERT_PATH: Final[str] = "/etc/otelcol/otelcol-server-cert.crt"
 SERVER_CERT_PRIVATE_KEY_PATH: Final[str] = "/etc/otelcol/otelcol-private-key.key"
 CONFIG_PATH: Final[str] = "/etc/otelcol/config.yaml"
+# Records the hash of the certs last applied to the system trust store, so that
+# `update-ca-certificates` (which costs several seconds) is only run when they change.
+# Kept in the workload container, alongside the trust store it guards, so a recreated
+# container drops the stamp and the trust store is rebuilt on the next reconcile.
+CA_TRUST_STAMP_PATH: Final[str] = "/etc/otelcol/.ca-trust-hash"
 METRICS_RULES_SRC_PATH: Final[str] = "src/prometheus_alert_rules"
 METRICS_RULES_DEST_PATH: Final[str] = "prometheus_alert_rules"
 LOKI_RULES_SRC_PATH: Final[str] = "src/loki_alert_rules"
@@ -23,3 +28,6 @@ FILE_STORAGE_DIRECTORY: Final[str] = "/otelcol"
 CERTS_DIR: Final[str] = "/etc/otelcol/certs/"
 EXTERNAL_CONFIG_SECRETS_DIR: Final[str] = "/etc/otelcol/external_config_secrets/"
 INGRESS_IP_MATCHER: Final[str] = "ClientIP(`0.0.0.0/0`)"
+INTERNAL_LOGS_FILTER_ID: Final[str] = "internal-telemetry-loop-breaker"
+INTERNAL_TELEMETRY_SERVICE_NAME: Final[str] = "otelcol-internal"
+NON_LOOPING_EXPORTER_PREFIXES: Final[tuple] = ("nop", "debug")

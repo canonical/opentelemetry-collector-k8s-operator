@@ -2,20 +2,22 @@
 # See LICENSE file for licensing details.
 """A helper module to manage integrations for the charm."""
 
+import hashlib
 import json
 import logging
+import lzma
 import shutil
 import socket
 from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, cast, get_args
+from typing import Any, Dict, List, Optional, Set, Tuple, cast, get_args
 from urllib.parse import urlparse
 
 import yaml
 from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer, RuleStore
 from charmlibs.pathops import PathProtocol
-from charms.certificate_transfer_interface.v1.certificate_transfer import (
+from charmlibs.interfaces.certificate_transfer import (
     CertificateTransferRequires,
 )
 from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
@@ -36,7 +38,9 @@ from charms.istio_ingress_k8s.v0.istio_ingress_route import (
     ProtocolType,
 )
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer, LokiPushApiProvider
-from charms.opentelemetry_collector_integrator.v0.opentelemetry_collector_integrator import OtelcolIntegratorRequirer
+from charms.opentelemetry_collector_integrator.v0.opentelemetry_collector_integrator import (
+    OtelcolIntegratorRequirer,
+)
 from charms.prometheus_k8s.v0.prometheus_scrape import (
     MetricsEndpointConsumer,
 )
@@ -55,15 +59,17 @@ from charms.tempo_coordinator_k8s.v0.tracing import (
     receiver_protocol_to_transport_protocol,
 )
 from charms.tls_certificates_interface.v4.tls_certificates import (
+    Certificate,
     CertificateRequestAttributes,
     Mode,
     TLSCertificatesRequiresV4,
 )
 from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 from cosl.rules import JujuTopology
+from cosl.types import OfficialRuleFileItem
 from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
-from ops.model import Relation
+from ops.model import ModelError, Relation
 
 from config_builder import Port, sha256
 from constants import (
@@ -181,7 +187,7 @@ def send_loki_logs(charm: CharmBase) -> List[Dict]:
     charm.__setattr__("loki_consumer", loki_consumer)
     # TODO: Luca: probably don't need this anymore
     loki_consumer.reload_alerts()
-    return loki_consumer.loki_endpoints
+    return sorted(loki_consumer.loki_endpoints, key=lambda endpoint: endpoint.get("url", ""))
 
 
 def key_value_pair_string_to_dict(key_value_pair: str) -> dict:
@@ -274,37 +280,36 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
     charm.__setattr__("remote_write", remote_write)
     # TODO: Luca: probably don't need this anymore
     remote_write.reload_alerts()
-    return remote_write.endpoints
+    return sorted(remote_write.endpoints, key=lambda endpoint: endpoint["url"])
 
 
-def _get_tracing_receiver_url(protocol: ReceiverProtocol, tls_enabled: bool) -> str:
+def _get_tracing_receiver_url(protocol: ReceiverProtocol, address: "Address") -> str:
     """Build the endpoint URL for a tracing receiver.
 
     Args:
         protocol: The tracing protocol to build the URL for.
-        tls_enabled: Whether to use HTTPS (True) or HTTP (False) for the URL.
-
+        address: a dataclass for determining network addressing.
 
     Returns:
         str: The complete URL for the tracing receiver endpoint.
 
     Note:
-        The method assumes the receiver is in the same model since the charm
-        doesn't have ingress support. The FQDN is used as the hostname.
+        Without ingress the host is the Kubernetes Service FQDN, so that traces are
+        load-balanced across all units rather than sent to every one of them.
     """
-    scheme = "http"
-    if tls_enabled:
-        scheme = "https"
-
     # The correct transport protocol is specified in the tracing library, and it's always
     # either http or grpc.
     if receiver_protocol_to_transport_protocol[protocol] == TransportProtocolType.grpc:
-        return f"{socket.getfqdn()}:{Port.otlp_grpc.value}"
-    return f"{scheme}://{socket.getfqdn()}:{Port.otlp_http.value}"
+        return f"{address.grpc_resolved_url}:{Port.otlp_grpc.value}"
+    return f"{address.http_resolved_url}:{Port.otlp_http.value}"
 
 
-def receive_traces(charm: CharmBase, tls: bool) -> Set:
+def receive_traces(charm: CharmBase, address: "Address") -> Set:
     """Integrate with other charms via the receive-traces relation endpoint.
+
+    Args:
+        charm: the otel-collector charm object
+        address: a dataclass for determining network addressing
 
     Returns:
         All receiver protocols that have been requested.
@@ -327,29 +332,25 @@ def receive_traces(charm: CharmBase, tls: bool) -> Set:
             tuple(
                 (
                     protocol,
-                    _get_tracing_receiver_url(
-                        protocol=protocol,
-                        tls_enabled=tls,
-                    ),
+                    _get_tracing_receiver_url(protocol=protocol, address=address),
                 )
-                for protocol in requested_tracing_protocols
+                for protocol in sorted(requested_tracing_protocols)
             )
         )
     return requested_tracing_protocols
 
 
-def receive_profiles(charm: CharmBase, tls: bool) -> None:
+def receive_profiles(charm: CharmBase, address: "Address") -> None:
     """Integrate with other charms over the receive-profiles relation endpoint."""
     if not charm.unit.is_leader():
         # TODO: leader-only because of
         #  https://github.com/canonical/opentelemetry-collector-operator/issues/71
         return
-    fqdn = socket.getfqdn()
-    grpc_endpoint = f"{fqdn}:{Port.otlp_grpc.value}"
+    grpc_endpoint = f"{address.grpc_resolved_url}:{Port.otlp_grpc.value}"
     # this charm lib exposes a holistic API, so we don't need to bind the instance
     ProfilingEndpointProvider(
         charm.model.relations["receive-profiles"], app=charm.app
-    ).publish_endpoint(otlp_grpc_endpoint=grpc_endpoint, insecure=not tls)
+    ).publish_endpoint(otlp_grpc_endpoint=grpc_endpoint, insecure=not address.resolved_tls)
 
 
 def send_profiles(charm: CharmBase) -> List[ProfilingEndpoint]:
@@ -405,26 +406,115 @@ def send_charm_traces(charm: CharmBase) -> Optional[str]:
     charm.__setattr__("charm_tracing_requirer", charm_tracing_requirer)
 
 
+def _permission_denied_message(e: ModelError) -> Optional[str]:
+    """Return the error message if it is a Juju permission-denied error, else None.
+
+    Workaround for https://github.com/canonical/operator/issues/2709: ops maps the
+    "relation not found" flavor to RelationNotFoundError, but accessing a relation
+    that is gone from state fails with a plain ModelError("permission denied").
+    This helper and the guards that use it can be removed once that issue is
+    resolved and ops maps this flavor to a typed exception.
+    """
+    msg = str(e.args[0]) if e.args else ""
+    return msg if "permission denied" in msg else None
+
+
+def _dashboard_sort_key(entry: Dict[str, Any]) -> Tuple[str, str, int]:
+    """Return a total order over dashboard entries, to pick a deterministic winner.
+
+    The copy published for a group of identical ones must not depend on the order
+    in which relations are iterated.
+    """
+    return (entry["charm"], entry["title"], entry["relation_id"])
+
+
 def _get_dashboards(relations: List[Relation]) -> List[Dict[str, Any]]:
-    """Returns a deduplicated list of all dashboards received by this otelcol."""
-    aggregate = {}
+    """Returns a deduplicated list of all dashboards received by this otelcol.
+
+    Deduplication is by content, not by template id. An upstream aggregator (e.g.
+    the machine otelcol forwarding what it received over ``cos-agent``) salts the
+    template id with the originating application, so N applications of the same
+    charm forward N byte-identical copies under N distinct ids. Grafana discards
+    those copies by their ``.uid`` anyway (see
+    ``GrafanaDashboardConsumer.dashboards``), so forwarding them only inflates the
+    databag and Grafana's rendering work.
+
+    Keying by content also avoids the opposite defect of keying by template id:
+    two *different* charms shipping a dashboard with the same file name used to
+    collapse into one, silently dropping a dashboard Grafana would have displayed.
+    """
+    aggregate: Dict[str, Dict[str, Any]] = {}
     for rel in relations:
-        dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
+        if not rel.app:
+            continue
+        try:
+            dashboards = json.loads(rel.data[rel.app].get("dashboards", "{}"))  # type: ignore
+        except ModelError as e:
+            # The remote application databag is unreadable ("permission denied") if
+            # the relation is gone or dangling: skip it and let the next event
+            # re-reconcile once it is fully removed.
+            # TODO: remove once canonical/operator#2709 is resolved.
+            if msg := _permission_denied_message(e):
+                logger.warning(
+                    "skipping relation %s: remote application data is not readable (%s)",
+                    rel.id,
+                    msg.strip(),
+                )
+                continue
+            raise
         if "templates" not in dashboards:
             continue
-        for template in dashboards["templates"]:
-            content = json.loads(
-                LZMABase64.decompress(dashboards["templates"][template].get("content"))
-            )
+        for template, dashboard in dashboards["templates"].items():
+            content = dashboard.get("content")
+            if not content or not isinstance(content, str):
+                logger.warning(
+                    "skipping dashboard %r from relation %s: no usable content",
+                    template,
+                    rel.id,
+                )
+                continue
             entry = {
-                "charm": dashboards["templates"][template].get("charm", "charm_name"),
+                "charm": dashboard.get("charm", "charm_name"),
                 "relation_id": rel.id,
                 "title": template,
+                # Kept compressed on purpose: the duplicates are discarded below
+                # without ever being decompressed.
                 "content": content,
             }
-            aggregate[template] = entry
+            # The received content is already an opaque, deterministically encoded
+            # blob, so it can be hashed as-is to detect identical dashboards.
+            key = hashlib.sha256(content.encode()).hexdigest()
+            incumbent = aggregate.get(key)
+            if incumbent is None:
+                aggregate[key] = entry
+            elif _dashboard_sort_key(entry) < _dashboard_sort_key(incumbent):
+                aggregate[key] = entry
 
-    return list(aggregate.values())
+    # Only the deduplicated dashboards are decompressed.
+    collected = []
+    for entry in sorted(aggregate.values(), key=_dashboard_sort_key):
+        try:
+            content = json.loads(LZMABase64.decompress(entry["content"]))
+        except (lzma.LZMAError, ValueError) as e:
+            # ValueError covers the binascii, unicode and JSON decoding errors.
+            # A corrupt dashboard must not fail the hook: that would drop the
+            # dashboards of every healthy relation along with it.
+            logger.warning(
+                "skipping dashboard %r from relation %s: undecodable content (%s)",
+                entry["title"],
+                entry["relation_id"],
+                e,
+            )
+            continue
+        collected.append(
+            {
+                "charm": entry["charm"],
+                "relation_id": entry["relation_id"],
+                "title": entry["title"],
+                "content": content,
+            }
+        )
+    return collected
 
 
 def _add_dashboards(dashboards: List[Dict[str, str]], dest_path: Path):
@@ -454,6 +544,34 @@ def _add_dashboards(dashboards: List[Dict[str, str]], dest_path: Path):
             logger.debug("updated dashboard file %s", f.name)
 
 
+def _safe_relations(charm: CharmBase, endpoint: str) -> Optional[List[Relation]]:
+    """Return the relations of an endpoint, or None if they cannot be listed.
+
+    Constructing the Relation objects of an endpoint can fail with a
+    "permission denied" ModelError if one of the relations is gone (e.g. a
+    cross-model relation removed while this unit was running a hook): ops
+    calls `relation-list` from `Relation.__init__`, and Juju denies access
+    to the gone relation instead of reporting it as missing. Since ops builds
+    every relation of the endpoint in one go, a single dangling relation makes
+    the whole endpoint unreadable.
+
+    ``None`` means "unknown", which callers must not confuse with "no
+    relations": the data received over the healthy relations of the endpoint
+    is still valid, so it must be left untouched rather than recomputed from
+    an empty list.
+
+    TODO: remove once canonical/operator#2709 is resolved.
+    """
+    try:
+        return charm.model.relations[endpoint]
+    except ModelError as e:
+        if not (msg := _permission_denied_message(e)):
+            raise
+
+        logger.warning("cannot list the %s relations: %s", endpoint, msg.strip())
+        return None
+
+
 def forward_dashboards(charm: CharmBase):
     """Instantiate the GrafanaDashboardProvider and update the dashboards in the relation databag.
 
@@ -467,9 +585,18 @@ def forward_dashboards(charm: CharmBase):
     if not charm.unit.is_leader():
         return
 
+    consumer_relations = _safe_relations(charm, "grafana-dashboards-consumer")
+    if consumer_relations is None:
+        # The received dashboards are unknown this run, which is not the same as
+        # "there are no dashboards": rewriting the databag now would delete from
+        # Grafana the dashboards of the healthy relations, which are still valid.
+        # Leave the previously published dashboards in place instead.
+        logger.warning("skipping the dashboards sync this run: no dashboards were deleted")
+        return
+
     shutil.copytree(src_path, dest_path, dirs_exist_ok=True)
     _add_dashboards(
-        dashboards=_get_dashboards(charm.model.relations["grafana-dashboards-consumer"]),
+        dashboards=_get_dashboards(consumer_relations),
         dest_path=dest_path,
     )
 
@@ -536,6 +663,12 @@ def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
     directories with ``dirs_exist_ok=True``) and before `send_loki_logs`/`send_remote_write`
     (which read those directories).
 
+    The staging is skipped when no consumer of the files is related: the promql staging is
+    only used by `send_remote_write` and the logql staging only by `send_loki_logs`, both of
+    which read the rule directories from disk. Without either relation (e.g. an aggregator
+    whose only output is `send-otlp`, which reads rules from relation data instead of disk),
+    the staging would be dead work proportional to the number of relations.
+
     Args:
         charm: the otel-collector charm object
         provider: the ``OtlpProvider`` instantiated in `receive_otlp`, reused here to read the
@@ -543,15 +676,25 @@ def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
     """
     if not cast(bool, charm.config.get("forward_alert_rules")):
         return
+
+    has_remote_write = any(charm.model.relations.get("send-remote-write", []))
+    has_loki_logs = any(charm.model.relations.get("send-loki-logs", []))
+
+    if not (has_remote_write or has_loki_logs):
+        logger.debug(
+            "no send-remote-write/send-loki-logs relation: skipping staging of received-otlp rules"
+        )
+        return
+
     charm_root = charm.charm_dir.absolute()
     metrics_dest = charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/"))
     loki_dest = charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/"))
     promql_alerts: Dict[str, Dict] = {}
     logql_alerts: Dict[str, Dict] = {}
     for rel_id, rule_store in provider.rules.items():
-        if (promql := rule_store.promql.as_dict()).get("groups"):
+        if has_remote_write and (promql := rule_store.promql.as_dict()).get("groups"):
             promql_alerts[f"otlp_{rel_id}"] = promql
-        if (logql := rule_store.logql.as_dict()).get("groups"):
+        if has_loki_logs and (logql := rule_store.logql.as_dict()).get("groups"):
             logql_alerts[f"otlp_{rel_id}"] = logql
     if promql_alerts:
         _add_alerts(promql_alerts, metrics_dest)
@@ -562,6 +705,75 @@ def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
         len(promql_alerts),
         len(logql_alerts),
     )
+
+
+def _unique_group_name(base: str, content_key: str, used_names: Set[str]) -> str:
+    """Return a name derived from `base`/`content_key` that isn't already in `used_names`."""
+    for length in range(8, len(content_key) + 1):
+        candidate = f"{base}_{content_key[:length]}"
+        if candidate not in used_names:
+            return candidate
+    # The full content hash also collided with an existing name: fall back to a counter.
+    candidate, suffix = f"{base}_{content_key}", 0
+    while candidate in used_names:
+        suffix += 1
+        candidate = f"{base}_{content_key}_{suffix}"
+    return candidate
+
+
+def _dedupe_rule_groups(
+    entries: List[Tuple[str, OfficialRuleFileItem]], query_type: str
+) -> List[OfficialRuleFileItem]:
+    """Deduplicate alert/recording rule groups by content, renaming any remaining name clashes.
+
+    A single duplicate group name invalidates the entire rules file on the receiving end.
+    Deduplication is by content: two groups from unrelated sources could have the same name.
+
+    Args:
+        entries: an iterable of (source, group) pairs. `source` is a short, human-readable
+            label (e.g. "relation 12") used only for deterministic ordering and for the
+            warning message below -- it is never published.
+        query_type: "promql" or "logql", used only for logging.
+
+    Returns:
+        The deduplicated list of groups. Every group in the returned list has a unique name.
+    """
+    # Byte-identical groups collapse to a single copy, regardless of name or source.
+    by_content: Dict[str, Tuple[str, OfficialRuleFileItem]] = {}
+    for source, group in entries:
+        content_key = hashlib.sha256(json.dumps(group, sort_keys=True).encode()).hexdigest()
+        if content_key not in by_content:
+            by_content[content_key] = (source, group)
+
+    by_name: Dict[str, List[Tuple[str, str, OfficialRuleFileItem]]] = {}
+    for content_key, (source, group) in by_content.items():
+        by_name.setdefault(group["name"], []).append((content_key, source, group))
+
+    used_names: Set[str] = set(by_name.keys())
+
+    deduped: List[OfficialRuleFileItem] = []
+    for name, candidates in sorted(by_name.items()):
+        if len(candidates) == 1:
+            deduped.append(candidates[0][2])
+            continue
+        # Same name, different content. Keep every alert/recording rule,
+        # but disambiguate all but one name so the published rules file stays valid.
+        candidates.sort(key=lambda c: (c[1], c[0]))
+        logger.warning(
+            "%d distinct %s alert rule groups from different sources collided on group name "
+            "%r; renaming all but one to avoid dropping alert rules (sources: %s)",
+            len(candidates),
+            query_type,
+            name,
+            [source for _, source, _ in candidates],
+        )
+        _, _, primary_group = candidates[0]
+        deduped.append(primary_group)
+        for content_key, _, group in candidates[1:]:
+            new_name = _unique_group_name(name, content_key, used_names)
+            used_names.add(new_name)
+            deduped.append(cast(OfficialRuleFileItem, {**group, "name": new_name}))
+    return deduped
 
 
 def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoint]:
@@ -580,17 +792,37 @@ def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoin
     """
     # Gather our bundled rules
     charm_root = charm.charm_dir.absolute()
-    rules = (
+    own_rules = (
         RuleStore(JujuTopology.from_charm(charm))
         .add_logql_path(charm_root.joinpath(LOKI_RULES_SRC_PATH), recursive=True)
         .add_promql_path(charm_root.joinpath(METRICS_RULES_SRC_PATH), recursive=True)
         .add_sigma_path(charm_root.joinpath(SIGMA_RULES_SRC_PATH), recursive=True)
     )
+    rules = RuleStore(JujuTopology.from_charm(charm))
+    rules.sigma = own_rules.sigma
+
+    logql_entries: List[Tuple[str, OfficialRuleFileItem]] = [
+        ("charm's own bundled rules", group) for group in own_rules.logql.groups
+    ]
+    promql_entries: List[Tuple[str, OfficialRuleFileItem]] = [
+        ("charm's own bundled rules", group) for group in own_rules.promql.groups
+    ]
 
     # Gather the requirer charm's rules from the databag if forwarding is desired
     if cast(bool, charm.config.get("forward_alert_rules")):
-        for rule_store in provider.rules.values():
-            rules.combine(rule_store)
+        for rel_id, rule_store in provider.rules.items():
+            logql_entries.extend(
+                (f"relation {rel_id}", group) for group in rule_store.logql.groups
+            )
+            promql_entries.extend(
+                (f"relation {rel_id}", group) for group in rule_store.promql.groups
+            )
+            if sigma := rule_store.sigma.as_dict():
+                rules.sigma.add(sigma)
+
+    # Deduplicate rules by content
+    rules.logql.groups = _dedupe_rule_groups(logql_entries, "logql")
+    rules.promql.groups = _dedupe_rule_groups(promql_entries, "promql")
 
     # Publish rules for the provider
     extra_alert_labels = cast(str, charm.model.config.get("extra_alert_labels", ""))
@@ -624,6 +856,41 @@ def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
     send_apps = {rel.app.name for rel in send_relations if rel.app}
 
     return not receive_apps.isdisjoint(send_apps)
+
+
+def has_invalid_otlp_rules(charm: CharmBase) -> bool:
+    """Check whether any `send-otlp` relation reported invalid alert rules.
+
+    Returns:
+        True if any related OTLP provider reported an alert-rule validation error.
+    """
+    if not charm.unit.is_leader():
+        return False
+
+    for relation in charm.model.relations.get("send-otlp", []):
+        if not relation.app:
+            continue
+        app_data = relation.data.get(relation.app)
+        if not app_data:
+            continue
+
+        event_raw = app_data.get("event", "{}")
+        try:
+            event_data = json.loads(event_raw)
+        except json.JSONDecodeError, TypeError:
+            continue
+        if not isinstance(event_data, dict):
+            continue
+
+        if error_msg := event_data.get("errors"):
+            logger.error(
+                "Alert rule validation error reported on send-otlp relation %s: %s",
+                relation.id,
+                error_msg,
+            )
+            return True
+
+    return False
 
 
 # TODO: Luca: move this into the GrafanCloudIntegrator library
@@ -662,6 +929,7 @@ def cloud_integrator(charm: CharmBase) -> CloudIntegratorData:
 
 def receive_server_cert(
     charm: CharmBase,
+    service_fqdn: str,
     server_cert_path: PathProtocol,
     private_key_path: PathProtocol,
     root_ca_cert_path: PathProtocol,
@@ -671,13 +939,28 @@ def receive_server_cert(
     Thes key and certs are obtained via the tls_certificates(v4) library, and pushed to the
     workload container.
 
+    Args:
+        charm: the otel-collector charm object
+        service_fqdn: the Kubernetes Service name this app is reachable at, included in the
+            CSR alongside this unit's own pod name
+        server_cert_path: where to write the signed server certificate
+        private_key_path: where to write the private key
+        root_ca_cert_path: where to write the issuing CA certificate
+
     Returns:
-        Hash of server cert and private key, to be used as reload trigger if it changed.
+        Hash of server cert, private key and CA cert, to be used as reload trigger if it
+        changed.
     """
     # Common name length must be >= 1 and <= 64, so fqdn is too long.
     common_name = charm.unit.name.replace("/", "-")
-    domain = socket.getfqdn()
-    csr_attrs = CertificateRequestAttributes(common_name=common_name, sans_dns=frozenset({domain}))
+    # Every unit gets its own certificate (Mode.UNIT), but each of those certificates must be
+    # valid for BOTH the pod FQDN and the Kubernetes Service FQDN: remote charms are given the
+    # Service FQDN so that traffic is load-balanced, and any unit may end up terminating that
+    # connection.
+    csr_attrs = CertificateRequestAttributes(
+        common_name=common_name,
+        sans_dns=frozenset({unit_fqdn(), service_fqdn}),
+    )
     certificates = TLSCertificatesRequiresV4(
         charm=charm,
         relationship_name="receive-server-cert",
@@ -719,7 +1002,9 @@ def receive_server_cert(
 
     # NOTE: we run `update-ca-certificates` in charm code
 
-    return sha256(str(provider_certificate.certificate) + str(private_key))
+    return sha256(
+        str(provider_certificate.certificate) + str(private_key) + str(provider_certificate.ca)
+    )
 
 
 def receive_ca_cert(charm: CharmBase, recv_ca_cert_folder_path: PathProtocol) -> str:
@@ -731,7 +1016,7 @@ def receive_ca_cert(charm: CharmBase, recv_ca_cert_folder_path: PathProtocol) ->
     # Obtain certs from relation data
     certificate_transfer = CertificateTransferRequires(charm, "receive-ca-cert")
     charm.__setattr__("certificate_transfer", certificate_transfer)
-    ca_certs = certificate_transfer.get_all_certificates()
+    ca_certs = sorted(certificate_transfer.get_all_certificates())
 
     # Clean-up previously existing certs
     if recv_ca_cert_folder_path.exists():
@@ -795,12 +1080,14 @@ def _static_ingress_config() -> dict:
     return {"entryPoints": entry_points}
 
 
-def _build_lb_server_config(scheme: str, port: int) -> List[Dict[str, str]]:
+def _build_lb_server_config(backend_host: str, scheme: str, port: int) -> List[Dict[str, str]]:
     """Build the server portion of the loadbalancer config of Traefik ingress.
 
-    The leader provides the kubernetes service address to Traefik to serve as ingress.
+    `backend_host` is normally the kubernetes service address, so that Traefik balances ingressed
+    traffic across all units instead of pinning it to the leader's pod. The caller should fall
+    back to a single pod when the units cannot serve the service address yet.
     """
-    return [{"url": f"{scheme}://{socket.getfqdn()}:{port}"}]
+    return [{"url": f"{scheme}://{backend_host}:{port}"}]
 
 
 def is_tls_ready(container: Container) -> bool:
@@ -808,6 +1095,30 @@ def is_tls_ready(container: Container) -> bool:
     return container.exists(path=SERVER_CERT_PATH) and container.exists(
         path=SERVER_CERT_PRIVATE_KEY_PATH
     )
+
+
+def unit_fqdn() -> str:
+    """Return the DNS name of this unit's pod.
+
+    On Kubernetes this resolves to the headless-service address of a single pod, e.g.
+    ``otelcol-0.otelcol-endpoints.mymodel.svc.cluster.local``. It addresses exactly one
+    unit, so it must only be used for unit-local concerns such as the collector's own
+    internal telemetry.
+    """
+    return socket.getfqdn()
+
+
+def server_cert_sans_dns(container: Container) -> Set[str]:
+    """Return the DNS SANs of the server certificate received over `receive-server-cert`.
+
+    Returns an empty set when there is no readable, parsable certificate on disk.
+    """
+    try:
+        raw = cast(str, container.pull(SERVER_CERT_PATH).read())
+        return set(Certificate(raw).sans_dns or set())
+    except Exception:
+        logger.warning("Could not read the SANs of the server certificate on disk")
+        return set()
 
 
 class MultipleIngressesConfigured:
@@ -878,7 +1189,9 @@ def _istio_ingress_config(charm: CharmBase) -> IstioIngressRouteConfig:
     )
 
 
-def _traefik_ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls: bool) -> dict:
+def _traefik_ingress_config(
+    charm: CharmBase, ingress: TraefikRouteRequirer, backend_host: str, tls: bool
+) -> dict:
     """Build a raw ingress configuration for Traefik."""
     http_routers = {}
     http_services = {}
@@ -912,7 +1225,9 @@ def _traefik_ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls
             f"juju-{charm.model.name}-{charm.model.app.name}-service-{sanitized_protocol}"
         ] = {
             "loadBalancer": {
-                "servers": _build_lb_server_config("http" if not tls else "https", port.value)
+                "servers": _build_lb_server_config(
+                    backend_host, "http" if not tls else "https", port.value
+                )
             }
         }
 
@@ -928,25 +1243,6 @@ def _traefik_ingress_config(charm: CharmBase, ingress: TraefikRouteRequirer, tls
     }
 
 
-def _update_ingress_relation(
-    charm: CharmBase,
-    ingress: TraefikRouteRequirer | IstioIngressRouteRequirer,
-    tls: Optional[bool],
-) -> None:
-    """Make sure the ingress routes are up-to-date."""
-    if not charm.unit.is_leader():
-        return
-
-    match ingress:
-        case TraefikRouteRequirer():
-            if ingress.is_ready() and tls is not None:
-                config = _traefik_ingress_config(charm, ingress, tls)
-                ingress.submit_to_traefik(config, static=_static_ingress_config())
-        case IstioIngressRouteRequirer():
-            if ingress.is_ready():
-                ingress.submit_config(_istio_ingress_config(charm))
-
-
 def traefik_ingress_ready(ingress: TraefikRouteRequirer) -> bool:
     """Check if Traefik ingress is ready."""
     return bool(ingress.is_ready() and ingress.scheme and ingress.external_host)
@@ -957,8 +1253,19 @@ def istio_ingress_ready(ingress: IstioIngressRouteRequirer) -> bool:
     return bool(ingress.is_ready() and ingress.external_host)
 
 
-def setup_traefik_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
+def setup_traefik_ingress(charm: CharmBase, backend_host: str, tls: bool) -> TraefikRouteRequirer:
     """Integrate with Traefik to enable ingress.
+
+    Must be called after the certificate relations have been reconciled: Traefik verifies the
+    hostname of the backend it connects to, so handing it an address the served certificate is
+    not valid for breaks ingress entirely.
+
+    Args:
+        charm: the otel-collector charm object
+        backend_host: the address Traefik should route to. Normally the Kubernetes Service
+            name, so that ingressed traffic is balanced across all units; a single pod when
+            the units cannot serve the Service name yet.
+        tls: whether the collector's receivers are serving TLS
 
     Returns:
         A TraefikRouteRequirer instance.
@@ -969,7 +1276,11 @@ def setup_traefik_ingress(charm: CharmBase, tls: bool) -> TraefikRouteRequirer:
         "ingress",
     )
     charm.__setattr__("ingress", ingress)
-    _update_ingress_relation(charm, ingress, tls)
+    if charm.unit.is_leader() and ingress.is_ready():
+        ingress.submit_to_traefik(
+            _traefik_ingress_config(charm, ingress, backend_host, tls),
+            static=_static_ingress_config(),
+        )
     return ingress
 
 
@@ -981,5 +1292,6 @@ def setup_istio_ingress(charm: CharmBase) -> IstioIngressRouteRequirer:
     """
     ingress = IstioIngressRouteRequirer(charm, relation_name="istio-ingress")
     charm.__setattr__("istio_ingress", ingress)
-    _update_ingress_relation(charm, ingress, tls=None)
+    if charm.unit.is_leader() and ingress.is_ready():
+        ingress.submit_config(_istio_ingress_config(charm))
     return ingress

@@ -6,7 +6,7 @@ version = "0.0"
 requires-python = "~=3.14.0"
 
 dependencies = [
-  "ops[tracing]>=3.1",
+  "ops[tracing]>=3.8.0", # 3.8.0 fixes the "_WebsocketWriter" finalizer warnings (canonical/operator#2547)
   "pyyaml",
   "urllib3",
   "jsonschema",
@@ -18,6 +18,7 @@ dependencies = [
   "charmed-service-mesh-helpers>=0.2.0", # istio-beacon lib requirement"lightkube-extensions@git+https://github.com/canonical/lightkube-extensions.git@main", # istio-beacon lib requirement,
   "lightkube-extensions", # istio-beacon lib requirement
   "charmlibs-interfaces-otlp@git+https://github.com/canonical/charmlibs.git@feat/sigma-rules#subdirectory=interfaces/otlp",
+  "charmlibs-interfaces-certificate_transfer"
 ]
 
 [project.optional-dependencies]

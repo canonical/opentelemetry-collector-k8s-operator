@@ -33,8 +33,7 @@ description: |
   - Configurable Kubernetes resource limits for CPU and memory.
 
 links:
-  documentation: https://canonical-charmed-opentelemetry-collector-k8s.readthedocs-hosted.com/
-  website: https://charmhub.io/opentelemetry-collector-k8s
+  documentation: https://documentation.ubuntu.com/observability/latest
   source: https://github.com/canonical/opentelemetry-collector-k8s-operator
   issues: https://github.com/canonical/opentelemetry-collector-k8s-operator/issues
 

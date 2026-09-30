@@ -9,8 +9,16 @@ resource "juju_application" "opentelemetry_collector" {
   units              = var.units
 
   charm {
+    base     = var.base
     name     = "opentelemetry-collector-k8s"
     channel  = var.channel
     revision = var.revision
+  }
+}
+
+check "storage_directives" {
+  assert {
+    condition     = length(var.storage_directives) > 0
+    error_message = "storage_directives is unset, so it will use the default 1G volume. Set a size before deploying to production; resizing a persistent volume after deployment requires manual steps. See https://documentation.ubuntu.com/observability/latest/how-to/configure-and-tune/customize-storage-options/"
   }
 }

@@ -6,25 +6,10 @@
 import logging
 from typing import Dict
 
-from tenacity import (
-    after_log,
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
-
 import jubilant
-
+from helpers import RETRY
 
 logger = logging.getLogger(__name__)
-
-RETRY = retry(
-    retry=retry_if_exception_type(AssertionError),
-    wait=wait_exponential(multiplier=1, min=2, max=45),
-    stop=stop_after_attempt(10),
-    after=after_log(logger, logging.INFO),
-)
 
 
 def test_otlp_setup(juju: jubilant.Juju, charm: str, charm_resources: Dict[str, str]):

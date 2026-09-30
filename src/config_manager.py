@@ -114,6 +114,8 @@ class ConfigManager:
         insecure_skip_verify: bool = False,
         queue_size: int = 1000,
         max_elapsed_time_min: int = 5,
+        self_telemetry_host: str = "localhost",
+        topology_labels: Optional[Dict[str, str]] = None,
     ):
         """Generate a default OpenTelemetry collector ConfigManager.
 
@@ -127,6 +129,10 @@ class ConfigManager:
             insecure_skip_verify: value for `insecure_skip_verify` in all exporters
             queue_size: size of the sending queue for exporters
             max_elapsed_time_min: maximum elapsed time for retrying failed requests in minutes
+            self_telemetry_host: the FQDN of THIS pod, used to loop the collector's own
+                telemetry back into its own OTLP receiver
+            topology_labels: this collector's own Juju topology labels, attached to its internal
+                telemetry so logs from multiple otelcol apps/units are distinguishable in Loki
         """
         self._unit_name = unit_name
         self._insecure_skip_verify = insecure_skip_verify
@@ -138,6 +144,8 @@ class ConfigManager:
             global_scrape_timeout=global_scrape_timeout,
             receiver_tls=receiver_tls,
             exporter_skip_verify=insecure_skip_verify,
+            self_telemetry_host=self_telemetry_host,
+            topology_labels=topology_labels,
         )
         self.config.add_default_config()
         self.config.add_extension("file_storage", {"directory": FILE_STORAGE_DIRECTORY})
@@ -150,6 +158,27 @@ class ConfigManager:
                 "enabled": True,
                 "queue_size": self._queue_size,
                 "storage": "file_storage",
+            },
+            "retry_on_failure": {
+                "max_elapsed_time": f"{self._max_elapsed_time_min}m",
+            },
+        }
+
+    @property
+    def remote_write_queue_config(self) -> Dict[str, Any]:
+        """Return the queue and retry configuration for prometheusremotewrite exporters.
+
+        The prometheusremotewrite exporter does not support the standard ``sending_queue``
+        configuration block. Instead it exposes ``remote_write_queue`` for queue control
+        and inherits ``retry_on_failure`` from the exporterhelper.
+
+        See Also:
+            https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/prometheusremotewriteexporter/README.md
+        """
+        return {
+            "remote_write_queue": {
+                "enabled": True,
+                "queue_size": self._queue_size,
             },
             "retry_on_failure": {
                 "max_elapsed_time": f"{self._max_elapsed_time_min}m",
@@ -282,6 +311,7 @@ class ConfigManager:
                         "insecure": endpoint.insecure,
                         "insecure_skip_verify": self._insecure_skip_verify,
                     },
+                    **self.sending_queue_config,
                 },
                 pipelines=[f"profiles/{self._unit_name}"],
             )
@@ -365,6 +395,7 @@ class ConfigManager:
                     "tls": {"insecure_skip_verify": self._insecure_skip_verify},
                     "add_metric_suffixes": False,
                     **self.prometheus_remotewrite_wal_config,
+                    **self.remote_write_queue_config,
                 },
                 pipelines=[f"metrics/{self._unit_name}"],
             )
@@ -396,7 +427,11 @@ class ConfigManager:
             self.config.add_component(
                 Component.exporter,
                 f"{exporter_type}/rel-{rel_id}/{self._unit_name}",
-                {"endpoint": otlp_endpoint.endpoint, "tls": tls_config},
+                {
+                    "endpoint": otlp_endpoint.endpoint,
+                    "tls": tls_config,
+                    **self.sending_queue_config,
+                },
                 pipelines=[f"{_type}/{self._unit_name}" for _type in otlp_endpoint.telemetries],
             )
 
@@ -550,6 +585,7 @@ class ConfigManager:
                     "tls": {"insecure_skip_verify": self._insecure_skip_verify},
                     **exporter_auth_config,
                     **self.prometheus_remotewrite_wal_config,
+                    **self.remote_write_queue_config,
                 },
                 pipelines=[f"metrics/{self._unit_name}"],
             )
@@ -598,34 +634,35 @@ class ConfigManager:
                 ],
             )
 
-    def update_jobs_with_ca_paths(
-        self, metrics_consumer_jobs: List[Dict], cert_paths: Dict[str, str]
+    def update_jobs_with_cert_paths(
+        self, metrics_consumer_jobs: List[Dict], cert_paths: Dict[str, Dict[str, str]]
     ) -> List[Dict]:
         """Update jobs to use certificate file paths instead of certificate content.
 
         This method updates the TLS configuration of Prometheus scrape jobs to
-        reference CA certificates by file path instead of containing the
-        certificate content directly.
+        reference CA certificates, private keys, and client certificates by file
+        path instead of containing the certificate content directly.
 
         Args:
             metrics_consumer_jobs: List of scrape job dictionaries from MetricsEndpointConsumer
-            cert_paths: Dictionary mapping job names to their certificate file paths
+            cert_paths: Dictionary mapping job names to dicts of cert type -> file path
 
         Returns:
-            List of updated scrape job dictionaries with ca pointing to file paths
+            List of updated scrape job dictionaries with *_file fields pointing to file paths
         """
         for job in metrics_consumer_jobs:
             job_name = job.get("job_name", "default")
 
             if job_name in cert_paths:
                 tls_config = job.get("tls_config", {})
-                tls_config["ca_file"] = cert_paths[job_name]
-                if "ca" in tls_config:
-                    tls_config.pop("ca")
+                mapping = {"ca": "ca_file", "key": "key_file", "cert": "cert_file"}
+                for key, file_key in mapping.items():
+                    if key not in cert_paths[job_name]:
+                        continue
+                    tls_config.pop(key, None)
+                    tls_config[file_key] = cert_paths[job_name][key]
                 job["tls_config"] = tls_config
-                logger.debug(
-                    f"updated job '{job_name}' to use certificate path: {cert_paths[job_name]}"
-                )
+                logger.debug(f"updated job '{job_name}' with certificate paths")
 
         return metrics_consumer_jobs
 

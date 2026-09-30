@@ -6,14 +6,15 @@
 import logging
 import os
 import re
-import socket
 from typing import Any, Dict, List, Optional, cast
 
 from charmlibs.pathops import ContainerPath
+from charms.loki_k8s.v1.loki_push_api import LokiPushApiProvider
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     KubernetesComputeResourcesPatch,
     adjust_resource_requirements,
 )
+from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointConsumer
 from cosl import JujuTopology, MandatoryRelationPairs
 from lightkube.models.core_v1 import ResourceRequirements
 from ops import BlockedStatus, CharmBase, Container, StatusBase, main
@@ -21,9 +22,10 @@ from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
 
 import integrations
-from config_builder import Port
+from config_builder import Port, sha256
 from config_manager import ConfigManager
 from constants import (
+    CA_TRUST_STAMP_PATH,
     CERTS_DIR,
     CONFIG_PATH,
     EXTERNAL_CONFIG_SECRETS_DIR,
@@ -41,6 +43,7 @@ def charm_address(
     container: Container,
     traefik_ingress: integrations.TraefikRouteRequirer,
     istio_ingress: integrations.IstioIngressRouteRequirer,
+    internal_host: str,
 ) -> integrations.Address | integrations.MultipleIngressesConfigured:
     """Return the Address dataclass from charm context.
 
@@ -48,6 +51,7 @@ def charm_address(
         container: An ops.Container where the TLS certificates exist
         traefik_ingress: A TraefikRouteRequirer containing ingress context
         istio_ingress: An IstioIngressRouteRequirer containing ingress context
+        internal_host: the in-cluster address remote charms should use to reach this app
 
     Returns:
         The Address dataclass summarizing the charm's networking context or
@@ -68,7 +72,6 @@ def charm_address(
         external_tls = False
         external_host = None
 
-    internal_host = socket.getfqdn()
     internal_tls = integrations.is_tls_ready(container)
     resolved_host = external_host if external_host else internal_host
     return integrations.Address(
@@ -78,9 +81,34 @@ def charm_address(
     )
 
 
-def refresh_certs(container: Container):
-    """Run `update-ca-certificates` to refresh the trusted system certs."""
+def refresh_certs(container: Container, trust_hash: str):
+    """Refresh the trusted system certs, but only when they actually changed.
+
+    `update-ca-certificates --fresh` rehashes the whole bundle and costs several seconds,
+    yet the vast majority of reconciles do not touch any certificate. The hash of the certs
+    written under the system trust dir is therefore stamped on disk (in the workload
+    container, next to the trust store) and the command is skipped when it is unchanged
+
+    Args:
+        container: the workload container whose trust store is refreshed.
+        trust_hash: a hash summarising every cert that feeds the trust store. When it
+            matches the stamp from a previous run, the refresh is skipped.
+    """
+    stamp = ContainerPath(CA_TRUST_STAMP_PATH, container=container)
+    try:
+        if stamp.read_text() == trust_hash:
+            logger.debug("System trust store unchanged; skipping update-ca-certificates")
+            return
+    except FileNotFoundError:
+        pass
+
     container.exec(["update-ca-certificates", "--fresh"]).wait()
+    # Only stamp after a successful refresh, so a failed run is retried next reconcile.
+    container.push(
+        CA_TRUST_STAMP_PATH,
+        trust_hash.encode("utf-8"),
+        make_dirs=True,
+    )
 
 
 def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
@@ -136,6 +164,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     """Charm to run OpenTelemetry Collector on Kubernetes."""
 
     _container_name = "otelcol"
+    metrics_consumer: MetricsEndpointConsumer
+    loki_provider: LokiPushApiProvider
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -146,6 +176,61 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self.external_configs: List[Dict[str, Any]] = []
         self.external_secret_files: Dict[str, str] = {}
         self._reconcile()
+
+    @property
+    def unit_fqdn(self) -> str:
+        """Return the DNS name of this unit's pod.
+
+        On Kubernetes this resolves to the headless-service address of a single pod, e.g.
+        ``otelcol-0.otelcol-endpoints.mymodel.svc.cluster.local``. It addresses exactly one
+        unit, so it must only be used for unit-local concerns such as the collector's own
+        internal telemetry.
+        """
+        return integrations.unit_fqdn()
+
+    @property
+    def service_fqdn(self) -> str:
+        """Return the DNS name of the Kubernetes Service fronting all units of this app.
+
+        Juju creates a ClusterIP service named after the application, which load-balances
+        across all ready pods. This is the address that must be advertised to remote charms,
+        so that telemetry is distributed over the units instead of being duplicated to each
+        of them (or pinned to the leader).
+        """
+        return f"{self.app.name}.{self.model.name}.svc.cluster.local"
+
+    @property
+    def _joined_units(self) -> int:
+        """Return how many units of this application are currently in the peer relation.
+
+        Deliberately not ``self.app.planned_units()``: that shells out to ``goal-state``,
+        which hard-fails for every hook in the model once an unclean cross-model teardown
+        leaves a dangling SAAS reference behind, taking this charm to error state
+        (https://github.com/juju/juju/issues/23212). Counting the peers avoids the hook
+        command altogether.
+        """
+        peers = self.model.get_relation("peers")
+        return len(peers.units) + 1 if peers else 1
+
+    def internal_host(self, container: Container) -> str:
+        """Return the in-cluster address that remote charms should use to reach this app.
+
+        This is the Kubernetes Service FQDN, so that traffic is load-balanced across units
+        instead of being duplicated to every unit or pinned to the leader.
+
+        Any unit may terminate a connection made to the Service, so a TLS-enabled unit can only
+        be addressed that way once its certificate lists the Service name as a SAN. Until the CA
+        issues that certificate we keep advertising this pod's FQDN, and switch over on the
+        reconcile that follows its arrival. Without TLS there is no name to verify, so there is
+        nothing to wait for.
+        """
+        if not integrations.is_tls_ready(container):
+            return self.service_fqdn
+        return (
+            self.service_fqdn
+            if self.service_fqdn in integrations.server_cert_sans_dns(container)
+            else self.unit_fqdn
+        )
 
     def _reconcile(self):
         """Recreate the world state for the charm.
@@ -177,11 +262,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Service mesh integration
         integrations.setup_service_mesh(self)
 
-        # Ingress integration
-        traefik_tls = integrations.is_tls_ready(container)
-        traefik_ingress = integrations.setup_traefik_ingress(self, traefik_tls)
-        istio_ingress = integrations.setup_istio_ingress(self)
-
         # Integrate with TLS relations
         receive_ca_certs_hash = integrations.receive_ca_cert(
             self,
@@ -189,6 +269,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         )
         server_cert_hash = integrations.receive_server_cert(
             self,
+            service_fqdn=self.service_fqdn,
             server_cert_path=ContainerPath(SERVER_CERT_PATH, container=container),
             private_key_path=ContainerPath(SERVER_CERT_PRIVATE_KEY_PATH, container=container),
             root_ca_cert_path=ContainerPath(SERVER_CA_CERT_PATH, container=container),
@@ -196,11 +277,17 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Refresh system certs
         # This must be run after receive_ca_cert and/or receive_server_cert because they update
         # certs in the /usr/local/share/ca-certificates directory
-        refresh_certs(container)
+        refresh_certs(container, sha256(receive_ca_certs_hash + server_cert_hash))
 
-        # Address manager
-        # NOTE: executed after ingress and TLS events
-        otelcol_address = charm_address(container, traefik_ingress, istio_ingress)
+        # Ingress integration and address manager
+        # NOTE: executed after the TLS integrations. Traefik verifies the hostname of its
+        # backend, so it must be given an address the served certificate is actually valid for.
+        internal_host = self.internal_host(container)
+        traefik_ingress = integrations.setup_traefik_ingress(
+            self, internal_host, integrations.is_tls_ready(container)
+        )
+        istio_ingress = integrations.setup_istio_ingress(self)
+        otelcol_address = charm_address(container, traefik_ingress, istio_ingress, internal_host)
         match otelcol_address:
             case integrations.MultipleIngressesConfigured():
                 self.unit.status = BlockedStatus(otelcol_address.message)
@@ -221,6 +308,14 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 return
 
         # Create the config manager
+        topology = JujuTopology.from_charm(self)
+        topology_labels = {
+            "juju_charm": topology.charm_name,
+            "juju_model": topology.model,
+            "juju_model_uuid": topology.model_uuid,
+            "juju_application": topology.application,
+            "juju_unit": topology.unit,
+        }
         config_manager = ConfigManager(
             global_scrape_interval=global_configs["global_scrape_interval"],
             global_scrape_timeout=global_configs["global_scrape_timeout"],
@@ -229,6 +324,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             queue_size=cast(int, self.config.get("queue_size")),
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
             unit_name=self.unit.name,
+            self_telemetry_host=self.unit_fqdn,
+            topology_labels=topology_labels,
         )
 
         # TODO: if/when we support multiple feature gates, make this a list and find out how to
@@ -253,24 +350,19 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         config_manager.add_log_forwarding(loki_endpoints, insecure_skip_verify)
 
         # Metrics setup
-        topology = JujuTopology.from_charm(self)
         config_manager.add_self_scrape(
             identifier=topology.identifier,
             labels={
                 "instance": f"{topology.identifier}_{topology.unit}",
-                "juju_charm": topology.charm_name,
-                "juju_model": topology.model,
-                "juju_model_uuid": topology.model_uuid,
-                "juju_application": topology.application,
-                "juju_unit": topology.unit,
+                **topology_labels,
             },
         )
         # For now, the only incoming and outgoing metrics relations are remote-write/scrape
         metrics_consumer_jobs = integrations.scrape_metrics(self)
         # Write CA certificates to disk and update job configurations
         self._ensure_certs_dir(container)
-        cert_paths = self._write_ca_certificates_to_disk(metrics_consumer_jobs, container)
-        metrics_consumer_jobs = config_manager.update_jobs_with_ca_paths(
+        cert_paths = self._write_tls_certificates_to_disk(metrics_consumer_jobs, container)
+        metrics_consumer_jobs = config_manager.update_jobs_with_cert_paths(
             metrics_consumer_jobs, cert_paths
         )
         config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
@@ -287,16 +379,14 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Profiling setup
         if self._incoming_profiles:
             config_manager.add_profile_ingestion()
-            integrations.receive_profiles(self, integrations.is_tls_ready(container))
+            integrations.receive_profiles(self, otelcol_address)
         if profiling_endpoints := integrations.send_profiles(self):
             config_manager.add_profile_forwarding(profiling_endpoints)
         if self._incoming_profiles or integrations.send_profiles(self):
             feature_gates = "service.profilesSupport"
 
         # Tracing setup
-        requested_tracing_protocols = integrations.receive_traces(
-            self, integrations.is_tls_ready(container)
-        )
+        requested_tracing_protocols = integrations.receive_traces(self, otelcol_address)
         if self._incoming_traces:
             config_manager.add_traces_ingestion(requested_tracing_protocols)
             # Add default processors to traces
@@ -365,6 +455,22 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             container.replan()
             self.unit.status = ActiveStatus()
 
+        # Scaling status
+        # Traffic is normally addressed to the Kubernetes Service, which load-balances over all
+        # units. The exception is a TLS deployment whose certificate does not list the Service
+        # name yet: until the CA issues the widened certificate every sender, ingressed or not,
+        # is pinned to this one pod.
+        if self._joined_units > 1 and internal_host != self.service_fqdn:
+            self.unit.status = WaitingStatus(
+                "Waiting for a certificate valid for the Kubernetes Service name"
+            )
+            logger.warning(
+                "The server certificate does not list %s as a SAN, so this pod's address is "
+                "advertised instead and traffic is not distributed across units. This resolves "
+                "itself once the CA issues a certificate for the Kubernetes Service name.",
+                self.service_fqdn,
+            )
+
         # Mandatory relation pairs
         missing_relations = _get_missing_mandatory_relations(self)
         if missing_relations:
@@ -374,16 +480,21 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if integrations.cyclic_otlp_relations_exist(self):
             self.unit.status = BlockedStatus("cyclic OTLP relations exist")
 
-        # Ingress and scaling status
-        if self.model.unit.is_leader():
-            if self.app.planned_units() > 1 and not otelcol_address.ingress:
-                self.unit.status = BlockedStatus(
-                    "Ingress missing - routing only to leader; see debug-log"
-                )
-                logger.warning(
-                    "without ingress and planned_units > 1, all data is forwarded to the leader "
-                    "unit, with nothing sent to non-leader units."
-                )
+        # Invalid alert rules
+        if self._has_invalid_prometheus_alerts():
+            self.unit.status = BlockedStatus("Invalid Prometheus alerts. See debug-log")
+
+        # Invalid loki alert rules
+        if self._has_invalid_loki_alerts():
+            self.unit.status = BlockedStatus("Invalid Loki alerts. See debug-log")
+
+        # Invalid scrape jobs
+        if self._has_invalid_scrape_job():
+            self.unit.status = BlockedStatus("Invalid scrape jobs. See debug-log")
+
+        # Invalid OTLP alert rules (rejected by the remote `send-otlp` provider)
+        if self._has_invalid_otlp_rules():
+            self.unit.status = BlockedStatus("Invalid OTLP alert rules. See debug-log")
 
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")
@@ -461,30 +572,44 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         directory = ContainerPath(CERTS_DIR, container=container)
         directory.mkdir(parents=True, exist_ok=True)
 
-    def _write_ca_certificates_to_disk(
+    def _write_tls_certificates_to_disk(
         self, scrape_jobs: List[Dict], container: Container
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Dict[str, str]]:
         cert_paths = {}
 
         if not container.can_connect():
-            logger.warning("Container not accessible, skipping CA certificate processing")
+            logger.warning("Container not accessible, skipping certificate processing")
             return cert_paths
+
+        # Prometheus accepts both the inline (`ca`) and the file (`ca_file`) spelling
+        specs = (
+            ("ca", ("ca_file", "ca"), self._validate_cert, 0o644),
+            ("key", ("key_file", "key"), self._validate_private_key, 0o600),
+            ("cert", ("cert_file", "cert"), self._validate_cert, 0o644),
+        )
 
         for job in scrape_jobs:
             tls_config = job.get("tls_config", {})
-            ca_content = tls_config.get("ca")
-
-            if not ca_content or not self._validate_cert(ca_content):
-                continue
-
             job_name = job.get("job_name", "default")
-            # Since the `MetricsEndpointProvider` accepts a `jobs` arg, we cannot rely on the job name being safe
             safe_job_name = job_name.replace("/", "_").replace(" ", "_").replace("-", "_")
-            ca_cert_path = f"{CERTS_DIR}otel_{safe_job_name}_ca.pem"
+            job_cert_paths = {}
 
-            container.push(ca_cert_path, ca_content, permissions=0o644)
-            cert_paths[job_name] = ca_cert_path
-            logger.debug(f"CA certificate for job '{job_name}' written to {ca_cert_path}")
+            for kind, tls_keys, validate, permissions in specs:
+                content = next((tls_config[key] for key in tls_keys if tls_config.get(key)), None)
+                if not content or "-----BEGIN" not in content:
+                    continue
+                if not validate(content):
+                    logger.warning(
+                        f"Ignoring malformed PEM {kind} for job '{job_name}'; "
+                        "it is passed through to the workload config as-is"
+                    )
+                    continue
+                path = f"{CERTS_DIR}otel_{safe_job_name}_{kind}.pem"
+                container.push(path, content, permissions=permissions)
+                job_cert_paths[kind] = path
+
+            if job_cert_paths:
+                cert_paths[job_name] = job_cert_paths
 
         return cert_paths
 
@@ -541,6 +666,22 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _has_server_cert_relation(self) -> bool:
         return any(self.model.relations.get("receive-server-cert", []))
 
+    def _has_invalid_prometheus_alerts(self) -> bool:
+        """Check if any metrics-endpoint relation reported invalid alert rules."""
+        return self.metrics_consumer.has_invalid_alert_rules()
+
+    def _has_invalid_loki_alerts(self) -> bool:
+        """Check if any receive-loki-logs relation reported invalid alert rules."""
+        return self.loki_provider.has_invalid_alert_rules()
+
+    def _has_invalid_scrape_job(self) -> bool:
+        """Check if any metrics-endpoint relation reported invalid scrape jobs."""
+        return self.metrics_consumer.has_invalid_scrape_jobs()
+
+    def _has_invalid_otlp_rules(self) -> bool:
+        """Check if any send-otlp relation reported invalid alert rules."""
+        return integrations.has_invalid_otlp_rules(self)
+
     def _resource_reqs_from_config(self) -> ResourceRequirements:
         limits = {
             "cpu": self.model.config.get("cpu"),
@@ -552,6 +693,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _validate_cert(self, cert: str) -> bool:
         pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"
         return bool(re.search(pem_pattern, cert, re.DOTALL))
+
+    @staticmethod
+    def _validate_private_key(key: str) -> bool:
+        pem_pattern = r"-----BEGIN( .*)? PRIVATE KEY-----(.*?)-----END( .*)? PRIVATE KEY-----"
+        return bool(re.search(pem_pattern, key, re.DOTALL))
 
 
 if __name__ == "__main__":
