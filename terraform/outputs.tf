@@ -18,6 +18,7 @@ output "requires" {
     metrics_endpoint            = "metrics-endpoint",
     grafana_dashboards_consumer = "grafana-dashboards-consumer",
     ingress                     = "ingress",
+    istio_ingress               = "istio-ingress",
     receive_ca_cert             = "receive-ca-cert",
     receive_server_cert         = "receive-server-cert",
     require_cmr_mesh            = "require-cmr-mesh",
