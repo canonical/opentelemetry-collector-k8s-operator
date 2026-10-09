@@ -83,6 +83,7 @@ from constants import (
     METRICS_RULES_SRC_PATH,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
+    SIGMA_RULES_SRC_PATH,
 )
 
 logger = logging.getLogger(__name__)
@@ -795,7 +796,10 @@ def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoin
         RuleStore(JujuTopology.from_charm(charm))
         .add_logql_path(charm_root.joinpath(LOKI_RULES_SRC_PATH), recursive=True)
         .add_promql_path(charm_root.joinpath(METRICS_RULES_SRC_PATH), recursive=True)
+        .add_sigma_path(charm_root.joinpath(SIGMA_RULES_SRC_PATH), recursive=True)
     )
+    rules = RuleStore(JujuTopology.from_charm(charm))
+    rules.sigma = own_rules.sigma
 
     logql_entries: List[Tuple[str, OfficialRuleFileItem]] = [
         ("charm's own bundled rules", group) for group in own_rules.logql.groups
@@ -813,9 +817,10 @@ def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoin
             promql_entries.extend(
                 (f"relation {rel_id}", group) for group in rule_store.promql.groups
             )
+            if sigma := rule_store.sigma.as_dict():
+                rules.sigma.add(sigma)
 
     # Deduplicate rules by content
-    rules = RuleStore(JujuTopology.from_charm(charm))
     rules.logql.groups = _dedupe_rule_groups(logql_entries, "logql")
     rules.promql.groups = _dedupe_rule_groups(promql_entries, "promql")
 
