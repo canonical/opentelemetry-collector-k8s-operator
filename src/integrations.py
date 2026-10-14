@@ -116,7 +116,9 @@ def _add_alerts(alerts: Dict, dest_path: Path):
     for topology_identifier, rule in alerts.items():
         rule_file = dest_path.joinpath(f"juju_{topology_identifier}.rules")
         rule_file.write_text(yaml.safe_dump(rule))
-        logger.debug(f"updated alert rules file {rule_file.as_posix()}")
+    # A single summary line: each log record is a `juju-log` fork, so logging per file
+    # would cost one hook-tool call per related application.
+    logger.debug("wrote %d alert rules files to %s", len(alerts), dest_path.as_posix())
 
 
 def receive_external_configs(charm: CharmBase) -> tuple[list[dict[str, Any]], dict[str, str]]:
@@ -540,7 +542,9 @@ def _add_dashboards(dashboards: List[Dict[str, str]], dest_path: Path):
         filename = f"juju_{title}-{charm_name}-{rel_id}.json"
         with open(Path(dest_path, filename), mode="w", encoding="utf-8") as f:
             f.write(json.dumps(dash["content"]))
-            logger.debug("updated dashboard file %s", f.name)
+    # A single summary line: each log record is a `juju-log` fork, so logging per file
+    # would cost one hook-tool call per related application.
+    logger.debug("wrote %d dashboard files to %s", len(dashboards), dest_path.as_posix())
 
 
 def _safe_relations(charm: CharmBase, endpoint: str) -> Optional[List[Relation]]:
