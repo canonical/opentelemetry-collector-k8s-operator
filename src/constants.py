@@ -16,6 +16,11 @@ CONFIG_PATH: Final[str] = "/etc/otelcol/config.yaml"
 # Kept in the workload container, alongside the trust store it guards, so a recreated
 # container drops the stamp and the trust store is rebuilt on the next reconcile.
 CA_TRUST_STAMP_PATH: Final[str] = "/etc/otelcol/.ca-trust-hash"
+# Records the OTLP endpoints last published over `receive-otlp`, so that the per-relation
+# databag writes (one `relation-get` each, to diff the application data) are skipped while
+# the endpoints and the relation set are unchanged. Kept in the charm container, so a
+# recreated pod drops the stamp and forces a full republish.
+OTLP_ENDPOINTS_STAMP_PATH: Final[str] = ".receive-otlp-endpoints-stamp.json"
 METRICS_RULES_SRC_PATH: Final[str] = "src/prometheus_alert_rules"
 METRICS_RULES_DEST_PATH: Final[str] = "prometheus_alert_rules"
 LOKI_RULES_SRC_PATH: Final[str] = "src/loki_alert_rules"

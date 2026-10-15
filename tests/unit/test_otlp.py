@@ -17,8 +17,14 @@ from cosl.utils import LZMABase64
 from ops.testing import Model, Relation, State
 from scenario import ActiveStatus, BlockedStatus
 
+from src.constants import OTLP_ENDPOINTS_STAMP_PATH
 from src.integrations import (
+    Address,
+    _EndpointsStamp,
     _dedupe_rule_groups,
+    _otlp_endpoints,
+    _otlp_endpoints_fingerprint,
+    _read_endpoints_stamp,
     _unique_group_name,
     cyclic_otlp_relations_exist,
     has_invalid_otlp_rules,
@@ -153,6 +159,186 @@ def test_receive_otlp(ctx, otelcol_container):
     # THEN otelcol offers its supported OTLP endpoints in the databag as "insecure"
     assert (actual_endpoints := json.loads(local_app_data.get("endpoints", "[]")))
     assert actual_endpoints == expected_endpoints["endpoints"]
+
+
+def test_receive_otlp_publishes_once_until_something_changes(ctx, otelcol_container):
+    """The endpoints are only written to the receive-otlp databags when something changed.
+
+    `OtlpProvider.publish` costs one `relation-get` per relation (to diff the application
+    data before writing), which dominates hook time with hundreds of clients. Reconciles
+    that change neither the endpoints nor the relation set must not publish at all.
+    """
+    # GIVEN a receive-otlp relation
+    state = State(leader=True, containers=otelcol_container, relations=[RECEIVE_OTLP])
+
+    with patch.object(OtlpProvider, "publish") as publish:
+        # WHEN the charm first reconciles (no stamp on disk yet)
+        ctx.run(ctx.on.update_status(), state=state)
+        # THEN the endpoints are published
+        assert publish.call_count == 1
+
+        # AND WHEN a second reconcile changes nothing
+        ctx.run(ctx.on.update_status(), state=state)
+        # THEN the publish is skipped
+        assert publish.call_count == 1
+
+        # AND WHEN a new relation joins
+        state_with_new_relation = _replace(
+            state, relations=[RECEIVE_OTLP, _replace(RECEIVE_OTLP, id=42)]
+        )
+        ctx.run(ctx.on.update_status(), state=state_with_new_relation)
+        # THEN the endpoints are published again, to cover it
+        assert publish.call_count == 2
+
+
+@patch("socket.getfqdn", new=lambda *args: "fqdn")
+def test_receive_otlp_endpoints_survive_a_skipped_publish(ctx, otelcol_container):
+    """A skipped publish must not drop the endpoints already in the databag."""
+    # GIVEN a first reconcile that published the endpoints
+    state = State(leader=True, containers=otelcol_container, relations=[RECEIVE_OTLP])
+    out_1 = ctx.run(ctx.on.update_status(), state=state)
+    expected = json.loads(out_1.get_relations("receive-otlp")[0].local_app_data["endpoints"])
+    assert expected, "sanity: the first reconcile must publish the endpoints"
+
+    # WHEN the next reconcile changes nothing and the databag carries the endpoints over
+    out_2 = ctx.run(ctx.on.update_status(), state=out_1)
+
+    # THEN the endpoints are still in the databag
+    assert json.loads(out_2.get_relations("receive-otlp")[0].local_app_data["endpoints"]) == (
+        expected
+    )
+
+
+@patch("socket.getfqdn", new=lambda *args: "fqdn")
+def test_receive_otlp_new_relation_gets_endpoints_despite_unchanged_payload(
+    ctx, otelcol_container
+):
+    """A relation joining after a publish must receive the endpoints anyway.
+
+    The stamp records the relation IDs the payload was published to, and Juju never
+    reuses a relation ID, so a new relation must trigger a republish even though the
+    endpoints themselves are unchanged. Guards the `relation_ids` half of the stamp
+    (the fingerprint half is guarded by the address tests in test_ingress.py).
+    """
+    # GIVEN a first reconcile that published the endpoints to the only relation
+    state = State(leader=True, containers=otelcol_container, relations=[RECEIVE_OTLP])
+    out_1 = ctx.run(ctx.on.update_status(), state=state)
+    published = out_1.get_relations("receive-otlp")[0].local_app_data["endpoints"]
+    expected = json.loads(published)
+    assert expected, "sanity: the first reconcile must publish the endpoints"
+
+    # WHEN a new relation joins and the endpoints are unchanged
+    new_relation = _replace(RECEIVE_OTLP, id=42)
+    state_with_new = _replace(out_1, relations=out_1.relations | {new_relation})
+    with ctx(ctx.on.relation_joined(new_relation), state=state_with_new) as mgr:
+        out_2 = mgr.run()
+        stamp = _read_endpoints_stamp(mgr.charm)
+
+    # THEN the new relation's databag received the endpoints
+    assert (
+        json.loads(out_2.get_relation(new_relation.id).local_app_data.get("endpoints", "[]"))
+        == expected
+    )
+    # AND the old relation keeps its endpoints
+    assert json.loads(out_2.get_relation(RECEIVE_OTLP.id).local_app_data["endpoints"]) == expected
+
+    # AND the stamp covers both relations
+    assert stamp is not None
+    assert stamp.relation_ids == sorted([RECEIVE_OTLP.id, new_relation.id])
+
+
+def test_receive_otlp_corrupted_stamp_forces_republish(ctx, otelcol_container, tmp_path):
+    """An unreadable stamp must never block publishing."""
+    # GIVEN a corrupt stamp from a previous run
+    (tmp_path / OTLP_ENDPOINTS_STAMP_PATH).write_text("not json{")
+    state = State(leader=True, containers=otelcol_container, relations=[RECEIVE_OTLP])
+
+    # WHEN any event executes the reconciler
+    with patch.object(OtlpProvider, "publish") as publish:
+        ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN the endpoints are published anyway
+    assert publish.call_count == 1
+
+
+def test_receive_otlp_non_leader_does_not_publish_or_stamp(ctx, otelcol_container, tmp_path):
+    """Only the leader publishes endpoints and manages the stamp."""
+    # GIVEN a non-leader unit
+    state = State(leader=False, containers=otelcol_container, relations=[RECEIVE_OTLP])
+
+    # WHEN any event executes the reconciler
+    with patch.object(OtlpProvider, "publish") as publish:
+        ctx.run(ctx.on.update_status(), state=state)
+
+    # THEN the publish is never called and no stamp is written
+    assert publish.call_count == 0
+    assert not (tmp_path / OTLP_ENDPOINTS_STAMP_PATH).exists()
+
+
+def test_otlp_endpoints_fingerprint_covers_every_payload_input():
+    """Every input of the published payload must move the fingerprint."""
+    insecure = Address(ingress=False, resolved_tls=False, resolved_host="otelcol")
+    tls = Address(ingress=False, resolved_tls=True, resolved_host="otelcol")
+    other_host = Address(ingress=False, resolved_tls=False, resolved_host="elsewhere")
+
+    endpoints = _otlp_endpoints(insecure, traefik_ingress=False)
+    fingerprint = _otlp_endpoints_fingerprint(endpoints)
+
+    assert fingerprint == _otlp_endpoints_fingerprint(
+        _otlp_endpoints(insecure, traefik_ingress=False)
+    )
+    assert fingerprint != _otlp_endpoints_fingerprint(_otlp_endpoints(tls, traefik_ingress=False))
+    assert fingerprint != _otlp_endpoints_fingerprint(
+        _otlp_endpoints(other_host, traefik_ingress=False)
+    )
+    # Behind Traefik the gRPC endpoint is not published at all
+    assert fingerprint != _otlp_endpoints_fingerprint(
+        _otlp_endpoints(insecure, traefik_ingress=True)
+    )
+    # The payload itself is fingerprinted, not the address it was derived from
+    changed_payload = [
+        endpoints[0].model_copy(update={"telemetries": ["logs"]}),
+        *endpoints[1:],
+    ]
+    assert fingerprint != _otlp_endpoints_fingerprint(changed_payload)
+
+
+def test_endpoints_stamp_roundtrips_through_json():
+    """The stamp is pure data: it survives a JSON round-trip unchanged."""
+    stamp = _EndpointsStamp("fingerprint", [1, 2])
+    assert _EndpointsStamp.from_json(stamp.to_json()) == stamp
+
+
+@pytest.mark.parametrize(
+    "fingerprint, live_ids, expected",
+    (
+        pytest.param("fingerprint", [1, 2], True, id="match"),
+        pytest.param("other-fingerprint", [1, 2], False, id="fingerprint-changed"),
+        pytest.param("fingerprint", [1, 3], False, id="relation-set-changed"),
+        pytest.param("fingerprint", [1, 2, 3], False, id="relation-added"),
+        pytest.param("fingerprint", [1], False, id="relation-removed"),
+    ),
+)
+def test_endpoints_stamp_is_current(fingerprint, live_ids, expected):
+    """The stamp is current iff the fingerprint and the relation set both match."""
+    assert _EndpointsStamp("fingerprint", [1, 2]).is_current(fingerprint, live_ids) is expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        pytest.param(None, id="missing"),
+        pytest.param("", id="empty"),
+        pytest.param("not json{", id="corrupt"),
+        pytest.param("[]", id="not-an-object"),
+        pytest.param('{"fingerprint": "fp"}', id="missing-relation-ids"),
+        pytest.param('{"relation_ids": [1]}', id="missing-fingerprint"),
+        pytest.param('{"fingerprint": 1, "relation_ids": [1]}', id="wrong-fingerprint-type"),
+    ),
+)
+def test_endpoints_stamp_from_json_treats_bad_input_as_absent(raw):
+    """Any unreadable or partial stamp must parse as absent, forcing a republish."""
+    assert _EndpointsStamp.from_json(raw) is None
 
 
 @pytest.mark.parametrize(

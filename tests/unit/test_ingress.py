@@ -339,7 +339,9 @@ def test_otlp_url_in_databag(
     )
 
     # AND WHEN the receive-otlp relation is created
-    out_2 = ctx.run(ctx.on.relation_created(receive_otlp), state)
+    # (the databag written above persists across hooks, so out_1 is the input state)
+    receive_otlp_out_1 = out_1.get_relations(receive_otlp.endpoint)[0]
+    out_2 = ctx.run(ctx.on.relation_created(receive_otlp_out_1), out_1)
 
     # THEN ingress URL is present in receive-otlp relation databag
     receive_otlp_out = out_2.get_relations(receive_otlp.endpoint)[0]
@@ -349,7 +351,8 @@ def test_otlp_url_in_databag(
     )
 
     # AND WHEN ingress is removed
-    out_3 = ctx.run(ctx.on.relation_broken(ingress), state)
+    ingress_out_1 = out_1.get_relations(ingress.endpoint)[0]
+    out_3 = ctx.run(ctx.on.relation_broken(ingress_out_1), out_1)
     # THEN the internal URL is present in receive-otlp relation databag
     receive_otlp_out = out_3.get_relations(receive_otlp.endpoint)[0]
     endpoints = json.loads(receive_otlp_out.local_app_data.get("endpoints", "[]"))

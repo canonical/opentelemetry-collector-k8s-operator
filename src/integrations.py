@@ -15,7 +15,13 @@ from typing import Any, Dict, List, Optional, Set, Tuple, cast, get_args
 from urllib.parse import urlparse
 
 import yaml
-from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer, RuleStore
+from charmlibs.interfaces.otlp import (
+    OtlpEndpoint,
+    OtlpProvider,
+    OtlpRequirer,
+    RuleStore,
+    __version__ as otlp_lib_version,
+)
 from charmlibs.pathops import PathProtocol
 from charmlibs.interfaces.certificate_transfer import (
     CertificateTransferRequires,
@@ -81,6 +87,7 @@ from constants import (
     LOKI_RULES_SRC_PATH,
     METRICS_RULES_DEST_PATH,
     METRICS_RULES_SRC_PATH,
+    OTLP_ENDPOINTS_STAMP_PATH,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
 )
@@ -617,12 +624,159 @@ def forward_dashboards(charm: CharmBase):
     # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
 
+def _otlp_endpoints(address: "Address", traefik_ingress: bool) -> List[OtlpEndpoint]:
+    """Return the endpoints this charm offers over `receive-otlp`.
+
+    Single source of truth: both the published payload and its fingerprint derive from
+    this list, so they cannot drift apart. The gRPC endpoint is not offered behind
+    Traefik, which cannot route it.
+    """
+    endpoints = [
+        OtlpEndpoint(
+            protocol="http",
+            endpoint=f"{address.http_resolved_url}:{Port.otlp_http.value}",
+            telemetries=["metrics", "logs", "traces"],
+            insecure=not address.resolved_tls,
+        )
+    ]
+    if not traefik_ingress:
+        endpoints.append(
+            OtlpEndpoint(
+                protocol="grpc",
+                endpoint=f"{address.grpc_resolved_url}:{Port.otlp_grpc.value}",
+                telemetries=["metrics", "logs", "traces"],
+                insecure=not address.resolved_tls,
+            )
+        )
+    return endpoints
+
+
+def _otlp_endpoints_fingerprint(endpoints: List[OtlpEndpoint]) -> str:
+    """Fingerprint the payload published over `receive-otlp`.
+
+    Keyed on the endpoints themselves (not on the address they were derived from), so
+    any payload change moves the fingerprint; the library version is included in case
+    it changes how the payload is serialized.
+    """
+    return sha256(
+        json.dumps(
+            {
+                "lib_version": otlp_lib_version,
+                "endpoints": [endpoint.model_dump() for endpoint in endpoints],
+            },
+            sort_keys=True,
+        )
+    )
+
+
+@dataclass(frozen=True)
+class _EndpointsStamp:
+    """What was last published over `receive-otlp`, and to which relations.
+
+    The stamp is pure data: parsing, serializing and the staleness decision involve no
+    I/O, so they are unit-testable without a charm. Any unreadable, corrupt or partial
+    value parses as absent, so a mismatch can only cost a redundant (idempotent)
+    republish, never a lost one.
+    """
+
+    fingerprint: str
+    relation_ids: List[int]
+
+    def is_current(self, fingerprint: str, live_ids: List[int]) -> bool:
+        """Return whether the stamp matches the current endpoints and relation set."""
+        return self.fingerprint == fingerprint and self.relation_ids == live_ids
+
+    @classmethod
+    def from_json(cls, raw: Optional[str]) -> Optional["_EndpointsStamp"]:
+        """Parse a stamp, treating anything unparseable as absent.
+
+        Partially typed content (e.g. non-int relation IDs) still parses, but can never
+        match the live values, so it only ever forces a republish.
+        """
+        try:
+            data = json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        fingerprint, relation_ids = data.get("fingerprint"), data.get("relation_ids")
+        if not isinstance(fingerprint, str) or not isinstance(relation_ids, list):
+            return None
+        return cls(fingerprint, relation_ids)
+
+    def to_json(self) -> str:
+        """Serialize the stamp for the stamp file."""
+        return json.dumps({"fingerprint": self.fingerprint, "relation_ids": self.relation_ids})
+
+
+def _endpoints_stamp_path(charm: CharmBase) -> Path:
+    """Return the path of the endpoints stamp, in the charm container."""
+    return charm.charm_dir.absolute() / OTLP_ENDPOINTS_STAMP_PATH
+
+
+def _read_endpoints_stamp(charm: CharmBase) -> Optional[_EndpointsStamp]:
+    """Read the endpoints stamp from the charm container, if it is readable."""
+    stamp_path = _endpoints_stamp_path(charm)
+    try:
+        raw = stamp_path.read_text() if stamp_path.exists() else None
+    except OSError:
+        return None
+    return _EndpointsStamp.from_json(raw)
+
+
+def _write_endpoints_stamp(charm: CharmBase, stamp: _EndpointsStamp) -> None:
+    """Persist the endpoints stamp in the charm container."""
+    stamp_path = _endpoints_stamp_path(charm)
+    stamp_path.parent.mkdir(parents=True, exist_ok=True)
+    stamp_path.write_text(stamp.to_json())
+
+
+def _publish_otlp_endpoints(
+    charm: CharmBase,
+    provider: OtlpProvider,
+    endpoints: List[OtlpEndpoint],
+) -> None:
+    """Publish the OTLP endpoints, skipping the write when nothing changed.
+
+    `OtlpProvider.publish` saves the same payload to every relation of the endpoint, and
+    each save first reads this application's databag to diff it: one `relation-get` fork
+    per relation. With hundreds of clients that is seconds of hook time paid on every
+    event, although the payload only changes when the address, the TLS state or the
+    ingress do. The decision is `_EndpointsStamp.is_current`; the stamp is written only
+    after a successful publish, so a failed hook retries it. A pod (or charm) recreation
+    drops the stamp, forcing a full republish, which then diffs to a no-op against the
+    databag.
+    """
+    if not charm.unit.is_leader():
+        # Only the leader can write app data (`provider.publish()` would no-op anyway),
+        # and only the leader manages the stamp.
+        return
+
+    fingerprint = _otlp_endpoints_fingerprint(endpoints)
+    # Building the relations costs one `relation-list` each, but they are built later in
+    # the reconcile anyway (e.g. by the rules aggregation), so this adds no extra calls.
+    live_ids = sorted(rel.id for rel in charm.model.relations["receive-otlp"])
+
+    stamp = _read_endpoints_stamp(charm)
+    if stamp is not None and stamp.is_current(fingerprint, live_ids):
+        logger.debug(
+            "OTLP endpoints unchanged; skipping publish to %d relation(s)", len(live_ids)
+        )
+        return
+
+    provider.publish()
+    _write_endpoints_stamp(charm, _EndpointsStamp(fingerprint, live_ids))
+
+
 def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) -> OtlpProvider:
     """Instantiate the OtlpProvider.
 
     Define the OTLP endpoints which the charm should publish to the databag.
     The gRPC protocol is not supported because Traefik (ingress) does not
     support it.
+
+    The endpoints are only written to the relation databags when they, or the set of
+    relations, changed; see `_publish_otlp_endpoints`.
 
     Args:
         charm: the otel-collector charm object
@@ -634,20 +788,11 @@ def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) ->
         received alert rules) without re-instantiating it.
     """
     # Publish endpoints for the requirer
-    provider = OtlpProvider(charm).add_endpoint(
-        protocol="http",
-        endpoint=f"{address.http_resolved_url}:4318",
-        telemetries=["metrics", "logs", "traces"],
-        insecure=not address.resolved_tls,
-    )
-    if not traefik_ingress:
-        provider.add_endpoint(
-            protocol="grpc",
-            endpoint=f"{address.grpc_resolved_url}:4317",
-            telemetries=["metrics", "logs", "traces"],
-            insecure=not address.resolved_tls,
-        )
-    provider.publish()
+    endpoints = _otlp_endpoints(address, traefik_ingress)
+    provider = OtlpProvider(charm)
+    for endpoint in endpoints:
+        provider.add_endpoint(**endpoint.model_dump())
+    _publish_otlp_endpoints(charm, provider, endpoints)
     return provider
 
 
