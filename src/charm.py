@@ -25,6 +25,7 @@ import integrations
 from config_builder import Port, sha256
 from config_manager import ConfigManager
 from constants import (
+    CA_TRUST_RESTART_PENDING,
     CA_TRUST_STAMP_PATH,
     CERTS_DIR,
     CONFIG_PATH,
@@ -81,34 +82,79 @@ def charm_address(
     )
 
 
-def refresh_certs(container: Container, trust_hash: str):
-    """Refresh the trusted system certs, but only when they actually changed.
+def _read_trust_stamp(container: Container) -> Optional[str]:
+    try:
+        return ContainerPath(CA_TRUST_STAMP_PATH, container=container).read_text()
+    except FileNotFoundError:
+        return None
 
-    `update-ca-certificates --fresh` rehashes the whole bundle and costs several seconds,
-    yet the vast majority of reconciles do not touch any certificate. The hash of the certs
-    written under the system trust dir is therefore stamped on disk (in the workload
-    container, next to the trust store) and the command is skipped when it is unchanged
+
+def _write_trust_stamp(container: Container, stamp: str) -> None:
+    container.push(CA_TRUST_STAMP_PATH, stamp.encode("utf-8"), make_dirs=True)
+
+
+def _pending_trust_stamp(trust_hash: str) -> str:
+    return f"{trust_hash}\n{CA_TRUST_RESTART_PENDING}"
+
+
+def refresh_certs(container: Container, trust_hash: str) -> bool:
+    """Rebuild the system trust store if the certs feeding it changed.
 
     Args:
-        container: the workload container whose trust store is refreshed.
-        trust_hash: a hash summarising every cert that feeds the trust store. When it
-            matches the stamp from a previous run, the refresh is skipped.
+        container: the workload container.
+        trust_hash: hash of every cert feeding the trust store.
+
+    Returns:
+        True if otelcol has not been restarted since the trust store was rebuilt.
     """
-    stamp = ContainerPath(CA_TRUST_STAMP_PATH, container=container)
-    try:
-        if stamp.read_text() == trust_hash:
-            logger.debug("System trust store unchanged; skipping update-ca-certificates")
-            return
-    except FileNotFoundError:
-        pass
+    pending_stamp = _pending_trust_stamp(trust_hash)
+    stamp = _read_trust_stamp(container)
+    # `update-ca-certificates` takes seconds, so skip it when the certs are unchanged.
+    if stamp == trust_hash:
+        logger.debug("System trust store unchanged; skipping update-ca-certificates")
+        return False
+    # Built, but not loaded yet: a previous reconcile returned early or failed.
+    if stamp == pending_stamp:
+        logger.debug("System trust store unchanged, but otelcol has not loaded it yet")
+        return True
 
     container.exec(["update-ca-certificates", "--fresh"]).wait()
-    # Only stamp after a successful refresh, so a failed run is retried next reconcile.
-    container.push(
-        CA_TRUST_STAMP_PATH,
-        trust_hash.encode("utf-8"),
-        make_dirs=True,
-    )
+    # Stamp only after a successful rebuild; pending until otelcol is restarted.
+    _write_trust_stamp(container, pending_stamp)
+    return True
+
+
+def replan_with_trust_store(
+    container: Container, trust_hash: str, restart_pending: bool
+) -> None:
+    """Replan otelcol, restarting it if it has not loaded the rebuilt trust store yet.
+
+    Args:
+        container: the workload container.
+        trust_hash: hash the trust store was built from, as passed to `refresh_certs`.
+        restart_pending: as returned by `refresh_certs`.
+    """
+    if not restart_pending:
+        container.replan()
+        return
+
+    service = container.get_services(SERVICE_NAME).get(SERVICE_NAME)
+    was_running = bool(service and service.is_running())
+    container.replan()
+    # Go loads the system cert pool once per process, and `replan()` only restarts on layer
+    # changes. On a CA rotation this is a second restart, which is tolerated.
+    if was_running:
+        logger.info("System trust store rebuilt; restarting %s", SERVICE_NAME)
+        container.restart(SERVICE_NAME)
+
+    # A different stamp means the container restarted mid-hook: leave it to be rebuilt.
+    if _read_trust_stamp(container) != _pending_trust_stamp(trust_hash):
+        logger.warning(
+            "System trust store stamp changed during this hook (container restarted?); "
+            "leaving it for the next reconcile to rebuild the trust store"
+        )
+        return
+    _write_trust_stamp(container, trust_hash)
 
 
 def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
@@ -277,7 +323,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Refresh system certs
         # This must be run after receive_ca_cert and/or receive_server_cert because they update
         # certs in the /usr/local/share/ca-certificates directory
-        refresh_certs(container, sha256(receive_ca_certs_hash + server_cert_hash))
+        trust_hash = sha256(receive_ca_certs_hash + server_cert_hash)
+        trust_restart_pending = refresh_certs(container, trust_hash)
 
         # Ingress integration and address manager
         # NOTE: executed after the TLS integrations. Traefik verifies the hostname of its
@@ -452,7 +499,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             container.stop(SERVICE_NAME)
             self.unit.status = WaitingStatus("CSR sent; otelcol down while waiting for a cert")
         else:
-            container.replan()
+            replan_with_trust_store(container, trust_hash, trust_restart_pending)
             self.unit.status = ActiveStatus()
 
         # Scaling status
