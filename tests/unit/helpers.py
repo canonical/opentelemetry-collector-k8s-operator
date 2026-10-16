@@ -4,6 +4,8 @@
 
 from contextlib import contextmanager
 from datetime import timedelta
+from functools import partialmethod
+from typing import Callable, Iterator, List
 from unittest.mock import patch
 
 import yaml
@@ -16,6 +18,7 @@ from charms.tls_certificates_interface.v4.tls_certificates import (
     generate_csr,
 )
 from ops.testing import Context, State
+from scenario.mocking import _MockPebbleClient
 
 from constants import CA_TRUST_STAMP_PATH
 
@@ -93,3 +96,25 @@ def trust_stamp_after_reconcile(ctx: Context, state_in: State, cert_obj, private
     stamp = fs.joinpath(*CA_TRUST_STAMP_PATH.strip("/").split("/"))
     assert stamp.exists(), "trust store stamp was not written"
     return stamp.read_text()
+
+
+def _record_restart_then_call(
+    client, original: Callable, restarted: List[str], services, *args, **kwargs
+):
+    """Record the restarted `services`, then call `original`."""
+    restarted.extend(services)
+    return original(client, services, *args, **kwargs)
+
+
+@contextmanager
+def recorded_pebble_restarts() -> Iterator[List[str]]:
+    """Collect the services restarted through Scenario's Pebble client, once per restart."""
+    restarted: List[str] = []
+    original = _MockPebbleClient.restart_services
+    # `partialmethod` (not a mock) so it stacks with other patches of `restart_services`.
+    with patch.object(
+        _MockPebbleClient,
+        "restart_services",
+        partialmethod(_record_restart_then_call, original, restarted),
+    ):
+        yield restarted
