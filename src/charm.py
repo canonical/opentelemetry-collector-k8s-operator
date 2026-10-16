@@ -81,7 +81,7 @@ def charm_address(
     )
 
 
-def refresh_certs(container: Container, trust_hash: str):
+def refresh_certs(container: Container, trust_hash: str) -> bool:
     """Refresh the trusted system certs, but only when they actually changed.
 
     `update-ca-certificates --fresh` rehashes the whole bundle and costs several seconds,
@@ -93,12 +93,16 @@ def refresh_certs(container: Container, trust_hash: str):
         container: the workload container whose trust store is refreshed.
         trust_hash: a hash summarising every cert that feeds the trust store. When it
             matches the stamp from a previous run, the refresh is skipped.
+
+    Returns:
+        True if the trust store was rebuilt. A running otelcol must then be restarted,
+        since Go loads the system cert pool only once per process.
     """
     stamp = ContainerPath(CA_TRUST_STAMP_PATH, container=container)
     try:
         if stamp.read_text() == trust_hash:
             logger.debug("System trust store unchanged; skipping update-ca-certificates")
-            return
+            return False
     except FileNotFoundError:
         pass
 
@@ -109,6 +113,7 @@ def refresh_certs(container: Container, trust_hash: str):
         trust_hash.encode("utf-8"),
         make_dirs=True,
     )
+    return True
 
 
 def _get_missing_mandatory_relations(charm: CharmBase) -> Optional[str]:
@@ -277,7 +282,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Refresh system certs
         # This must be run after receive_ca_cert and/or receive_server_cert because they update
         # certs in the /usr/local/share/ca-certificates directory
-        refresh_certs(container, sha256(receive_ca_certs_hash + server_cert_hash))
+        trust_store_rebuilt = refresh_certs(
+            container, sha256(receive_ca_certs_hash + server_cert_hash)
+        )
 
         # Ingress integration and address manager
         # NOTE: executed after the TLS integrations. Traefik verifies the hostname of its
@@ -452,7 +459,15 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             container.stop(SERVICE_NAME)
             self.unit.status = WaitingStatus("CSR sent; otelcol down while waiting for a cert")
         else:
+            service = container.get_services(SERVICE_NAME).get(SERVICE_NAME)
+            was_running = bool(service and service.is_running())
             container.replan()
+            if trust_store_rebuilt and was_running:
+                # `replan()` only restarts otelcol when its layer changed, but the layer
+                # does not reflect the trust store: e.g. after a container restart the
+                # bundle is rebuilt with the same certs. Restart so the new pool is loaded.
+                logger.info("System trust store rebuilt; restarting %s", SERVICE_NAME)
+                container.restart(SERVICE_NAME)
             self.unit.status = ActiveStatus()
 
         # Scaling status
