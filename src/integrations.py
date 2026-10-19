@@ -83,6 +83,7 @@ from constants import (
     METRICS_RULES_SRC_PATH,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
+    TRAEFIK_MAX_IDLE_CONNS_PER_HOST,
 )
 
 logger = logging.getLogger(__name__)
@@ -1191,6 +1192,9 @@ def _traefik_ingress_config(
     http_routers = {}
     http_services = {}
     middlewares = {}
+    # Traefik merges every file in its dynamic config directory. A transport name defined by
+    # two relations is skipped, so scope it to this model and application like the other names.
+    transport_name = f"juju-{charm.model.name}-{charm.model.app.name}-transport"
     for port in Port:
         sanitized_protocol = port.name.replace("_", "-")
         redirect_middleware = (
@@ -1222,7 +1226,8 @@ def _traefik_ingress_config(
             "loadBalancer": {
                 "servers": _build_lb_server_config(
                     backend_host, "http" if not tls else "https", port.value
-                )
+                ),
+                "serversTransport": transport_name,
             }
         }
 
@@ -1230,6 +1235,11 @@ def _traefik_ingress_config(
         "http": {
             "routers": http_routers,
             "services": http_services,
+            "serversTransports": {
+                transport_name: {
+                    "maxIdleConnsPerHost": TRAEFIK_MAX_IDLE_CONNS_PER_HOST,
+                },
+            },
             # else we get: level=error msg="Error occurred during watcher callback:
             # ...: middlewares cannot be a standalone element (type map[string]*dynamic.Middleware)"
             # providerName=file
