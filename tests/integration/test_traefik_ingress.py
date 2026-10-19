@@ -50,7 +50,7 @@ def test_traefik_servers_transport_is_configured(juju: jubilant.Juju):
         "traefik/0",
         command=(
             "grep -R -e serversTransports -e 'serversTransport:' "
-            "/opt/traefik/juju || true"
+            "-e maxIdleConnsPerHost /opt/traefik/juju || true"
         ),
         container="traefik",
     )
