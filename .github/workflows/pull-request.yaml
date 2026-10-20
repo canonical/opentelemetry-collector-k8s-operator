@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - track/**
+      - feat/tfk-alive-connections
       - feat/tfk-backend-schemes
 
 permissions:
