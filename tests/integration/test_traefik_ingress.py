@@ -91,7 +91,10 @@ def test_scaling_behind_traefik_ingress_with_tls(juju: jubilant.Juju):
     juju.integrate("traefik:receive-ca-cert", "ssc:send-ca-cert")
     wait_settled(juju, "otelcol", "traefik", "ssc", "sender")
 
-    # THEN the sender still targets Traefik, and still in plaintext: Traefik serves HTTPS only
+    # THEN the plaintext-only health endpoint still answers through the ingress
+    assert_health_reachable_through_ingress(juju, "traefik")
+
+    # AND the sender still targets Traefik, and still in plaintext: Traefik serves HTTPS only
     # once Traefik itself has a certificate, so a TLS backend must not change what senders get
     exporter = otlp_exporter(juju, "sender")
     endpoint = exporter["endpoint"]

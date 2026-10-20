@@ -1075,6 +1075,21 @@ def _static_ingress_config() -> dict:
     return {"entryPoints": entry_points}
 
 
+# TLS is only injected into receivers with a protocols section. These ports stay plaintext even
+# when otelcol serves TLS, so Traefik must not attempt a TLS handshake against them (#368).
+_TRAEFIK_PLAINTEXT_PORTS = frozenset({Port.health, Port.metrics, Port.zipkin})
+_TRAEFIK_GRPC_PORTS = frozenset({Port.otlp_grpc, Port.jaeger_grpc})
+
+
+def _traefik_backend_scheme(port: Port, tls: bool) -> str:
+    """Return the scheme Traefik should use to reach the collector on ``port``."""
+    if port in _TRAEFIK_PLAINTEXT_PORTS:
+        return "http"
+    if port in _TRAEFIK_GRPC_PORTS:
+        return "https" if tls else "h2c"
+    return "https" if tls else "http"
+
+
 def _build_lb_server_config(backend_host: str, scheme: str, port: int) -> List[Dict[str, str]]:
     """Build the server portion of the loadbalancer config of Traefik ingress.
 
@@ -1226,7 +1241,7 @@ def _traefik_ingress_config(
         ] = {
             "loadBalancer": {
                 "servers": _build_lb_server_config(
-                    backend_host, "http" if not tls else "https", port.value
+                    backend_host, _traefik_backend_scheme(port, tls), port.value
                 ),
                 "serversTransport": transport_name,
             }
