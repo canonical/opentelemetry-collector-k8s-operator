@@ -2,7 +2,7 @@
 
 import hashlib
 import logging
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, Final, List, Literal, Optional, Union
 from enum import Enum, unique
 
 import yaml
@@ -58,6 +58,14 @@ class Port(int, Enum):
     """HTTP endpoint for Jaeger Thrift protocol"""
     zipkin = 9411
     """HTTP endpoint for Zipkin protocol"""
+
+
+# Ports whose components do not expose a "protocols" section and therefore never receive TLS
+# from _add_tls_to_all_receivers. Keep this list in sync with that method: Traefik must keep
+# speaking plaintext to these ports even when the rest of otelcol serves TLS.
+TLS_INCAPABLE_PORTS: Final[frozenset[Port]] = frozenset(
+    {Port.health, Port.metrics, Port.zipkin}
+)
 
 
 @unique
@@ -406,6 +414,9 @@ class ConfigBuilder:
         If a TLS section already exist for a receiver, then it's not updated.
 
         Ref: https://github.com/open-telemetry/opentelemetry-collector/blob/main/config/configtls/README.md#server-configuration
+
+        Components whose ports are listed in ``TLS_INCAPABLE_PORTS`` (health, metrics, zipkin)
+        do not expose a "protocols" section and are skipped here.
         """
         # NOTE: TLS can't be added to zipkin because it doesn't have a "protocols" section
         for receiver in self._config.get("receivers", {}):

@@ -14,6 +14,7 @@ from ops.testing import Model, PeerRelation, Relation, State
 
 from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
+from src.integrations import _traefik_backend_scheme
 
 FQDN = "otelcol-0.otelcol-endpoints.otel.svc.cluster.local"
 CHARM_NAME = "opentelemetry-collector-k8s"
@@ -450,17 +451,21 @@ def traefik_backends(state_out, ingress) -> set:
 
 def expected_traefik_backends(host: str, tls: bool) -> set:
     """Return the schemes each port should use when Traefik dials ``host``."""
-    schemes = {
-        Port.health: "http",
-        Port.metrics: "http",
-        Port.zipkin: "http",
-        Port.otlp_grpc: "https" if tls else "h2c",
-        Port.jaeger_grpc: "https" if tls else "h2c",
-        Port.loki_http: "https" if tls else "http",
-        Port.otlp_http: "https" if tls else "http",
-        Port.jaeger_thrift_http: "https" if tls else "http",
+    return {
+        f"{_traefik_backend_scheme(port, tls)}://{host}:{port.value}" for port in Port
     }
-    return {f"{schemes[port]}://{host}:{port.value}" for port in Port}
+
+
+@pytest.mark.parametrize("tls", [False, True])
+@pytest.mark.parametrize("port", list(Port))
+def test_traefik_backend_scheme(port, tls):
+    """The per-port scheme table is the independent oracle for the generated config."""
+    plaintext = {Port.health, Port.metrics, Port.zipkin}
+    grpc = {Port.otlp_grpc, Port.jaeger_grpc}
+    expected = "http"
+    if port not in plaintext:
+        expected = "https" if tls else ("h2c" if port in grpc else "http")
+    assert _traefik_backend_scheme(port, tls) == expected
 
 
 @patch("socket.getfqdn", new=lambda *args: FQDN)

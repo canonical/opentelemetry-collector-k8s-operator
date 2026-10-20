@@ -71,7 +71,7 @@ from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
 from ops.model import ModelError, Relation
 
-from config_builder import Port, sha256
+from config_builder import Port, TLS_INCAPABLE_PORTS, sha256
 from constants import (
     DASHBOARDS_DEST_PATH,
     DASHBOARDS_SRC_PATH,
@@ -1075,15 +1075,19 @@ def _static_ingress_config() -> dict:
     return {"entryPoints": entry_points}
 
 
-# TLS is only injected into receivers with a protocols section. These ports stay plaintext even
-# when otelcol serves TLS, so Traefik must not attempt a TLS handshake against them (#368).
-_TRAEFIK_PLAINTEXT_PORTS = frozenset({Port.health, Port.metrics, Port.zipkin})
+# tls and h2c are the two special cases: TLS-capable receivers speak https when configured, and
+# gRPC receivers speak h2c when cleartext. Everything else, including the TLS-incapable ports
+# from config_builder, uses http/https.
 _TRAEFIK_GRPC_PORTS = frozenset({Port.otlp_grpc, Port.jaeger_grpc})
 
 
 def _traefik_backend_scheme(port: Port, tls: bool) -> str:
-    """Return the scheme Traefik should use to reach the collector on ``port``."""
-    if port in _TRAEFIK_PLAINTEXT_PORTS:
+    """Return the scheme Traefik should use to reach the collector on ``port``.
+
+    The cleartext gRPC case relies on Traefik's ``h2c`` backend support, which its smart
+    round-tripper provides in Traefik 2.11 and later.
+    """
+    if port in TLS_INCAPABLE_PORTS:
         return "http"
     if port in _TRAEFIK_GRPC_PORTS:
         return "https" if tls else "h2c"
