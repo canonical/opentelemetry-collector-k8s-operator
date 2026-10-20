@@ -57,12 +57,7 @@ def _curl_supports_http2() -> bool:
 
 @pytest.mark.usefixtures("sender_and_sink")
 def test_otlp_grpc_is_reachable_through_traefik_ingress(juju: jubilant.Juju):
-    """Scenario: a cleartext gRPC request reaches otelcol through Traefik.
-
-    This is deliberately minimal: it sends an empty OTLP/Export request over h2c and asserts
-    that Traefik forwards it to the collector instead of failing the protocol hop with a 4xx
-    or 5xx. The follow-up gRPC endpoint publication will build on this with real payloads.
-    """
+    """Scenario: a cleartext gRPC request reaches otelcol through Traefik."""
     # GIVEN Traefik fronts otelcol, and the local curl can speak HTTP/2
     if not _curl_supports_http2():
         pytest.skip("curl is not built with HTTP/2 support")

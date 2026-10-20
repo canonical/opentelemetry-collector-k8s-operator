@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - track/**
+      - feat/tfk-backend-schemes
 
 permissions:
   # Required for all workflows
