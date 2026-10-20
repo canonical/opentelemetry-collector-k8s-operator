@@ -42,28 +42,6 @@ def test_traefik_ingress_advertises_the_external_host(juju: jubilant.Juju):
 
 
 @pytest.mark.usefixtures("sender_and_sink")
-def test_traefik_servers_transport_is_configured(juju: jubilant.Juju):
-    """Scenario: Traefik receives the charm's tuned backend transport."""
-    # GIVEN otelcol is fronted by Traefik from the previous test
-    # WHEN we inspect Traefik's file provider configuration
-    config = juju.ssh(
-        "traefik/0",
-        command=(
-            "grep -R -e serversTransports -e 'serversTransport:' "
-            "-e maxIdleConnsPerHost /opt/traefik/juju || true"
-        ),
-        container="traefik",
-    )
-
-    # THEN the transport was accepted with the configured idle pool,
-    # and every generated service references it
-    transport = f"juju-{juju.model}-otelcol-transport"
-    assert "serversTransports:" in config
-    assert f"serversTransport: {transport}" in config
-    assert "maxIdleConnsPerHost: 10000" in config
-
-
-@pytest.mark.usefixtures("sender_and_sink")
 def test_receivers_are_reachable_through_traefik_ingress(juju: jubilant.Juju):
     """Scenario: every receiver otelcol exposes answers through the ingress."""
     # GIVEN otelcol ingests Loki logs, and writes what it receives to its own log

@@ -1192,8 +1192,9 @@ def _traefik_ingress_config(
     http_routers = {}
     http_services = {}
     middlewares = {}
-    # Traefik merges every file in its dynamic config directory. A transport name defined by
-    # two relations is skipped, so scope it to this model and application like the other names.
+    # Traefik merges every file in its dynamic config directory. Duplicate transport definitions
+    # are skipped, with the first one winning, so scope the name to this model and application like
+    # the other generated names.
     transport_name = f"juju-{charm.model.name}-{charm.model.app.name}-transport"
     for port in Port:
         sanitized_protocol = port.name.replace("_", "-")
