@@ -262,6 +262,32 @@ def test_traefik_servers_transport_is_referenced_by_every_service(
     } == {transport}
 
 
+@pytest.mark.parametrize("configured_value", [200, 12345])
+@patch("socket.getfqdn", lambda: FQDN)
+def test_traefik_max_idle_conns_per_host_config_is_applied(
+    ctx, otelcol_container, configured_value
+):
+    """Scenario: the Juju config option overrides the idle pool written to Traefik."""
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
+    state = State(
+        relations=[ingress],
+        containers=otelcol_container,
+        leader=True,
+        config={"traefik_max_idle_conns_per_host": configured_value},
+    )
+
+    state_out = ctx.run(ctx.on.relation_joined(ingress), state)
+
+    config = yaml.safe_load(
+        state_out.get_relations(ingress.endpoint)[0].local_app_data["config"]
+    )
+    transport = f"juju-{state.model.name}-{CHARM_NAME}-transport"
+    assert (
+        config["http"]["serversTransports"][transport]["maxIdleConnsPerHost"]
+        == configured_value
+    )
+
+
 def test_traefik_ingress_config_middleware_tls(ctx, otelcol_container):
     # GIVEN a Traefik ingress relation with TLS
     ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "https"})

@@ -1196,6 +1196,12 @@ def _traefik_ingress_config(
     # are skipped, with the first one winning, so scope the name to this model and application like
     # the other generated names.
     transport_name = f"juju-{charm.model.name}-{charm.model.app.name}-transport"
+    max_idle_conns_per_host = cast(
+        int,
+        charm.config.get(
+            "traefik_max_idle_conns_per_host", TRAEFIK_MAX_IDLE_CONNS_PER_HOST
+        ),
+    )
     for port in Port:
         sanitized_protocol = port.name.replace("_", "-")
         redirect_middleware = (
@@ -1238,7 +1244,7 @@ def _traefik_ingress_config(
             "services": http_services,
             "serversTransports": {
                 transport_name: {
-                    "maxIdleConnsPerHost": TRAEFIK_MAX_IDLE_CONNS_PER_HOST,
+                    "maxIdleConnsPerHost": max_idle_conns_per_host,
                 },
             },
             # else we get: level=error msg="Error occurred during watcher callback:
