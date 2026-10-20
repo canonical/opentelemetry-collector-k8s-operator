@@ -83,7 +83,6 @@ from constants import (
     METRICS_RULES_SRC_PATH,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
-    TRAEFIK_MAX_IDLE_CONNS_PER_HOST,
 )
 
 logger = logging.getLogger(__name__)
@@ -1196,12 +1195,7 @@ def _traefik_ingress_config(
     # are skipped, with the first one winning, so scope the name to this model and application like
     # the other generated names.
     transport_name = f"juju-{charm.model.name}-{charm.model.app.name}-transport"
-    max_idle_conns_per_host = cast(
-        int,
-        charm.config.get(
-            "traefik_max_idle_conns_per_host", TRAEFIK_MAX_IDLE_CONNS_PER_HOST
-        ),
-    )
+    max_idle_conns_per_host = cast(int, charm.config.get("traefik_max_idle_conns_per_host"))
     for port in Port:
         sanitized_protocol = port.name.replace("_", "-")
         redirect_middleware = (

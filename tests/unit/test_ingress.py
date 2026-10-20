@@ -13,7 +13,7 @@ from helpers import IssuedCertificate, issued_certificate
 from ops.testing import Model, PeerRelation, Relation, State
 
 from src.config_builder import Port
-from src.constants import INGRESS_IP_MATCHER, TRAEFIK_MAX_IDLE_CONNS_PER_HOST
+from src.constants import INGRESS_IP_MATCHER
 
 FQDN = "otelcol-0.otelcol-endpoints.otel.svc.cluster.local"
 CHARM_NAME = "opentelemetry-collector-k8s"
@@ -220,7 +220,7 @@ def test_traefik_sent_config(ctx, otelcol_container):
                 },
             },
             "serversTransports": {
-                transport: {"maxIdleConnsPerHost": TRAEFIK_MAX_IDLE_CONNS_PER_HOST}
+                transport: {"maxIdleConnsPerHost": 7500}
             },
         },
     }
@@ -252,7 +252,7 @@ def test_traefik_servers_transport_is_referenced_by_every_service(
 
     # The transport must be defined once, with the idle pool that prevents connection churn.
     assert config["http"]["serversTransports"] == {
-        transport: {"maxIdleConnsPerHost": TRAEFIK_MAX_IDLE_CONNS_PER_HOST}
+        transport: {"maxIdleConnsPerHost": 7500}
     }
     # Every generated service must use it, including the TLS backend variants.
     services = config["http"]["services"]

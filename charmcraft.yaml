@@ -281,7 +281,7 @@ config:
         Traefik's 200 default, and a negative value disables connection reuse entirely,
         reintroducing the connection churn this option prevents.
       type: int
-      default: 10000
+      default: 7500
     # Tracing config options
     always_enable_zipkin:
       description: >
