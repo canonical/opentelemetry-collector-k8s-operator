@@ -42,10 +42,13 @@ def test_traefik_ingress_advertises_the_external_host(juju: jubilant.Juju):
     juju.integrate("otelcol:ingress", "traefik")
     wait_settled(juju, "otelcol", "traefik")
 
-    # THEN the sender targets Traefik's external host, not the in-cluster Service
+    # THEN the sender targets Traefik's external host over gRPC, not the in-cluster Service
     endpoint = otlp_exporter_endpoint(juju, "sender")
     assert f"otelcol.{juju.model}.svc.cluster.local" not in endpoint, (
         f"expected the ingress host in {endpoint!r}, got the in-cluster Service"
+    )
+    assert endpoint.endswith(f":{Port.otlp_grpc.value}"), (
+        f"expected the gRPC endpoint advertised through Traefik, got {endpoint!r}"
     )
 
 
@@ -152,15 +155,17 @@ def test_scaling_behind_traefik_ingress_with_tls(juju: jubilant.Juju):
     # THEN the plaintext-only health endpoint still answers through the ingress
     assert_health_reachable_through_ingress(juju, "traefik")
 
-    # AND the sender still targets Traefik, and still in plaintext: Traefik serves HTTPS only
-    # once Traefik itself has a certificate, so a TLS backend must not change what senders get
+    # AND the sender still targets Traefik over gRPC, and still in plaintext: Traefik serves
+    # HTTPS only once Traefik itself has a certificate, so a TLS backend must not change what
+    # senders get
     exporter = otlp_exporter(juju, "sender")
     endpoint = exporter["endpoint"]
     assert f"otelcol.{juju.model}.svc.cluster.local" not in endpoint, (
         f"expected the ingress host in {endpoint!r}, got the in-cluster Service"
     )
-    # Traefik does not support gRPC, so this is the only case where the endpoint is a URL
-    assert endpoint.startswith("http://"), f"expected a plaintext ingress in {endpoint!r}"
+    assert endpoint.endswith(f":{Port.otlp_grpc.value}"), (
+        f"expected the gRPC endpoint advertised through Traefik, got {endpoint!r}"
+    )
     assert exporter["tls"]["insecure"] is True, (
         f"expected the sender to reach Traefik in plaintext, got {exporter['tls']}"
     )
@@ -180,9 +185,9 @@ def test_removing_traefik_ingress_falls_back_to_the_service(juju: jubilant.Juju)
     # An app on its way out can report error, which says nothing about otelcol
     wait_settled(juju, "otelcol", "sender", error_on=("otelcol", "sender"))
 
-    # THEN the sender falls back to the in-cluster Service, over TLS and without certificate
-    # errors, since every unit's certificate also covers the Service name. gRPC wins again now
-    # that Traefik is gone, and gRPC endpoints carry no scheme, hence the `insecure` check.
+    # THEN the sender falls back to the in-cluster Service over gRPC, with TLS and without
+    # certificate errors, since every unit's certificate also covers the Service name and gRPC
+    # endpoints carry no scheme, hence the `insecure` check.
     exporter = otlp_exporter(juju, "sender")
     assert f"otelcol.{juju.model}.svc.cluster.local" in exporter["endpoint"]
     assert exporter["tls"]["insecure"] is False, (

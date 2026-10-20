@@ -381,8 +381,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         feature_gates: Optional[str] = None
 
         # OTLP setup
-        traefik_ingress = integrations.traefik_ingress_ready(traefik_ingress)
-        otlp_provider = integrations.receive_otlp(self, otelcol_address, traefik_ingress)
+        otlp_provider = integrations.receive_otlp(self, otelcol_address)
         # See `stage_received_otlp_rules` for the ordering contract it depends on.
         # Ref: https://github.com/canonical/opentelemetry-collector-operator/issues/297
         integrations.stage_received_otlp_rules(self, otlp_provider)
