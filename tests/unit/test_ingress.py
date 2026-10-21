@@ -386,24 +386,20 @@ def test_otlp_url_in_databag(
         # since we do not patch integrations.is_tls_ready(container), internal TLS will be False
         insecure = not (tls if has_ingress else False)
         scheme = "http" if insecure else "https"
-        endpoints = [
+        return [
             {
                 "protocol": "http",
                 "endpoint": f"{scheme}://{host}:{Port.otlp_http.value}",
                 "telemetries": ["metrics", "logs", "traces"],
                 "insecure": insecure,
-            }
+            },
+            {
+                "protocol": "grpc",
+                "endpoint": f"{host}:{Port.otlp_grpc.value}",
+                "telemetries": ["metrics", "logs", "traces"],
+                "insecure": insecure,
+            },
         ]
-        if not traefik:
-            endpoints.append(
-                {
-                    "protocol": "grpc",
-                    "endpoint": f"{host}:{Port.otlp_grpc.value}",
-                    "telemetries": ["metrics", "logs", "traces"],
-                    "insecure": insecure,
-                },
-            )
-        return endpoints
 
     # GIVEN an ingress is related to otelcol
     rules = json.dumps({"logql": {}, "promql": {}})

@@ -613,17 +613,14 @@ def forward_dashboards(charm: CharmBase):
     # grafana_dashboards_provider._reinitialize_dashboard_data(inject_dropdowns=False)
 
 
-def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) -> OtlpProvider:
+def receive_otlp(charm: CharmBase, address: "Address") -> OtlpProvider:
     """Instantiate the OtlpProvider.
 
     Define the OTLP endpoints which the charm should publish to the databag.
-    The gRPC protocol is not supported because Traefik (ingress) does not
-    support it.
 
     Args:
         charm: the otel-collector charm object
         address: a dataclass for determining network addressing
-        traefik_ingress: whether or not the charm's receivers are being routed through Traefik
 
     Returns:
         The instantiated ``OtlpProvider``, so that callers can reuse it (e.g. to read the
@@ -636,13 +633,12 @@ def receive_otlp(charm: CharmBase, address: "Address", traefik_ingress: bool) ->
         telemetries=["metrics", "logs", "traces"],
         insecure=not address.resolved_tls,
     )
-    if not traefik_ingress:
-        provider.add_endpoint(
-            protocol="grpc",
-            endpoint=f"{address.grpc_resolved_url}:4317",
-            telemetries=["metrics", "logs", "traces"],
-            insecure=not address.resolved_tls,
-        )
+    provider.add_endpoint(
+        protocol="grpc",
+        endpoint=f"{address.grpc_resolved_url}:4317",
+        telemetries=["metrics", "logs", "traces"],
+        insecure=not address.resolved_tls,
+    )
     provider.publish()
     return provider
 
