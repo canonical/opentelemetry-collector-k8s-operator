@@ -14,6 +14,7 @@ from ops.testing import Model, PeerRelation, Relation, State
 
 from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
+from src.integrations import _traefik_backend_scheme
 
 FQDN = "otelcol-0.otelcol-endpoints.otel.svc.cluster.local"
 CHARM_NAME = "opentelemetry-collector-k8s"
@@ -178,7 +179,7 @@ def test_traefik_sent_config(ctx, otelcol_container):
                 },
                 f"juju-{state.model.name}-{charm_name}-service-jaeger-grpc": {
                     "loadBalancer": {
-                        "servers": [{"url": f"http://{backend}:14250"}],
+                        "servers": [{"url": f"h2c://{backend}:14250"}],
                         "serversTransport": transport,
                     }
                 },
@@ -202,7 +203,7 @@ def test_traefik_sent_config(ctx, otelcol_container):
                 },
                 f"juju-{state.model.name}-{charm_name}-service-otlp-grpc": {
                     "loadBalancer": {
-                        "servers": [{"url": f"http://{backend}:4317"}],
+                        "servers": [{"url": f"h2c://{backend}:4317"}],
                         "serversTransport": transport,
                     }
                 },
@@ -448,6 +449,25 @@ def traefik_backends(state_out, ingress) -> set:
     }
 
 
+def expected_traefik_backends(host: str, tls: bool) -> set:
+    """Return the schemes each port should use when Traefik dials ``host``."""
+    return {
+        f"{_traefik_backend_scheme(port, tls)}://{host}:{port.value}" for port in Port
+    }
+
+
+@pytest.mark.parametrize("tls", [False, True])
+@pytest.mark.parametrize("port", list(Port))
+def test_traefik_backend_scheme(port, tls):
+    """The per-port scheme table is the independent oracle for the generated config."""
+    plaintext = {Port.health, Port.metrics, Port.zipkin}
+    grpc = {Port.otlp_grpc, Port.jaeger_grpc}
+    expected = "http"
+    if port not in plaintext:
+        expected = "https" if tls else ("h2c" if port in grpc else "http")
+    assert _traefik_backend_scheme(port, tls) == expected
+
+
 @patch("socket.getfqdn", new=lambda *args: FQDN)
 def test_traefik_backend_waits_for_a_certificate_covering_the_service_name(ctx, otelcol_container):
     """Scenario: a TLS otelcol refreshed from a revision that only asked for the pod name.
@@ -472,10 +492,9 @@ def test_traefik_backend_waits_for_a_certificate_covering_the_service_name(ctx, 
     with issued_certificate(IssuedCertificate("otelcol-0", frozenset({FQDN}))):
         state_out = ctx.run(ctx.on.update_status(), state)
 
-    # THEN Traefik is pointed at the pod, over HTTPS, so hostname verification still succeeds
-    assert traefik_backends(state_out, ingress) == {
-        f"https://{FQDN}:{port.value}" for port in Port
-    }
+    # THEN Traefik is pointed at the pod, using each port's actual scheme, so hostname
+    # verification still succeeds
+    assert traefik_backends(state_out, ingress) == expected_traefik_backends(FQDN, tls=True)
 
     # AND the charm says why scaling is not distributing anything yet
     assert state_out.unit_status.name == "waiting"
@@ -486,9 +505,7 @@ def test_traefik_backend_waits_for_a_certificate_covering_the_service_name(ctx, 
         state_out = ctx.run(ctx.on.update_status(), state)
 
     # THEN Traefik load-balances across all units via the K8s Service
-    assert traefik_backends(state_out, ingress) == {
-        f"https://{service}:{port.value}" for port in Port
-    }
+    assert traefik_backends(state_out, ingress) == expected_traefik_backends(service, tls=True)
     assert state_out.unit_status.name == "active"
 
     # AND the TLS backend services still use the tuned transport
@@ -515,7 +532,5 @@ def test_traefik_backend_scheme_matches_tls_on_the_hook_it_becomes_ready(ctx, ot
     with issued_certificate(IssuedCertificate("otelcol-0", frozenset({FQDN, service}))):
         state_out = ctx.run(ctx.on.relation_changed(ssc), state)
 
-    # THEN Traefik is told to speak HTTPS to the backend, not HTTP
-    assert traefik_backends(state_out, ingress) == {
-        f"https://{service}:{port.value}" for port in Port
-    }
+    # THEN Traefik is told to speak HTTPS to TLS-capable receivers, not HTTP
+    assert traefik_backends(state_out, ingress) == expected_traefik_backends(service, tls=True)
