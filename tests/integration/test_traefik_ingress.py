@@ -7,6 +7,7 @@ The tests below are one progressive scenario over a single model, in order.
 """
 
 import logging
+import subprocess
 
 import jubilant
 import pytest
@@ -16,12 +17,19 @@ from helpers import (
     assert_no_tls_verification_errors,
     assert_otlp_accepted_through_ingress,
     assert_otlp_logs_reach_pipeline_through_ingress,
+    ingress_url,
     otlp_exporter,
     otlp_exporter_endpoint,
     wait_settled,
 )
+from src.config_builder import Port
 
 logger = logging.getLogger(__name__)
+
+# gRPC wire format: one byte for the compression flag, four bytes for the message length,
+# then the message. An empty OTLP ExportLogsServiceRequest is a zero-length protobuf message.
+GRPC_EMPTY_MESSAGE = b"\x00\x00\x00\x00\x00"
+OTLP_LOGS_EXPORT_PATH = "/opentelemetry.proto.collector.logs.v1.LogsService/Export"
 
 # pyright: reportAttributeAccessIssue = false
 
@@ -38,6 +46,56 @@ def test_traefik_ingress_advertises_the_external_host(juju: jubilant.Juju):
     endpoint = otlp_exporter_endpoint(juju, "sender")
     assert f"otelcol.{juju.model}.svc.cluster.local" not in endpoint, (
         f"expected the ingress host in {endpoint!r}, got the in-cluster Service"
+    )
+
+
+def _curl_supports_http2() -> bool:
+    """Return whether the local curl can speak cleartext HTTP/2."""
+    result = subprocess.run(["curl", "--version"], capture_output=True, check=False)
+    return b"HTTP2" in result.stdout
+
+
+@pytest.mark.usefixtures("sender_and_sink")
+def test_otlp_grpc_is_reachable_through_traefik_ingress(juju: jubilant.Juju):
+    """Scenario: a cleartext gRPC request reaches otelcol through Traefik."""
+    # GIVEN Traefik fronts otelcol, and the local curl can speak HTTP/2
+    if not _curl_supports_http2():
+        pytest.skip("curl is not built with HTTP/2 support")
+
+    # WHEN a cleartext gRPC request hits the otlp-grpc entrypoint
+    url = ingress_url(juju, "traefik")
+    if url.startswith("https://"):
+        pytest.skip("this test targets the cleartext h2c entrypoint")
+    target = f"{url}:{Port.otlp_grpc.value}{OTLP_LOGS_EXPORT_PATH}"
+    result = subprocess.run(
+        [
+            "curl",
+            "-sS",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--http2-prior-knowledge",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/grpc",
+            "-H",
+            "TE: trailers",
+            "--data-binary",
+            "@-",
+            target,
+        ],
+        input=GRPC_EMPTY_MESSAGE,
+        capture_output=True,
+        check=False,
+    )
+
+    # THEN the request reached the collector over gRPC rather than failing at the protocol hop
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout.decode().strip() == "200", (
+        f"expected HTTP 200 from {target}, got {result.stdout!r} "
+        f"(stderr: {result.stderr.decode()!r})"
     )
 
 
@@ -91,7 +149,10 @@ def test_scaling_behind_traefik_ingress_with_tls(juju: jubilant.Juju):
     juju.integrate("traefik:receive-ca-cert", "ssc:send-ca-cert")
     wait_settled(juju, "otelcol", "traefik", "ssc", "sender")
 
-    # THEN the sender still targets Traefik, and still in plaintext: Traefik serves HTTPS only
+    # THEN the plaintext-only health endpoint still answers through the ingress
+    assert_health_reachable_through_ingress(juju, "traefik")
+
+    # AND the sender still targets Traefik, and still in plaintext: Traefik serves HTTPS only
     # once Traefik itself has a certificate, so a TLS backend must not change what senders get
     exporter = otlp_exporter(juju, "sender")
     endpoint = exporter["endpoint"]

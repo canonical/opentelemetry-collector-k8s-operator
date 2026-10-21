@@ -71,7 +71,7 @@ from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
 from ops.model import ModelError, Relation
 
-from config_builder import Port, sha256
+from config_builder import Port, TLS_INCAPABLE_PORTS, sha256
 from constants import (
     DASHBOARDS_DEST_PATH,
     DASHBOARDS_SRC_PATH,
@@ -1075,6 +1075,25 @@ def _static_ingress_config() -> dict:
     return {"entryPoints": entry_points}
 
 
+# tls and h2c are the two special cases: TLS-capable receivers speak https when configured, and
+# gRPC receivers speak h2c when cleartext. Everything else, including the TLS-incapable ports
+# from config_builder, uses http/https.
+_TRAEFIK_GRPC_PORTS = frozenset({Port.otlp_grpc, Port.jaeger_grpc})
+
+
+def _traefik_backend_scheme(port: Port, tls: bool) -> str:
+    """Return the scheme Traefik should use to reach the collector on ``port``.
+
+    The cleartext gRPC case relies on Traefik's ``h2c`` backend support, which its smart
+    round-tripper provides in Traefik 2.11 and later.
+    """
+    if port in TLS_INCAPABLE_PORTS:
+        return "http"
+    if port in _TRAEFIK_GRPC_PORTS:
+        return "https" if tls else "h2c"
+    return "https" if tls else "http"
+
+
 def _build_lb_server_config(backend_host: str, scheme: str, port: int) -> List[Dict[str, str]]:
     """Build the server portion of the loadbalancer config of Traefik ingress.
 
@@ -1226,7 +1245,7 @@ def _traefik_ingress_config(
         ] = {
             "loadBalancer": {
                 "servers": _build_lb_server_config(
-                    backend_host, "http" if not tls else "https", port.value
+                    backend_host, _traefik_backend_scheme(port, tls), port.value
                 ),
                 "serversTransport": transport_name,
             }
