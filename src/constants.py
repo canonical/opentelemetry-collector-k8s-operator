@@ -29,7 +29,10 @@ INGRESS_IP_MATCHER: Final[str] = "ClientIP(`0.0.0.0/0`)"
 INTERNAL_LOGS_FILTER_ID: Final[str] = "internal-telemetry-loop-breaker"
 INTERNAL_TELEMETRY_SERVICE_NAME: Final[str] = "otelcol-internal"
 NON_LOOPING_EXPORTER_PREFIXES: Final[tuple] = ("nop", "debug")
-# memory_limiter sizing, as a percentage of the memory available to the workload: the hard limit
-# leaves headroom for non-heap memory, and the soft limit is (hard - spike).
+# memory_limiter sizing, both as a percentage of the memory available to otelcol.
+# Hard limit: where the limiter forces GC. Below 100% to leave room for memory the limiter does
+# not count (the Go runtime and other non-heap memory), so the kernel does not OOM-kill the pod.
 MEMORY_LIMITER_LIMIT_PERCENTAGE: Final[int] = 80
+# Spike: the growth expected between two 1s checks. The soft limit, where the limiter starts
+# refusing data, is hard - spike, i.e. 60%.
 MEMORY_LIMITER_SPIKE_LIMIT_PERCENTAGE: Final[int] = 20
