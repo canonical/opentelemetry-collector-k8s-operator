@@ -519,7 +519,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Invalid memory config
         if not memory_config_valid:
             self.unit.status = BlockedStatus(
-                "Invalid memory config value: using cgroup limits instead, see debug-log"
+                "Invalid memory config value: using default limits instead, see debug-log"
             )
 
         # Mandatory relation pairs

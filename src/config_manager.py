@@ -674,7 +674,9 @@ class ConfigManager:
                 limits = {"limit_mib": limit_mib, "spike_limit_mib": spike_limit_mib}
             except ValueError as e:
                 logger.warning(
-                    "Invalid 'memory' config option, using cgroup limits instead: %s", e
+                    "Invalid 'memory' config option, using the default memory limiter limits "
+                    "(percentages of the container's memory limit) instead: %s",
+                    e,
                 )
                 valid = False
 
