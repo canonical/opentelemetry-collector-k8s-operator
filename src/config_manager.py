@@ -1,13 +1,19 @@
 """Helper module to build the configuration for OpenTelemetry Collector."""
 
 import logging
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 import yaml
 from charmlibs.interfaces.otlp import OtlpEndpoint
+from lightkube.utils.quantity import parse_quantity
 
 from config_builder import Component, ConfigBuilder, Port
-from constants import CUSTOM_COMPONENT_ID, FILE_STORAGE_DIRECTORY
+from constants import (
+    CUSTOM_COMPONENT_ID,
+    FILE_STORAGE_DIRECTORY,
+    MEMORY_LIMITER_LIMIT_PERCENTAGE,
+    MEMORY_LIMITER_SPIKE_LIMIT_PERCENTAGE,
+)
 from integrations import ProfilingEndpoint
 
 logger = logging.getLogger(__name__)
@@ -96,6 +102,28 @@ def tail_sampling_config(
     )
 
 
+def memory_limiter_mib(memory: str) -> Tuple[int, int]:
+    """Convert a K8s memory quantity into the `limit_mib` and `spike_limit_mib` of memory_limiter.
+
+    Args:
+        memory: the memory available to the workload, as a K8s quantity such as "1Gi" or "500M"
+
+    Returns:
+        The hard limit and the spike limit, in MiB, as fixed percentages of `memory`.
+
+    Raises:
+        ValueError: if `memory` is not a K8s quantity, or is too small to yield a limit of 1 MiB.
+    """
+    quantity = parse_quantity(memory)
+    if quantity is None:
+        raise ValueError(f"Invalid memory quantity: '{memory}'.")
+    mib = quantity / (1024 * 1024)
+    limit_mib = int(mib * MEMORY_LIMITER_LIMIT_PERCENTAGE // 100)
+    if limit_mib < 1:
+        raise ValueError(f"Memory '{memory}' is too small for a memory limiter.")
+    return limit_mib, int(mib * MEMORY_LIMITER_SPIKE_LIMIT_PERCENTAGE // 100)
+
+
 class ConfigManager:
     """High-level configuration manager for OpenTelemetry Collector.
 
@@ -138,6 +166,7 @@ class ConfigManager:
         self._insecure_skip_verify = insecure_skip_verify
         self._queue_size = queue_size
         self._max_elapsed_time_min = max_elapsed_time_min
+        self._has_custom_memory_limiter = False
         self.config = ConfigBuilder(
             unit_name=self._unit_name,
             global_scrape_interval=global_scrape_interval,
@@ -616,13 +645,61 @@ class ConfigManager:
                 pipelines=[f"traces/{self._unit_name}"],
             )
 
+    def add_default_memory_limiter(self, memory: Optional[str] = None) -> bool:
+        """Add the default memory limiter processor, unless a custom one is configured.
+
+        https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor
+
+        Call this after `add_custom_processors`.
+
+        Args:
+            memory: the memory available to the workload, as a K8s quantity (e.g. "1Gi"). If
+                unset, the limits are a percentage of the memory cgroup limit of the otelcol
+                process, which follows the Juju `mem` constraint.
+
+        Returns:
+            False if `memory` is invalid and the percentage-based limits were used instead.
+        """
+        if self._has_custom_memory_limiter:
+            return True
+
+        valid = True
+        limits: Dict[str, int] = {
+            "limit_percentage": MEMORY_LIMITER_LIMIT_PERCENTAGE,
+            "spike_limit_percentage": MEMORY_LIMITER_SPIKE_LIMIT_PERCENTAGE,
+        }
+        if memory:
+            try:
+                limit_mib, spike_limit_mib = memory_limiter_mib(memory)
+                limits = {"limit_mib": limit_mib, "spike_limit_mib": spike_limit_mib}
+            except ValueError as e:
+                logger.warning(
+                    "Invalid 'memory' config option, using cgroup limits instead: %s", e
+                )
+                valid = False
+
+        self.config.add_component(
+            Component.processor,
+            f"memory_limiter/{self._unit_name}",
+            {"check_interval": "1s", **limits},
+            pipelines=[
+                f"metrics/{self._unit_name}",
+                f"logs/{self._unit_name}",
+                f"traces/{self._unit_name}",
+            ],
+        )
+        return valid
+
     def add_custom_processors(self, processors_raw: str) -> None:
         """Add custom processors from Juju configuration.
 
         This method parses the 'processors' configuration option and adds it to
         the OpenTelemetry Collector configuration.
         """
-        for processor_name, processor_config in yaml.safe_load(processors_raw).items():
+        processors = yaml.safe_load(processors_raw)
+        if any(name.split("/")[0] == "memory_limiter" for name in processors):
+            self._has_custom_memory_limiter = True
+        for processor_name, processor_config in processors.items():
             self.config.add_component(
                 Component.processor,
                 f"{processor_name}/{self._unit_name}/{CUSTOM_COMPONENT_ID}",

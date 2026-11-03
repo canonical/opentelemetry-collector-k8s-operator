@@ -10,14 +10,9 @@ from typing import Any, Dict, List, Optional, cast
 
 from charmlibs.pathops import ContainerPath
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiProvider
-from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
-    KubernetesComputeResourcesPatch,
-    adjust_resource_requirements,
-)
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointConsumer
 from cosl import JujuTopology, MandatoryRelationPairs
-from lightkube.models.core_v1 import ResourceRequirements
-from ops import BlockedStatus, CharmBase, Container, StatusBase, main
+from ops import BlockedStatus, CharmBase, Container, main
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
 
@@ -292,15 +287,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             initialization and the event emission.
         """
         container = self.unit.get_container(self._container_name)
-        self.resources_patch = KubernetesComputeResourcesPatch(
-            self,
-            container_name=self._container_name,
-            resource_reqs_func=self._resource_reqs_from_config,
-        )
-        resources_patch_status: StatusBase = self.resources_patch.get_status()
-        if not isinstance(resources_patch_status, ActiveStatus):
-            self.unit.status = resources_patch_status
-            return
+
+        if self.config.get("cpu"):
+            logger.warning(
+                "The 'cpu' config option is deprecated and has no effect; "
+                "use Juju constraints instead, e.g. `juju set-constraints %s cores=...`.",
+                self.app.name,
+            )
 
         insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
         integrations.cleanup(self.charm_dir.absolute())
@@ -472,6 +465,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if custom_processors := cast(str, self.config.get("processors")):
             config_manager.add_custom_processors(custom_processors)
 
+        # Add the default memory limiter, unless the processors config option provides one
+        memory_config_valid = config_manager.add_default_memory_limiter(
+            cast(Optional[str], self.config.get("memory"))
+        )
+
         # Push the config and Push the config and deploy/update
         container.push(CONFIG_PATH, config_manager.config.build(), make_dirs=True)
 
@@ -516,6 +514,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "advertised instead and traffic is not distributed across units. This resolves "
                 "itself once the CA issues a certificate for the Kubernetes Service name.",
                 self.service_fqdn,
+            )
+
+        # Invalid memory config
+        if not memory_config_valid:
+            self.unit.status = BlockedStatus(
+                "Invalid memory config value: using cgroup limits instead, see debug-log"
             )
 
         # Mandatory relation pairs
@@ -728,14 +732,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _has_invalid_otlp_rules(self) -> bool:
         """Check if any send-otlp relation reported invalid alert rules."""
         return integrations.has_invalid_otlp_rules(self)
-
-    def _resource_reqs_from_config(self) -> ResourceRequirements:
-        limits = {
-            "cpu": self.model.config.get("cpu"),
-            "memory": self.model.config.get("memory"),
-        }
-        requests = {"cpu": "0.25", "memory": "200Mi"}
-        return adjust_resource_requirements(limits, requests, adhere_to_requests=True)
 
     def _validate_cert(self, cert: str) -> bool:
         pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"

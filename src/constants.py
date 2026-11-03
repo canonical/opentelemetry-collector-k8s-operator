@@ -29,3 +29,7 @@ INGRESS_IP_MATCHER: Final[str] = "ClientIP(`0.0.0.0/0`)"
 INTERNAL_LOGS_FILTER_ID: Final[str] = "internal-telemetry-loop-breaker"
 INTERNAL_TELEMETRY_SERVICE_NAME: Final[str] = "otelcol-internal"
 NON_LOOPING_EXPORTER_PREFIXES: Final[tuple] = ("nop", "debug")
+# memory_limiter sizing, as a percentage of the memory available to the workload: the hard limit
+# leaves headroom for non-heap memory, and the soft limit is (hard - spike).
+MEMORY_LIMITER_LIMIT_PERCENTAGE: Final[int] = 80
+MEMORY_LIMITER_SPIKE_LIMIT_PERCENTAGE: Final[int] = 20
