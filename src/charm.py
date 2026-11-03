@@ -6,13 +6,14 @@
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from charmlibs.pathops import ContainerPath
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiProvider
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointConsumer
 from cosl import JujuTopology, MandatoryRelationPairs
 from ops import BlockedStatus, CharmBase, Container, main
+from ops.jujucontext import JujuContext
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
 
@@ -31,6 +32,7 @@ from constants import (
     SERVER_CERT_PRIVATE_KEY_PATH,
     SERVICE_NAME,
 )
+from utils import container_memory_mib, quantity_to_mib
 
 logger = logging.getLogger(__name__)
 
@@ -288,11 +290,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """
         container = self.unit.get_container(self._container_name)
 
-        if self.config.get("cpu"):
+        if self.config.get("cpu") and JujuContext.from_environ().hook_name == "config-changed":
             logger.warning(
                 "The 'cpu' config option is deprecated and has no effect; "
-                "use Juju constraints instead, e.g. `juju set-constraints %s cores=...`.",
-                self.app.name,
+                "use Juju constraints instead, e.g. `juju deploy --constraints cpu-power=500`."
             )
 
         insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
@@ -466,9 +467,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             config_manager.add_custom_processors(custom_processors)
 
         # Add the default memory limiter, unless the processors config option provides one
-        memory_config_valid = config_manager.add_default_memory_limiter(
-            cast(Optional[str], self.config.get("memory"))
-        )
+        total_memory_mib, memory_config_valid = self._available_memory_mib(container)
+        config_manager.add_default_memory_limiter(total_memory_mib)
 
         # Push the config and Push the config and deploy/update
         container.push(CONFIG_PATH, config_manager.config.build(), make_dirs=True)
@@ -519,7 +519,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Invalid memory config
         if not memory_config_valid:
             self.unit.status = BlockedStatus(
-                "Invalid memory config value: using default limits instead, see debug-log"
+                "Invalid memory config value: using the detected memory instead, see debug-log"
             )
 
         # Mandatory relation pairs
@@ -732,6 +732,22 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
     def _has_invalid_otlp_rules(self) -> bool:
         """Check if any send-otlp relation reported invalid alert rules."""
         return integrations.has_invalid_otlp_rules(self)
+
+    def _available_memory_mib(self, container: Container) -> Tuple[int, bool]:
+        """Return the memory available to otelcol in MiB, and whether the memory config is valid.
+
+        The memory config option takes precedence over the memory detected in the container.
+        """
+        memory = cast(Optional[str], self.config.get("memory"))
+        if memory:
+            try:
+                return quantity_to_mib(memory), True
+            except ValueError as e:
+                logger.warning(
+                    "Invalid 'memory' config option, using the detected memory instead: %s", e
+                )
+                return container_memory_mib(container), False
+        return container_memory_mib(container), True
 
     def _validate_cert(self, cert: str) -> bool:
         pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"

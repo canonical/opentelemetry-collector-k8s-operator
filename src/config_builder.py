@@ -225,6 +225,11 @@ class ConfigBuilder:
         ]
 
     @property
+    def processor_names(self) -> List[str]:
+        """Return the names of all processors added so far."""
+        return list(self._config["processors"])
+
+    @property
     def hash(self):
         """Return the config as a SHA256 hash."""
         return sha256(yaml.safe_dump(self.build()))

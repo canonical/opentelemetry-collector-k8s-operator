@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from shutil import copytree
 from textwrap import dedent
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from ops.testing import Container, Context, Exec
@@ -34,6 +34,21 @@ def otelcol_container(execs):
             execs=execs,
         )
     ]
+
+
+@pytest.fixture
+def real_container_memory():
+    """Request this fixture to detect the memory of the workload container for real."""
+
+
+@pytest.fixture(autouse=True)
+def container_memory(request):
+    """Stub the detection of the memory of the workload container, which has 1 GiB by default."""
+    if "real_container_memory" in request.fixturenames:
+        yield None
+        return
+    with patch("src.charm.container_memory_mib", return_value=1024) as stub:
+        yield stub
 
 
 @pytest.fixture
