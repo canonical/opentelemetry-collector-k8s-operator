@@ -149,6 +149,7 @@ class ConfigBuilder:
 
         This method performs several important tasks:
         - Adds debug exporters to pipelines that don't have any exporters
+        - Moves memory limiters to the front of each pipeline's processors
         - Injects TLS configuration to all receivers if enabled
         - Configures TLS verification settings for all exporters
 
@@ -156,6 +157,7 @@ class ConfigBuilder:
             str: A YAML string representing the complete configuration.
         """
         self._add_missing_nop_exporters()
+        self._move_memory_limiters_first()
         self._populate_loop_breaker_filter()
         if self._receiver_tls:
             self._add_tls_to_all_receivers()
@@ -165,6 +167,19 @@ class ConfigBuilder:
         )
         self._add_exporter_insecure_skip_verify(self._exporter_skip_verify)
         return yaml.safe_dump(self._config)
+
+    def _move_memory_limiters_first(self):
+        """Make `memory_limiter` processors the first processors of every pipeline.
+
+        The memory limiter should be the first processor of a pipeline, so that it can apply
+        backpressure to receivers before any other processor consumes the data. See
+        https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor#best-practices
+        """
+        for pipeline in self._config["service"]["pipelines"].values():
+            processors = pipeline.get("processors")
+            if processors:
+                # list.sort is stable: only the memory limiters move; the rest keep their order.
+                processors.sort(key=lambda name: name.split("/")[0] != "memory_limiter")
 
     def _populate_loop_breaker_filter(self):
         """Populate the internal-telemetry loop-breaker filter's drop conditions.
@@ -208,6 +223,11 @@ class ConfigBuilder:
             f'and instrumentation_scope.attributes["otelcol.signal"] == "logs"'
             for exporter_id in log_exporter_ids
         ]
+
+    @property
+    def processor_names(self) -> List[str]:
+        """Return the names of all processors added so far."""
+        return list(self._config["processors"])
 
     @property
     def hash(self):

@@ -7,7 +7,7 @@ import yaml
 from charmlibs.interfaces.otlp import OtlpEndpoint
 
 from config_builder import Component, ConfigBuilder, Port
-from constants import CUSTOM_COMPONENT_ID, FILE_STORAGE_DIRECTORY
+from constants import CUSTOM_COMPONENT_ID, FILE_STORAGE_DIRECTORY, MEMORY_LIMITER_PERCENTAGE
 from integrations import ProfilingEndpoint
 
 logger = logging.getLogger(__name__)
@@ -615,6 +615,42 @@ class ConfigManager:
                 },
                 pipelines=[f"traces/{self._unit_name}"],
             )
+
+    @property
+    def _has_custom_memory_limiter(self) -> bool:
+        """Whether the 'processors' config option provides a memory limiter."""
+        return any(
+            name.split("/")[0] == "memory_limiter" and name.endswith(f"/{CUSTOM_COMPONENT_ID}")
+            for name in self.config.processor_names
+        )
+
+    def add_default_memory_limiter(self, total_memory_mib: int) -> None:
+        """Add the default memory limiter processor, unless a custom one is configured.
+
+        https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor
+
+        Call this after `add_custom_processors`.
+
+        Args:
+            total_memory_mib: the memory available to otelcol, in MiB.
+        """
+        if self._has_custom_memory_limiter:
+            return
+
+        self.config.add_component(
+            Component.processor,
+            f"memory_limiter/{self._unit_name}",
+            {
+                "check_interval": "1s",
+                # The processor requires a positive limit
+                "limit_mib": max(1, total_memory_mib * MEMORY_LIMITER_PERCENTAGE // 100),
+            },
+            pipelines=[
+                f"metrics/{self._unit_name}",
+                f"logs/{self._unit_name}",
+                f"traces/{self._unit_name}",
+            ],
+        )
 
     def add_custom_processors(self, processors_raw: str) -> None:
         """Add custom processors from Juju configuration.

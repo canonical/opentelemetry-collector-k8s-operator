@@ -30,7 +30,7 @@ description: |
   - Configurable processors, sampling rates, and scrape intervals.
   - Grafana Cloud integration via the cloud-config relation.
   - Persistent storage for telemetry data durability across container restarts.
-  - Configurable Kubernetes resource limits for CPU and memory.
+  - Memory limiter processor, sized from the memory available to otelcol.
 
 links:
   documentation: https://documentation.ubuntu.com/observability/latest
@@ -355,19 +355,21 @@ config:
       default: "1m"
     cpu:
       description: |
-        K8s cpu resource limit, e.g. "1" or "500m". Default is unset (no limit). This value is used
-        for the "limits" portion of the resource requirements (the "requests" portion is
-        automatically deduced from it).
-        Note that changing this config option will churn the pod.
-        See https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+        DEPRECATED: this option has no effect and will be removed in a future release.
+        The charm no longer sets Kubernetes resource limits. Use Juju constraints instead, for
+        example `juju deploy --constraints cpu-power=500` for 500 millicores.
       type: string
     memory:
       description: |
-        K8s memory resource limit, e.g. "1Gi". Default is unset (no limit). This value is used
-        for the "limits" portion of the resource requirements (the "requests" portion is
-        automatically deduced from it).
-        Note that changing this config option will churn the pod.
-        See https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+        The memory available to otelcol, as a Kubernetes quantity, for example "1Gi" or "500M".
+        If unset, the memory limit of the otelcol container is used. Set that limit with a Juju
+        constraint, for example `juju deploy --constraints mem=1024M`. Without such a limit, the
+        memory of the whole node is used.
+        This option does not set a Kubernetes resource limit.
+
+        The memory limiter processor is added to all pipelines, unless the "processors" config
+        option provides one. Its hard limit is 80% of the memory.
+        Reference: https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor
       type: string
     debug_exporter_for_logs:
       description: >
