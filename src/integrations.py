@@ -175,7 +175,7 @@ def forward_loki_alert_rules(charm: CharmBase) -> None:
         dirs_exist_ok=True,
     )
     _add_alerts(
-        alerts=charm.loki_provider.alerts if forward_alert_rules else {},
+        alerts=charm.loki_provider.alerts if forward_alert_rules else {},  # type: ignore[attr-defined]
         dest_path=charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
     )
 
@@ -216,7 +216,7 @@ def forward_send_loki_logs_alerts(charm: CharmBase) -> None:
     Must be called after `forward_loki_alert_rules` (which populates the directory this reads
     from) and after `send_loki_logs` (which sets `charm.loki_consumer`, reused here).
     """
-    charm.loki_consumer.reload_alerts()
+    charm.loki_consumer.reload_alerts()  # type: ignore[attr-defined]
 
 
 def key_value_pair_string_to_dict(key_value_pair: str) -> dict:
@@ -301,7 +301,7 @@ def forward_metrics_alert_rules(charm: CharmBase) -> None:
         dirs_exist_ok=True,
     )
     _add_alerts(
-        alerts=metrics_rules(metrics_consumer=charm.metrics_consumer, charm=charm)
+        alerts=metrics_rules(metrics_consumer=charm.metrics_consumer, charm=charm)  # type: ignore[attr-defined]
         if forward_alert_rules
         else {},
         dest_path=charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
@@ -338,7 +338,7 @@ def forward_send_remote_write_alerts(charm: CharmBase) -> None:
     Must be called after `forward_metrics_alert_rules` (which populates the directory this reads
     from) and after `send_remote_write` (which sets `charm.remote_write`, reused here).
     """
-    charm.remote_write.reload_alerts()
+    charm.remote_write.reload_alerts()  # type: ignore[attr-defined]
 
 
 def _get_tracing_receiver_url(protocol: ReceiverProtocol, address: "Address") -> str:
