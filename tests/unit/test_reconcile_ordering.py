@@ -1,7 +1,7 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Feature: workload restart takes priority over forwarding relation data."""
+"""Feature: stage artifacts -> workload (re)start -> forward over relation data."""
 
 from ops.testing import State
 
