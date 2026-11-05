@@ -137,7 +137,7 @@ def receive_loki_logs(charm: CharmBase, address: "Address") -> None:
     Note: this only publishes the endpoint otelcol exposes to log producers. Forwarding the
     alert rules they send is comparatively expensive (proportional to the number of relations)
     and does not affect otelcol's own config, so it is handled separately by
-    `stage_loki_alert_rules`, deferred until after the workload has started.
+    `stage_loki_alert_rules`.
 
     Args:
         charm: the otel-collector charm object
@@ -159,9 +159,7 @@ def stage_loki_alert_rules(charm: CharmBase) -> None:
     """Forward otelcol's bundled and received Loki alert rules to disk.
 
     This stages the rules that `forward_send_loki_logs_alerts` later reads and publishes to the
-    `send-loki-logs` relation databag. Processing alert rules is proportional to the number of
-    `receive-loki-logs` relations, so this is deferred until after the workload has started,
-    since it does not affect otelcol's own config.
+    `send-loki-logs` relation databag.
 
     Must be called after `cleanup` (which wipes the rule directory) and after `receive_loki_logs`
     (which sets `charm.loki_provider`, reused here to read the alerts already gathered from
@@ -187,7 +185,7 @@ def send_loki_logs(charm: CharmBase) -> List[Dict]:
 
     Note: this only resolves the Loki Push API endpoints needed for otelcol's own config.
     Publishing alert rules to this relation is handled separately by
-    `forward_send_loki_logs_alerts`, deferred until after the workload has started.
+    `forward_send_loki_logs_alerts`.
 
     Returns:
         A list of dictionaries with Loki Push API endpoints, for instance:
@@ -269,8 +267,7 @@ def scrape_metrics(charm: CharmBase) -> List:
 
     Note: this only resolves the scrape jobs needed for otelcol's own config. Forwarding alert
     rules is comparatively expensive (proportional to the number of relations) and does not
-    affect otelcol's own config, so it is handled separately by `stage_metrics_alert_rules`,
-    deferred until after the workload has started.
+    affect otelcol's own config, so it is handled separately by `stage_metrics_alert_rules`.
 
     Returns:
         A list consisting of all the static scrape configurations
@@ -286,9 +283,7 @@ def stage_metrics_alert_rules(charm: CharmBase) -> None:
     """Forward otelcol's bundled and received Prometheus alert rules to disk.
 
     This stages the rules that `forward_send_remote_write_alerts` later reads and publishes to
-    the `send-remote-write` relation databag. Processing alert rules is proportional to the
-    number of `metrics-endpoint` relations, so this is deferred until after the workload has
-    started, since it does not affect otelcol's own config.
+    the `send-remote-write` relation databag.
 
     Must be called after `cleanup` (which wipes the rule directory) and after `scrape_metrics`
     (which sets `charm.metrics_consumer`, reused here to read the alerts already gathered from
@@ -314,7 +309,7 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
 
     Note: this only resolves the remote_write endpoints needed for otelcol's own config.
     Publishing alert rules to this relation is handled separately by
-    `forward_send_remote_write_alerts`, deferred until after the workload has started.
+    `forward_send_remote_write_alerts`.
 
     Returns:
         A list of dictionaries where each dictionary provides information about

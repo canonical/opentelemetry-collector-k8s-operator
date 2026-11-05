@@ -552,8 +552,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         This does not affect otelcol's own config, so it is
         deliberately run after the workload has already been (re)started in `_reconcile`.
-        Its cost is proportional to the number of relations, which can be large, and must not
-        delay the restart of the service.
+        Its cost is linearly proportional to the number of relations, which can be large,
+        and must not delay the restart of the service.
         """
         # See `stage_received_otlp_rules` for the ordering contract it depends on.
         # Ref: https://github.com/canonical/opentelemetry-collector-operator/issues/297
