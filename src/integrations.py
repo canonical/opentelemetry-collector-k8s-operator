@@ -95,7 +95,7 @@ def cleanup(charm_root: Path):
 
     This function should be called before all integrations to ensure the charm works holistically.
     The DEST directories are resolved against ``charm_root`` (an absolute path) so that cleanup
-    targets the very same folders that `forward_loki_alert_rules`/`stage_metrics_alert_rules`/
+    targets the very same folders that `stage_loki_alert_rules`/`stage_metrics_alert_rules`/
     `forward_otlp_rules` read and write, regardless of the process' current working directory.
     """
     shutil.rmtree(charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")), ignore_errors=True)
@@ -137,7 +137,7 @@ def receive_loki_logs(charm: CharmBase, address: "Address") -> None:
     Note: this only publishes the endpoint otelcol exposes to log producers. Forwarding the
     alert rules they send is comparatively expensive (proportional to the number of relations)
     and does not affect otelcol's own config, so it is handled separately by
-    `forward_loki_alert_rules`, deferred until after the workload has started.
+    `stage_loki_alert_rules`, deferred until after the workload has started.
 
     Args:
         charm: the otel-collector charm object
@@ -155,7 +155,7 @@ def receive_loki_logs(charm: CharmBase, address: "Address") -> None:
     charm.__setattr__("loki_provider", loki_provider)
 
 
-def forward_loki_alert_rules(charm: CharmBase) -> None:
+def stage_loki_alert_rules(charm: CharmBase) -> None:
     """Forward otelcol's bundled and received Loki alert rules to disk.
 
     This stages the rules that `forward_send_loki_logs_alerts` later reads and publishes to the
@@ -212,9 +212,9 @@ def send_loki_logs(charm: CharmBase) -> List[Dict]:
 
 
 def forward_send_loki_logs_alerts(charm: CharmBase) -> None:
-    """Publish the alert rules staged by `forward_loki_alert_rules` to the send-loki-logs relation.
+    """Publish the alert rules staged by `stage_loki_alert_rules` to the send-loki-logs relation.
 
-    Must be called after `forward_loki_alert_rules` (which populates the directory this reads
+    Must be called after `stage_loki_alert_rules` (which populates the directory this reads
     from) and after `send_loki_logs` (which sets `charm.loki_consumer`, reused here).
     """
     charm.loki_consumer.reload_alerts()  # type: ignore[attr-defined]
@@ -718,7 +718,7 @@ def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
     See https://github.com/canonical/opentelemetry-collector-operator/issues/297
 
     NOTE: This function must be called after `cleanup` (which wipes the rule directories) and
-    before `forward_loki_alert_rules`/`stage_metrics_alert_rules` (which copy the bundled rules
+    before `stage_loki_alert_rules`/`stage_metrics_alert_rules` (which copy the bundled rules
     into the same directories with ``dirs_exist_ok=True``) and before
     `forward_send_loki_logs_alerts`/`forward_send_remote_write_alerts` (which read those
     directories).
