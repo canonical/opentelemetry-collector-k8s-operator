@@ -1,0 +1,22 @@
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+"""Feature: workload restart takes priority over forwarding relation data."""
+
+from ops.testing import State
+
+from src import charm
+from src.charm import OpenTelemetryCollectorK8sCharm
+
+
+def test_service_restarted_before_rules_and_dashboards_forwarded(ctx, otelcol_container, mocker):
+    state = State(containers=otelcol_container, leader=True)
+    manager = mocker.Mock()
+    replan_spy = mocker.spy(charm, "replan_with_trust_store")
+    forward_spy = mocker.spy(OpenTelemetryCollectorK8sCharm, "_forward_alerts_and_dashboards")
+    manager.attach_mock(replan_spy, "replan")
+    manager.attach_mock(forward_spy, "forward")
+
+    ctx.run(ctx.on.update_status(), state=state)
+
+    assert [call[0] for call in manager.mock_calls] == ["replan", "forward"]
