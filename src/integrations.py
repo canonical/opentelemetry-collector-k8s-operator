@@ -95,7 +95,7 @@ def cleanup(charm_root: Path):
 
     This function should be called before all integrations to ensure the charm works holistically.
     The DEST directories are resolved against ``charm_root`` (an absolute path) so that cleanup
-    targets the very same folders that `forward_loki_alert_rules`/`forward_metrics_alert_rules`/
+    targets the very same folders that `forward_loki_alert_rules`/`stage_metrics_alert_rules`/
     `forward_otlp_rules` read and write, regardless of the process' current working directory.
     """
     shutil.rmtree(charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")), ignore_errors=True)
@@ -269,7 +269,7 @@ def scrape_metrics(charm: CharmBase) -> List:
 
     Note: this only resolves the scrape jobs needed for otelcol's own config. Forwarding alert
     rules is comparatively expensive (proportional to the number of relations) and does not
-    affect otelcol's own config, so it is handled separately by `forward_metrics_alert_rules`,
+    affect otelcol's own config, so it is handled separately by `stage_metrics_alert_rules`,
     deferred until after the workload has started.
 
     Returns:
@@ -282,7 +282,7 @@ def scrape_metrics(charm: CharmBase) -> List:
     return metrics_consumer.jobs()
 
 
-def forward_metrics_alert_rules(charm: CharmBase) -> None:
+def stage_metrics_alert_rules(charm: CharmBase) -> None:
     """Forward otelcol's bundled and received Prometheus alert rules to disk.
 
     This stages the rules that `forward_send_remote_write_alerts` later reads and publishes to
@@ -334,9 +334,9 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
 
 
 def forward_send_remote_write_alerts(charm: CharmBase) -> None:
-    """Publish the alert rules staged by `forward_metrics_alert_rules` to send-remote-write.
+    """Publish the alert rules staged by `stage_metrics_alert_rules` to send-remote-write.
 
-    Must be called after `forward_metrics_alert_rules` (which populates the directory this reads
+    Must be called after `stage_metrics_alert_rules` (which populates the directory this reads
     from) and after `send_remote_write` (which sets `charm.remote_write`, reused here).
     """
     charm.remote_write.reload_alerts()  # type: ignore[attr-defined]
@@ -718,7 +718,7 @@ def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
     See https://github.com/canonical/opentelemetry-collector-operator/issues/297
 
     NOTE: This function must be called after `cleanup` (which wipes the rule directories) and
-    before `forward_loki_alert_rules`/`forward_metrics_alert_rules` (which copy the bundled rules
+    before `forward_loki_alert_rules`/`stage_metrics_alert_rules` (which copy the bundled rules
     into the same directories with ``dirs_exist_ok=True``) and before
     `forward_send_loki_logs_alerts`/`forward_send_remote_write_alerts` (which read those
     directories).

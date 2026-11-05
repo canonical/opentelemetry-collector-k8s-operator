@@ -560,10 +560,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Ref: https://github.com/canonical/opentelemetry-collector-operator/issues/297
         integrations.stage_received_otlp_rules(self, otlp_provider)
 
-        integrations.forward_loki_alert_rules(self)
+        integrations.stage_loki_alert_rules(self)
         integrations.forward_send_loki_logs_alerts(self)
 
-        integrations.forward_metrics_alert_rules(self)
+        integrations.stage_metrics_alert_rules(self)
         integrations.forward_send_remote_write_alerts(self)
 
         integrations.forward_otlp_rules(self, otlp_provider)
