@@ -14,7 +14,7 @@ from ops.testing import Container, Exec, Relation, State
 from scenario.errors import UncaughtCharmError
 from scenario.mocking import _MockModelBackend
 
-from src.integrations import _get_dashboards
+from src.integrations import _get_dashboards, forward_dashboards, stage_dashboards
 
 DANGLING_RELATION_ID = 453
 
@@ -33,6 +33,48 @@ _original_relation_list = _MockModelBackend.relation_list
 
 def encode_as_dashboard(dct: dict):
     return LZMABase64.compress(json.dumps(dct))
+
+
+def test_dashboards_staged_without_publishing(tmp_path, mocker):
+    charm = mocker.Mock()
+    charm.charm_dir = tmp_path
+    charm.unit.is_leader.return_value = True
+    source = tmp_path / "src" / "grafana_dashboards"
+    source.mkdir(parents=True)
+    (source / "bundled.json").write_text('{"title": "bundled"}')
+    consumer = _good_relation(100)
+    mocker.patch("src.integrations._safe_relations", return_value=[consumer])
+    provider = mocker.patch("src.integrations.GrafanaDashboardProvider")
+
+    stage_dashboards(charm)
+
+    staged = tmp_path / "grafana_dashboards"
+    assert (staged / "bundled.json").is_file()
+    assert (staged / "juju_file:dashboard-100-some-charm-100.json").is_file()
+    provider.assert_not_called()
+    gather = mocker.patch("src.integrations._get_dashboards")
+
+    forward_dashboards(charm)
+
+    gather.assert_not_called()
+    provider.assert_called_once_with(
+        charm, relation_name="grafana-dashboards-provider", dashboards_path=staged.as_posix()
+    )
+    provider.return_value.reload_dashboards.assert_called_once_with()
+
+
+@pytest.mark.parametrize("leader, staged", [(True, False), (False, False), (False, True)])
+def test_dashboards_not_forwarded_without_leadership_and_staging(tmp_path, mocker, leader, staged):
+    charm = mocker.Mock()
+    charm.charm_dir = tmp_path
+    charm.unit.is_leader.return_value = leader
+    if staged:
+        (tmp_path / "grafana_dashboards").mkdir()
+    provider = mocker.patch("src.integrations.GrafanaDashboardProvider")
+
+    forward_dashboards(charm)
+
+    provider.assert_not_called()
 
 
 def test_dashboard_propagation(ctx, execs):

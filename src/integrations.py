@@ -631,12 +631,8 @@ def _safe_relations(charm: CharmBase, endpoint: str) -> Optional[List[Relation]]
         return None
 
 
-def forward_dashboards(charm: CharmBase):
-    """Instantiate the GrafanaDashboardProvider and update the dashboards in the relation databag.
-
-    First, dashboards from relations (including those bundled with Otelcol) and save them to disk.
-    Then, update the relation databag with these dashboards for Grafana.
-    """
+def stage_dashboards(charm: CharmBase):
+    """Save bundled and received dashboards to disk after `cleanup` and before forwarding."""
     src_path = charm.charm_dir.absolute().joinpath(*DASHBOARDS_SRC_PATH.split("/"))
     dest_path = charm.charm_dir.absolute().joinpath(*DASHBOARDS_DEST_PATH.split("/"))
 
@@ -658,6 +654,14 @@ def forward_dashboards(charm: CharmBase):
         dashboards=_get_dashboards(consumer_relations),
         dest_path=dest_path,
     )
+
+
+def forward_dashboards(charm: CharmBase):
+    """Publish the dashboards prepared by `stage_dashboards` to Grafana."""
+    dest_path = charm.charm_dir.absolute().joinpath(*DASHBOARDS_DEST_PATH.split("/"))
+    # Cleanup removes this directory; absent staging means the received dashboards were unknown.
+    if not charm.unit.is_leader() or not dest_path.is_dir():
+        return
 
     grafana_dashboards_provider = GrafanaDashboardProvider(
         charm,

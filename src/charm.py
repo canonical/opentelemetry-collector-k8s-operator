@@ -548,7 +548,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         self.unit.set_workload_version(self._otelcol_version or "")
 
     def stage_artifacts(self, otlp_provider: integrations.OtlpProvider) -> None:
-        """Stage alert rules on disk after cleanup and before forwarding.
+        """Stage alert rules and dashboards on disk after cleanup and before forwarding.
 
         This does not affect otelcol's own config, so it is
         deliberately run after the workload has already been (re)started in `_reconcile`.
@@ -560,6 +560,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         integrations.stage_received_otlp_rules(self, otlp_provider)
         integrations.stage_loki_alert_rules(self)
         integrations.stage_metrics_alert_rules(self)
+        integrations.stage_dashboards(self)
 
     def forward_artifacts(self, otlp_provider: integrations.OtlpProvider) -> None:
         """Publish alert rules and dashboards after `stage_artifacts` has populated disk."""
