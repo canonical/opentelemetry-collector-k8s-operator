@@ -124,9 +124,7 @@ def refresh_certs(container: Container, trust_hash: str) -> bool:
     return True
 
 
-def replan_with_trust_store(
-    container: Container, trust_hash: str, restart_pending: bool
-) -> None:
+def replan_with_trust_store(container: Container, trust_hash: str, restart_pending: bool) -> None:
     """Replan otelcol, restarting it if it has not loaded the rebuilt trust store yet.
 
     Args:
@@ -383,10 +381,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # OTLP setup
         traefik_ingress = integrations.traefik_ingress_ready(traefik_ingress)
         otlp_provider = integrations.receive_otlp(self, otelcol_address, traefik_ingress)
-        # See `stage_received_otlp_rules` for the ordering contract it depends on.
-        # Ref: https://github.com/canonical/opentelemetry-collector-operator/issues/297
-        integrations.stage_received_otlp_rules(self, otlp_provider)
-        otlp_endpoints = integrations.send_otlp(self, otlp_provider)
+        otlp_endpoints = integrations.send_otlp(self)
         config_manager.add_otlp_forwarding(otlp_endpoints)
 
         # Logs setup
@@ -404,7 +399,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 **topology_labels,
             },
         )
-        # For now, the only incoming and outgoing metrics relations are remote-write/scrape
+        # For now, the only incoming and outgoing metrics relations are remote-write/scrape.
+        # Only the scrape jobs are needed for otelcol's own config; forwarding alert rules is
+        # deferred to `stage_artifacts` and `forward_artifacts`.
         metrics_consumer_jobs = integrations.scrape_metrics(self)
         # Write CA certificates to disk and update job configurations
         self._ensure_certs_dir(container)
@@ -448,9 +445,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             config_manager.add_traces_forwarding(endpoint, identifier=str(idx))
         integrations.send_charm_traces(self)
 
-        # Dashboards setup
-        integrations.forward_dashboards(self)
-
         # GrafanaCloudIntegrator setup
         cloud_integrator_data = integrations.cloud_integrator(self)
         config_manager.add_cloud_integrator(
@@ -472,7 +466,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if custom_processors := cast(str, self.config.get("processors")):
             config_manager.add_custom_processors(custom_processors)
 
-        # Push the config and Push the config and deploy/update
+        # Push the config and deploy/update
         container.push(CONFIG_PATH, config_manager.config.build(), make_dirs=True)
 
         # If the config file or any cert has changed, a change in this environment variable
@@ -499,8 +493,15 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             container.stop(SERVICE_NAME)
             self.unit.status = WaitingStatus("CSR sent; otelcol down while waiting for a cert")
         else:
+            # The service is (re)started here, as soon as the config is ready. Forwarding alert
+            # rules and dashboards (below) only updates relation data, which does not affect the
+            # running service, so it must not delay the restart: with hundreds of relations, that
+            # processing can take long enough to look like an outage.
             replan_with_trust_store(container, trust_hash, trust_restart_pending)
             self.unit.status = ActiveStatus()
+
+        self.stage_artifacts(otlp_provider)
+        self.forward_artifacts(otlp_provider)
 
         # Scaling status
         # Traffic is normally addressed to the Kubernetes Service, which load-balances over all
@@ -545,6 +546,28 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")
+
+    def stage_artifacts(self, otlp_provider: integrations.OtlpProvider) -> None:
+        """Stage alert rules and dashboards on disk after cleanup and before forwarding.
+
+        This does not affect otelcol's own config, so it is
+        deliberately run after the workload has already been (re)started in `_reconcile`.
+        Its cost is linearly proportional to the number of relations, which can be large,
+        and must not delay the restart of the service.
+        """
+        # See `stage_received_otlp_rules` for the ordering contract it depends on.
+        # Ref: https://github.com/canonical/opentelemetry-collector-operator/issues/297
+        integrations.stage_received_otlp_rules(self, otlp_provider)
+        integrations.stage_loki_alert_rules(self)
+        integrations.stage_metrics_alert_rules(self)
+        integrations.stage_dashboards(self)
+
+    def forward_artifacts(self, otlp_provider: integrations.OtlpProvider) -> None:
+        """Publish alert rules and dashboards after `stage_artifacts` has populated disk."""
+        integrations.forward_send_loki_logs_alerts(self)
+        integrations.forward_send_remote_write_alerts(self)
+        integrations.forward_otlp_rules(self, otlp_provider)
+        integrations.forward_dashboards(self)
 
     def _pebble_layer(self, environment: Dict, feature_gates: Optional[str]) -> Layer:
         """Construct the Pebble layer configuration.
