@@ -15,11 +15,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple, cast, get_args
 from urllib.parse import urlparse
 
 import yaml
-from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer, RuleStore
-from charmlibs.pathops import PathProtocol
 from charmlibs.interfaces.certificate_transfer import (
     CertificateTransferRequires,
 )
+from charmlibs.interfaces.otlp import OtlpEndpoint, OtlpProvider, OtlpRequirer, RuleStore
+from charmlibs.pathops import PathProtocol
 from charms.grafana_cloud_integrator.v0.cloud_config_requirer import (
     GrafanaCloudConfigRequirer,
 )
@@ -30,8 +30,8 @@ from charms.istio_beacon_k8s.v0.service_mesh import (
 )
 from charms.istio_ingress_k8s.v0.istio_ingress_route import (
     BackendRef,
-    HTTPRoute,
     GRPCRoute,
+    HTTPRoute,
     IstioIngressRouteConfig,
     IstioIngressRouteRequirer,
     Listener,
@@ -71,7 +71,7 @@ from cosl.utils import LZMABase64
 from ops import CharmBase, Container, tracing
 from ops.model import ModelError, Relation
 
-from config_builder import Port, TLS_INCAPABLE_PORTS, sha256
+from config_builder import TLS_INCAPABLE_PORTS, Port, sha256
 from constants import (
     DASHBOARDS_DEST_PATH,
     DASHBOARDS_SRC_PATH,
@@ -95,8 +95,8 @@ def cleanup(charm_root: Path):
 
     This function should be called before all integrations to ensure the charm works holistically.
     The DEST directories are resolved against ``charm_root`` (an absolute path) so that cleanup
-    targets the very same folders that `receive_loki_logs`/`scrape_metrics`/`send_otlp` read and
-    write, regardless of the process' current working directory.
+    targets the very same folders that `stage_loki_alert_rules`/`stage_metrics_alert_rules`/
+    `forward_otlp_rules` read and write, regardless of the process' current working directory.
     """
     shutil.rmtree(charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")), ignore_errors=True)
     shutil.rmtree(charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")), ignore_errors=True)
@@ -134,12 +134,15 @@ def receive_loki_logs(charm: CharmBase, address: "Address") -> None:
     can gather all the alerts from relation data before sending them all
     to Loki.
 
+    Note: this only publishes the endpoint otelcol exposes to log producers. Forwarding the
+    alert rules they send is comparatively expensive (proportional to the number of relations)
+    and does not affect otelcol's own config, so it is handled separately by
+    `stage_loki_alert_rules`.
+
     Args:
         charm: the otel-collector charm object
         address: a dataclass for determining network addressing
     """
-    forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
-    charm_root = charm.charm_dir.absolute()
     loki_provider = LokiPushApiProvider(
         charm,
         relation_name="receive-loki-logs",
@@ -150,13 +153,27 @@ def receive_loki_logs(charm: CharmBase, address: "Address") -> None:
     loki_provider.update_endpoint(f"{address.http_resolved_url}:{Port.loki_http.value}")
 
     charm.__setattr__("loki_provider", loki_provider)
+
+
+def stage_loki_alert_rules(charm: CharmBase) -> None:
+    """Forward otelcol's bundled and received Loki alert rules to disk.
+
+    This stages the rules that `forward_send_loki_logs_alerts` later reads and publishes to the
+    `send-loki-logs` relation databag.
+
+    Must be called after `cleanup` (which wipes the rule directory) and after `receive_loki_logs`
+    (which sets `charm.loki_provider`, reused here to read the alerts already gathered from
+    relation data without re-instantiating the provider).
+    """
+    forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
+    charm_root = charm.charm_dir.absolute()
     shutil.copytree(
         charm_root.joinpath(*LOKI_RULES_SRC_PATH.split("/")),
         charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
         dirs_exist_ok=True,
     )
     _add_alerts(
-        alerts=loki_provider.alerts if forward_alert_rules else {},
+        alerts=charm.loki_provider.alerts if forward_alert_rules else {},  # type: ignore[attr-defined]
         dest_path=charm_root.joinpath(*LOKI_RULES_DEST_PATH.split("/")),
     )
 
@@ -166,6 +183,10 @@ def send_loki_logs(charm: CharmBase) -> List[Dict]:
 
     If used together with `receive_loki_logs`, this function must be called after.
 
+    Note: this only resolves the Loki Push API endpoints needed for otelcol's own config.
+    Publishing alert rules to this relation is handled separately by
+    `forward_send_loki_logs_alerts`.
+
     Returns:
         A list of dictionaries with Loki Push API endpoints, for instance:
         [
@@ -174,19 +195,27 @@ def send_loki_logs(charm: CharmBase) -> List[Dict]:
         ]
     """
     forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
+    charm_root = charm.charm_dir.absolute()
     loki_consumer = LokiPushApiConsumer(
         charm,
         relation_name="send-loki-logs",
-        alert_rules_path=LOKI_RULES_DEST_PATH,
+        alert_rules_path=charm_root.joinpath(LOKI_RULES_DEST_PATH).as_posix(),
         forward_alert_rules=forward_alert_rules,
         extra_alert_labels=key_value_pair_string_to_dict(
             cast(str, charm.model.config.get("extra_alert_labels", ""))
         ),
     )
     charm.__setattr__("loki_consumer", loki_consumer)
-    # TODO: Luca: probably don't need this anymore
-    loki_consumer.reload_alerts()
     return sorted(loki_consumer.loki_endpoints, key=lambda endpoint: endpoint.get("url", ""))
+
+
+def forward_send_loki_logs_alerts(charm: CharmBase) -> None:
+    """Publish the alert rules staged by `stage_loki_alert_rules` to the send-loki-logs relation.
+
+    Must be called after `stage_loki_alert_rules` (which populates the directory this reads
+    from) and after `send_loki_logs` (which sets `charm.loki_consumer`, reused here).
+    """
+    charm.loki_consumer.reload_alerts()  # type: ignore[attr-defined]
 
 
 def key_value_pair_string_to_dict(key_value_pair: str) -> dict:
@@ -236,6 +265,10 @@ def scrape_metrics(charm: CharmBase) -> List:
     This function must be called before `send_remote_write`, so that the charm
     can gather all the alerts from relation data before sending them all.
 
+    Note: this only resolves the scrape jobs needed for otelcol's own config. Forwarding alert
+    rules is comparatively expensive (proportional to the number of relations) and does not
+    affect otelcol's own config, so it is handled separately by `stage_metrics_alert_rules`.
+
     Returns:
         A list consisting of all the static scrape configurations
         for each related `MetricsEndpointProvider` that has specified
@@ -243,25 +276,40 @@ def scrape_metrics(charm: CharmBase) -> List:
     """
     metrics_consumer = MetricsEndpointConsumer(charm)
     charm.__setattr__("metrics_consumer", metrics_consumer)
+    return metrics_consumer.jobs()
+
+
+def stage_metrics_alert_rules(charm: CharmBase) -> None:
+    """Forward otelcol's bundled and received Prometheus alert rules to disk.
+
+    This stages the rules that `forward_send_remote_write_alerts` later reads and publishes to
+    the `send-remote-write` relation databag.
+
+    Must be called after `cleanup` (which wipes the rule directory) and after `scrape_metrics`
+    (which sets `charm.metrics_consumer`, reused here to read the alerts already gathered from
+    relation data without re-instantiating the consumer).
+    """
     forward_alert_rules = cast(bool, charm.config.get("forward_alert_rules"))
     charm_root = charm.charm_dir.absolute()
-
     shutil.copytree(
         charm_root.joinpath(*METRICS_RULES_SRC_PATH.split("/")),
         charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
         dirs_exist_ok=True,
     )
     _add_alerts(
-        alerts=metrics_rules(metrics_consumer=metrics_consumer, charm=charm)
+        alerts=metrics_rules(metrics_consumer=charm.metrics_consumer, charm=charm)  # type: ignore[attr-defined]
         if forward_alert_rules
         else {},
         dest_path=charm_root.joinpath(*METRICS_RULES_DEST_PATH.split("/")),
     )
-    return metrics_consumer.jobs()
 
 
 def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
     """Integrate via send-remote-write to send metrics to a Prometheus-compatible endpoint.
+
+    Note: this only resolves the remote_write endpoints needed for otelcol's own config.
+    Publishing alert rules to this relation is handled separately by
+    `forward_send_remote_write_alerts`.
 
     Returns:
         A list of dictionaries where each dictionary provides information about
@@ -277,9 +325,16 @@ def send_remote_write(charm: CharmBase) -> List[Dict[str, str]]:
         peer_relation_name="peers",
     )
     charm.__setattr__("remote_write", remote_write)
-    # TODO: Luca: probably don't need this anymore
-    remote_write.reload_alerts()
     return sorted(remote_write.endpoints, key=lambda endpoint: endpoint["url"])
+
+
+def forward_send_remote_write_alerts(charm: CharmBase) -> None:
+    """Publish the alert rules staged by `stage_metrics_alert_rules` to send-remote-write.
+
+    Must be called after `stage_metrics_alert_rules` (which populates the directory this reads
+    from) and after `send_remote_write` (which sets `charm.remote_write`, reused here).
+    """
+    charm.remote_write.reload_alerts()  # type: ignore[attr-defined]
 
 
 def _get_tracing_receiver_url(protocol: ReceiverProtocol, address: "Address") -> str:
@@ -571,12 +626,8 @@ def _safe_relations(charm: CharmBase, endpoint: str) -> Optional[List[Relation]]
         return None
 
 
-def forward_dashboards(charm: CharmBase):
-    """Instantiate the GrafanaDashboardProvider and update the dashboards in the relation databag.
-
-    First, dashboards from relations (including those bundled with Otelcol) and save them to disk.
-    Then, update the relation databag with these dashboards for Grafana.
-    """
+def stage_dashboards(charm: CharmBase):
+    """Save bundled and received dashboards to disk after `cleanup` and before forwarding."""
     src_path = charm.charm_dir.absolute().joinpath(*DASHBOARDS_SRC_PATH.split("/"))
     dest_path = charm.charm_dir.absolute().joinpath(*DASHBOARDS_DEST_PATH.split("/"))
 
@@ -598,6 +649,14 @@ def forward_dashboards(charm: CharmBase):
         dashboards=_get_dashboards(consumer_relations),
         dest_path=dest_path,
     )
+
+
+def forward_dashboards(charm: CharmBase):
+    """Publish the dashboards prepared by `stage_dashboards` to Grafana."""
+    dest_path = charm.charm_dir.absolute().joinpath(*DASHBOARDS_DEST_PATH.split("/"))
+    # Cleanup removes this directory; absent staging means the received dashboards were unknown.
+    if not charm.unit.is_leader() or not dest_path.is_dir():
+        return
 
     grafana_dashboards_provider = GrafanaDashboardProvider(
         charm,
@@ -651,22 +710,24 @@ def stage_received_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
     """Stage the alert rules received over `receive-otlp` to disk.
 
     This is required because the OTLP interface only exposes received rules via relation data and
-    does not persist them. The downstream `send_remote_write` and `send_loki_logs` integrations
-    forward alert rules by reading the rule directories on disk, so without staging the received
-    rules here, alert rules from upstream applications (e.g. postgresql) would be dropped and never
-    reach Prometheus/Loki.
+    does not persist them. The downstream `forward_send_remote_write_alerts` and
+    `forward_send_loki_logs_alerts` integrations forward alert rules by reading the rule
+    directories on disk, so without staging the received rules here, alert rules from upstream
+    applications (e.g. postgresql) would be dropped and never reach Prometheus/Loki.
     See https://github.com/canonical/opentelemetry-collector-operator/issues/297
 
     NOTE: This function must be called after `cleanup` (which wipes the rule directories) and
-    before `receive_loki_logs`/`scrape_metrics` (which copy the bundled rules into the same
-    directories with ``dirs_exist_ok=True``) and before `send_loki_logs`/`send_remote_write`
-    (which read those directories).
+    before `stage_loki_alert_rules`/`stage_metrics_alert_rules` (which copy the bundled rules
+    into the same directories with ``dirs_exist_ok=True``) and before
+    `forward_send_loki_logs_alerts`/`forward_send_remote_write_alerts` (which read those
+    directories).
 
     The staging is skipped when no consumer of the files is related: the promql staging is
-    only used by `send_remote_write` and the logql staging only by `send_loki_logs`, both of
-    which read the rule directories from disk. Without either relation (e.g. an aggregator
-    whose only output is `send-otlp`, which reads rules from relation data instead of disk),
-    the staging would be dead work proportional to the number of relations.
+    only used by `forward_send_remote_write_alerts` and the logql staging only by
+    `forward_send_loki_logs_alerts`, both of which read the rule directories from disk. Without
+    either relation (e.g. an aggregator whose only output is `send-otlp`, which reads rules from
+    relation data instead of disk), the staging would be dead work proportional to the number of
+    relations.
 
     Args:
         charm: the otel-collector charm object
@@ -775,14 +836,30 @@ def _dedupe_rule_groups(
     return deduped
 
 
-def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoint]:
-    """Instantiate the OtlpRequirer.
+def send_otlp(charm: CharmBase) -> Dict[int, OtlpEndpoint]:
+    """Return the remote's OTLP endpoint for each `send-otlp` relation.
 
-    This provides otelcol with the remote's OTLP endpoint for each relation.
+    This is the only part of the `send-otlp` integration needed for otelcol's own config.
+
+    Note: Publishing alert rules to the same relation is handled separately by
+    `forward_otlp_rules`.
+
+    Args:
+        charm: the otel-collector charm object
+    """
+    return OtlpRequirer(
+        charm, protocols=["grpc", "http"], telemetries=["logs", "metrics", "traces"]
+    ).endpoints
+
+
+def forward_otlp_rules(charm: CharmBase, provider: OtlpProvider) -> None:
+    """Publish alert rules to every `send-otlp` relation.
 
     The bundled rule files (from the src/*_rules directories) are published to the databag.
     Conditional to the `forward_alert_rules` config, the rules from related OTLP requirer charms
     are also published to the databag.
+
+    Note: This operation may be expensive (proportional to the number of relations).
 
     Args:
         charm: the otel-collector charm object
@@ -829,11 +906,6 @@ def send_otlp(charm: CharmBase, provider: OtlpProvider) -> Dict[int, OtlpEndpoin
         extra_alert_labels=key_value_pair_string_to_dict(extra_alert_labels),
     ).publish()
 
-    # Access the provider's endpoints
-    return OtlpRequirer(
-        charm, protocols=["grpc", "http"], telemetries=["logs", "metrics", "traces"]
-    ).endpoints
-
 
 def cyclic_otlp_relations_exist(charm: CharmBase) -> bool:
     """Check if any application is related on both send-otlp and receive-otlp.
@@ -872,7 +944,7 @@ def has_invalid_otlp_rules(charm: CharmBase) -> bool:
         event_raw = app_data.get("event", "{}")
         try:
             event_data = json.loads(event_raw)
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             continue
         if not isinstance(event_data, dict):
             continue
