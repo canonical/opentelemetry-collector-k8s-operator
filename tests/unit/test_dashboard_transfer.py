@@ -14,7 +14,7 @@ from ops.testing import Container, Exec, Relation, State
 from scenario.errors import UncaughtCharmError
 from scenario.mocking import _MockModelBackend
 
-from src.integrations import _get_dashboards
+from src.integrations import _get_dashboards, forward_dashboards, stage_dashboards
 
 DANGLING_RELATION_ID = 453
 
@@ -33,6 +33,43 @@ _original_relation_list = _MockModelBackend.relation_list
 
 def encode_as_dashboard(dct: dict):
     return LZMABase64.compress(json.dumps(dct))
+
+
+def test_dashboards_staged_without_publishing(tmp_path, mocker):
+    # GIVEN a leader unit
+    charm = mocker.Mock()
+    charm.charm_dir = tmp_path
+    charm.unit.is_leader.return_value = True
+    # AND an incoming dashboard
+    source = tmp_path / "src" / "grafana_dashboards"
+    source.mkdir(parents=True)
+    (source / "bundled.json").write_text('{"title": "bundled"}')
+    consumer = _good_relation(100)
+    mocker.patch("src.integrations._safe_relations", return_value=[consumer])
+    provider = mocker.patch("src.integrations.GrafanaDashboardProvider")
+
+    # WHEN dashboards are staged
+    stage_dashboards(charm)
+
+    # THEN the forwarded dashboard is copied from reldata to disk
+    staged = tmp_path / "grafana_dashboards"
+    assert (staged / "bundled.json").is_file()
+    assert (staged / "juju_file:dashboard-100-some-charm-100.json").is_file()
+
+    # AND no forwarding takes place yet
+    provider.assert_not_called()
+    gather = mocker.patch("src.integrations._get_dashboards")
+
+    # WHEN dahsboards are finally forwarded
+    forward_dashboards(charm)
+
+    # THEN no additional "fetch" takes place
+    gather.assert_not_called()
+    # AND dashboards are forwarded
+    provider.assert_called_once_with(
+        charm, relation_name="grafana-dashboards-provider", dashboards_path=staged.as_posix()
+    )
+    provider.return_value.reload_dashboards.assert_called_once_with()
 
 
 def test_dashboard_propagation(ctx, execs):
@@ -87,9 +124,17 @@ def _good_relation(rel_id: int) -> MagicMock:
     rel = MagicMock()
     rel.id = rel_id
     rel.app.name = "some-charm"
-    rel.data = {rel.app: {"dashboards": json.dumps(
-        {"templates": {f"file:dashboard-{rel_id}": {"charm": "some-charm", "content": content}}}
-    )}}
+    rel.data = {
+        rel.app: {
+            "dashboards": json.dumps(
+                {
+                    "templates": {
+                        f"file:dashboard-{rel_id}": {"charm": "some-charm", "content": content}
+                    }
+                }
+            )
+        }
+    }
     return rel
 
 
@@ -109,7 +154,9 @@ def _permission_denied_relation_get(
     """
     if relation_id == DANGLING_RELATION_ID and is_app:
         raise PERMISSION_DENIED_ERROR
-    return _original_relation_get(self, relation_id, member_name, is_app, relation_name=relation_name)
+    return _original_relation_get(
+        self, relation_id, member_name, is_app, relation_name=relation_name
+    )
 
 
 def _permission_denied_relation_list(
@@ -144,7 +191,9 @@ def _unexpected_error_relation_get(
     """
     if relation_id == DANGLING_RELATION_ID and is_app:
         raise ModelError("something else")
-    return _original_relation_get(self, relation_id, member_name, is_app, relation_name=relation_name)
+    return _original_relation_get(
+        self, relation_id, member_name, is_app, relation_name=relation_name
+    )
 
 
 def _state_with_dangling_relation(
