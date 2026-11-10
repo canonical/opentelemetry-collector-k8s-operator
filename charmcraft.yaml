@@ -79,7 +79,7 @@ resources:
     type: oci-image
     description: OCI image for opentelemetry-collector
     # Ensure that you always use the index digest for the source, NOT the manifest digest.
-    upstream-source: ubuntu/opentelemetry-collector@sha256:78e1e5ae9e58c5dc892ea5b7bb80c3f3cca02bceb77012de5ebbd9220681727b  # renovate: oci-image tag: 0.130-26.04
+    upstream-source: ubuntu/opentelemetry-collector@sha256:ca6950a9f20b20d786f41f5dc140bf640e411cd601a1dcc8db00a04ab851bdad  # renovate: oci-image tag: 0.130-26.04
 
 provides:
   grafana-dashboards-provider:
