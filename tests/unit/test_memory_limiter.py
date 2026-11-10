@@ -3,7 +3,7 @@
 
 """Feature: otelcol always protects itself from running out of memory."""
 
-import logging
+import warnings
 
 import pytest
 import yaml
@@ -13,7 +13,7 @@ from ops.testing import Container, Mount, State
 
 from config_manager import ConfigManager
 from constants import CONFIG_PATH
-from utils import quantity_to_mib
+from utils import MemoryDetectionError, quantity_to_mib
 
 
 def _limiters(config: dict) -> dict:
@@ -105,6 +105,47 @@ def test_limiter_is_the_first_processor_of_every_pipeline(config_manager: Config
         )
 
 
+def test_custom_memory_limiter_is_the_first_processor_of_every_pipeline(
+    config_manager: ConfigManager,
+):
+    # GIVEN a memory limiter in the processors config option, listed after another processor
+    config_manager.add_custom_processors(
+        yaml.safe_dump({"batch": {}, "memory_limiter": {"limit_mib": 4000}})
+    )
+    # WHEN the config is built
+    built = yaml.safe_load(config_manager.config.build())
+    # THEN every pipeline starts with the limiter
+    for name, pipeline in built["service"]["pipelines"].items():
+        processors = pipeline["processors"]
+        assert len(processors) > 1, f"pipeline '{name}' has no other processor than the limiter"
+        assert processors[0].split("/")[0] == "memory_limiter", (
+            f"the first processor of pipeline '{name}' must be 'memory_limiter'"
+        )
+
+
+def test_limiter_is_added_to_the_profiles_pipeline_when_configured(
+    config_manager: ConfigManager,
+):
+    # GIVEN a profiles pipeline, and custom processors, which do not apply to profiles
+    config_manager.add_profile_ingestion()
+    config_manager.add_custom_processors(yaml.safe_dump({"batch": {}}))
+    # WHEN adding the default memory limiter
+    config_manager.add_default_memory_limiter(1024, profiles=True)
+    # THEN the profiles pipeline starts with the limiter
+    built = yaml.safe_load(config_manager.config.build())
+    processors = built["service"]["pipelines"]["profiles/test/0"]["processors"]
+    assert processors[0].split("/")[0] == "memory_limiter"
+
+
+def test_no_profiles_pipeline_is_created_for_the_limiter(config_manager: ConfigManager):
+    # GIVEN no profiles pipeline
+    # WHEN adding the default memory limiter
+    config_manager.add_default_memory_limiter(1024)
+    # THEN no pipeline is created for profiles
+    built = yaml.safe_load(config_manager.config.build())
+    assert not any(name.startswith("profiles/") for name in built["service"]["pipelines"])
+
+
 def test_charm_limits_memory_to_what_the_container_has(ctx, otelcol_container, container_memory):
     # GIVEN a charm without memory config, whose workload container has 2048 MiB
     container_memory.return_value = 2048
@@ -143,6 +184,42 @@ def test_invalid_memory_config_blocks_the_charm(ctx, otelcol_container, containe
     assert _limit_mib(get_otelcol_file(state_out, ctx, CONFIG_PATH)) == int(0.8 * 2048)
 
 
+def test_memory_config_is_capped_to_the_container_memory(ctx, otelcol_container, container_memory):
+    # GIVEN a memory config higher than the memory of the workload container
+    container_memory.return_value = 512
+    state_in = State(containers=otelcol_container, config={"memory": "1Gi"})
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state_in)
+    # THEN the limit is based on the memory of the container
+    assert _limit_mib(get_otelcol_file(state_out, ctx, CONFIG_PATH)) == int(0.8 * 512)
+    assert not isinstance(state_out.unit_status, BlockedStatus)
+
+
+def test_undetectable_memory_blocks_the_charm(ctx, otelcol_container, container_memory):
+    # GIVEN a workload container whose memory cannot be detected
+    container_memory.side_effect = MemoryDetectionError("no way")
+    state_in = State(containers=otelcol_container)
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state_in)
+    # THEN the unit is blocked, rather than erroring out
+    assert isinstance(state_out.unit_status, BlockedStatus)
+    # AND otelcol still runs, without the default limiter
+    assert not _limiters(get_otelcol_file(state_out, ctx, CONFIG_PATH))
+
+
+def test_memory_config_is_used_if_the_container_memory_is_undetectable(
+    ctx, otelcol_container, container_memory
+):
+    # GIVEN a memory config, and a workload container whose memory cannot be detected
+    container_memory.side_effect = MemoryDetectionError("no way")
+    state_in = State(containers=otelcol_container, config={"memory": "1Gi"})
+    # WHEN any event executes the reconciler
+    state_out = ctx.run(ctx.on.update_status(), state_in)
+    # THEN the limit is based on the memory config
+    assert _limit_mib(get_otelcol_file(state_out, ctx, CONFIG_PATH)) == int(0.8 * 1024)
+    assert not isinstance(state_out.unit_status, BlockedStatus)
+
+
 @pytest.fixture
 def container_with_files(execs, tmp_path):
     """A workload container whose /sys/fs/cgroup and /proc contain the given files."""
@@ -177,8 +254,9 @@ NODE_MEMINFO = "MemTotal:        4194304 kB\nMemFree:         1000000 kB\n"
         (None, 4096),
     ],
 )
+@pytest.mark.real_container_memory
 def test_container_memory_is_read_from_the_container(
-    ctx, container_with_files, real_container_memory, cgroup_memory_max, expected_mib
+    ctx, container_with_files, cgroup_memory_max, expected_mib
 ):
     # GIVEN a workload container with the given cgroup memory limit, on a node with 4096 MiB
     container = container_with_files(cgroup_memory_max, NODE_MEMINFO)
@@ -188,24 +266,23 @@ def test_container_memory_is_read_from_the_container(
     assert _limit_mib(get_otelcol_file(state_out, ctx, CONFIG_PATH)) == int(0.8 * expected_mib)
 
 
-def test_cpu_config_is_deprecated_and_ignored(ctx, otelcol_container, caplog):
+def test_cpu_config_is_deprecated_and_ignored(ctx, otelcol_container):
     # GIVEN a charm with the deprecated cpu config
     state_in = State(containers=otelcol_container, config={"cpu": "1"})
     # WHEN the config changes
-    with caplog.at_level(logging.WARNING):
+    # THEN the charm warns that the option is deprecated
+    with pytest.warns(DeprecationWarning, match="'cpu'"):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
-    # THEN the charm warns that the option does nothing
-    assert any(r.levelno == logging.WARNING and "'cpu'" in r.getMessage() for r in caplog.records)
     # AND otelcol is running, unaffected
     assert not isinstance(state_out.unit_status, BlockedStatus)
     assert state_out.get_container("otelcol").services["otelcol"].is_running()
 
 
-def test_cpu_config_warning_is_only_for_config_changes(ctx, otelcol_container, caplog):
+def test_cpu_config_warning_is_only_for_config_changes(ctx, otelcol_container):
     # GIVEN a charm with the deprecated cpu config
     state_in = State(containers=otelcol_container, config={"cpu": "1"})
     # WHEN any other event executes the reconciler
-    with caplog.at_level(logging.WARNING):
-        ctx.run(ctx.on.update_status(), state_in)
     # THEN the charm does not warn about it again
-    assert not any("'cpu'" in r.getMessage() for r in caplog.records)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*'cpu'", category=DeprecationWarning)
+        ctx.run(ctx.on.update_status(), state_in)

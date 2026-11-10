@@ -37,7 +37,7 @@ Do not place workload code (Pebble layers, file writes, k8s API calls) directly 
 - Unit tests:
 	- Use `ops.testing.Context`, `State`, `Relation`, `Container`, and `Exec` to build deterministic scenarios (see `tests/unit/conftest.py`).
 	- Use the `ctx` fixture pattern and run events with `with ctx(ctx.on.update_status(), state=state) as mgr:` then `mgr.run()` or `state_out = ctx.run(...)`.
-	- Patch external dependencies (e.g. `KubernetesComputeResourcesPatch`, `lightkube` clients) with `unittest.mock.patch` or `patch.object`.
+	- Patch external dependencies (e.g. `lightkube` clients, the detection of the workload container's memory) with `unittest.mock.patch` or `patch.object`.
 	- Prefer `pytest.mark.parametrize` for permutations and assert pydantic `ValidationError` messages where applicable.
 
 - Integration tests:

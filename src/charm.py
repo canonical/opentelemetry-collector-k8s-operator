@@ -6,6 +6,7 @@
 import logging
 import os
 import re
+import warnings
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 from charmlibs.pathops import ContainerPath
@@ -32,7 +33,7 @@ from constants import (
     SERVER_CERT_PRIVATE_KEY_PATH,
     SERVICE_NAME,
 )
-from utils import container_memory_mib, quantity_to_mib
+from utils import MemoryDetectionError, container_memory_mib, quantity_to_mib
 
 logger = logging.getLogger(__name__)
 
@@ -121,9 +122,7 @@ def refresh_certs(container: Container, trust_hash: str) -> bool:
     return True
 
 
-def replan_with_trust_store(
-    container: Container, trust_hash: str, restart_pending: bool
-) -> None:
+def replan_with_trust_store(container: Container, trust_hash: str, restart_pending: bool) -> None:
     """Replan otelcol, restarting it if it has not loaded the rebuilt trust store yet.
 
     Args:
@@ -290,10 +289,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """
         container = self.unit.get_container(self._container_name)
 
-        if self.config.get("cpu") and JujuContext.from_environ().hook_name == "config-changed":
-            logger.warning(
+        if JujuContext.from_environ().hook_name == "config-changed" and self.config.get("cpu"):
+            warnings.warn(
                 "The 'cpu' config option is deprecated and has no effect; "
-                "use Juju constraints instead, e.g. `juju deploy --constraints cpu-power=500`."
+                "use Juju constraints instead, e.g. `juju deploy --constraints cpu-power=500`.",
+                DeprecationWarning,
+                stacklevel=1,
             )
 
         insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
@@ -377,10 +378,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # OTLP setup
         traefik_ingress = integrations.traefik_ingress_ready(traefik_ingress)
         otlp_provider = integrations.receive_otlp(self, otelcol_address, traefik_ingress)
-        # See `stage_received_otlp_rules` for the ordering contract it depends on.
-        # Ref: https://github.com/canonical/opentelemetry-collector-operator/issues/297
-        integrations.stage_received_otlp_rules(self, otlp_provider)
-        otlp_endpoints = integrations.send_otlp(self, otlp_provider)
+        otlp_endpoints = integrations.send_otlp(self)
         config_manager.add_otlp_forwarding(otlp_endpoints)
 
         # Logs setup
@@ -398,7 +396,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 **topology_labels,
             },
         )
-        # For now, the only incoming and outgoing metrics relations are remote-write/scrape
+        # For now, the only incoming and outgoing metrics relations are remote-write/scrape.
+        # Only the scrape jobs are needed for otelcol's own config; forwarding alert rules is
+        # deferred to `stage_artifacts` and `forward_artifacts`.
         metrics_consumer_jobs = integrations.scrape_metrics(self)
         # Write CA certificates to disk and update job configurations
         self._ensure_certs_dir(container)
@@ -421,9 +421,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if self._incoming_profiles:
             config_manager.add_profile_ingestion()
             integrations.receive_profiles(self, otelcol_address)
-        if profiling_endpoints := integrations.send_profiles(self):
+        profiling_endpoints = integrations.send_profiles(self)
+        if profiling_endpoints:
             config_manager.add_profile_forwarding(profiling_endpoints)
-        if self._incoming_profiles or integrations.send_profiles(self):
+        profiles_enabled = bool(self._incoming_profiles or profiling_endpoints)
+        if profiles_enabled:
             feature_gates = "service.profilesSupport"
 
         # Tracing setup
@@ -441,9 +443,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         for idx, endpoint in enumerate(integrations.send_traces(self)):
             config_manager.add_traces_forwarding(endpoint, identifier=str(idx))
         integrations.send_charm_traces(self)
-
-        # Dashboards setup
-        integrations.forward_dashboards(self)
 
         # GrafanaCloudIntegrator setup
         cloud_integrator_data = integrations.cloud_integrator(self)
@@ -467,10 +466,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             config_manager.add_custom_processors(custom_processors)
 
         # Add the default memory limiter, unless the processors config option provides one
-        total_memory_mib, memory_config_valid = self._available_memory_mib(container)
-        config_manager.add_default_memory_limiter(total_memory_mib)
+        available_memory_mib, memory_problem = self._available_memory_mib(container)
+        if available_memory_mib is not None:
+            config_manager.add_default_memory_limiter(
+                available_memory_mib, profiles=profiles_enabled
+            )
 
-        # Push the config and Push the config and deploy/update
+        # Push the config and deploy/update
         container.push(CONFIG_PATH, config_manager.config.build(), make_dirs=True)
 
         # If the config file or any cert has changed, a change in this environment variable
@@ -497,8 +499,15 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             container.stop(SERVICE_NAME)
             self.unit.status = WaitingStatus("CSR sent; otelcol down while waiting for a cert")
         else:
+            # The service is (re)started here, as soon as the config is ready. Forwarding alert
+            # rules and dashboards (below) only updates relation data, which does not affect the
+            # running service, so it must not delay the restart: with hundreds of relations, that
+            # processing can take long enough to look like an outage.
             replan_with_trust_store(container, trust_hash, trust_restart_pending)
             self.unit.status = ActiveStatus()
+
+        self.stage_artifacts(otlp_provider)
+        self.forward_artifacts(otlp_provider)
 
         # Scaling status
         # Traffic is normally addressed to the Kubernetes Service, which load-balances over all
@@ -516,11 +525,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 self.service_fqdn,
             )
 
-        # Invalid memory config
-        if not memory_config_valid:
-            self.unit.status = BlockedStatus(
-                "Invalid memory config value: using the detected memory instead, see debug-log"
-            )
+        # Invalid memory config, or undetectable memory
+        if memory_problem:
+            self.unit.status = BlockedStatus(memory_problem)
 
         # Mandatory relation pairs
         missing_relations = _get_missing_mandatory_relations(self)
@@ -549,6 +556,28 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
 
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")
+
+    def stage_artifacts(self, otlp_provider: integrations.OtlpProvider) -> None:
+        """Stage alert rules and dashboards on disk after cleanup and before forwarding.
+
+        This does not affect otelcol's own config, so it is
+        deliberately run after the workload has already been (re)started in `_reconcile`.
+        Its cost is linearly proportional to the number of relations, which can be large,
+        and must not delay the restart of the service.
+        """
+        # See `stage_received_otlp_rules` for the ordering contract it depends on.
+        # Ref: https://github.com/canonical/opentelemetry-collector-operator/issues/297
+        integrations.stage_received_otlp_rules(self, otlp_provider)
+        integrations.stage_loki_alert_rules(self)
+        integrations.stage_metrics_alert_rules(self)
+        integrations.stage_dashboards(self)
+
+    def forward_artifacts(self, otlp_provider: integrations.OtlpProvider) -> None:
+        """Publish alert rules and dashboards after `stage_artifacts` has populated disk."""
+        integrations.forward_send_loki_logs_alerts(self)
+        integrations.forward_send_remote_write_alerts(self)
+        integrations.forward_otlp_rules(self, otlp_provider)
+        integrations.forward_dashboards(self)
 
     def _pebble_layer(self, environment: Dict, feature_gates: Optional[str]) -> Layer:
         """Construct the Pebble layer configuration.
@@ -733,21 +762,44 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """Check if any send-otlp relation reported invalid alert rules."""
         return integrations.has_invalid_otlp_rules(self)
 
-    def _available_memory_mib(self, container: Container) -> Tuple[int, bool]:
-        """Return the memory available to otelcol in MiB, and whether the memory config is valid.
+    def _available_memory_mib(self, container: Container) -> Tuple[Optional[int], Optional[str]]:
+        """Return the memory available to otelcol in MiB, and a blocked status message, if any.
 
-        The memory config option takes precedence over the memory detected in the container.
+        The memory is None if it cannot be determined, in which case the message says why.
+
+        The memory config option takes precedence over the memory detected in the container, but
+        it is capped by it: otelcol cannot use more than its container has, so a limit above that
+        would never trigger.
         """
+        try:
+            detected = container_memory_mib(container)
+        except MemoryDetectionError as e:
+            logger.error("Cannot detect the memory available to otelcol: %s", e)
+            detected = None
+
         memory = cast(Optional[str], self.config.get("memory"))
-        if memory:
-            try:
-                return quantity_to_mib(memory), True
-            except ValueError as e:
-                logger.warning(
-                    "Invalid 'memory' config option, using the detected memory instead: %s", e
-                )
-                return container_memory_mib(container), False
-        return container_memory_mib(container), True
+        if not memory:
+            if detected is None:
+                return None, "Cannot detect the memory of otelcol: set the memory config option"
+            return detected, None
+
+        try:
+            configured = quantity_to_mib(memory)
+        except ValueError as e:
+            logger.warning("Invalid 'memory' config option: %s", e)
+            if detected is None:
+                return None, "Invalid memory config value and cannot detect memory, see debug-log"
+            return detected, "Invalid memory config value: using the detected memory instead"
+
+        if detected is not None and configured > detected:
+            logger.warning(
+                "The 'memory' config option (%s MiB) is more than the memory available to the "
+                "workload container (%s MiB), which is used instead.",
+                configured,
+                detected,
+            )
+            return detected, None
+        return configured, None
 
     def _validate_cert(self, cert: str) -> bool:
         pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"

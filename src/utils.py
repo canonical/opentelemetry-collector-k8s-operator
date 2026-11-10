@@ -3,15 +3,22 @@
 
 """Helper functions to work out how much memory otelcol has."""
 
+import logging
 import re
 
 from charmlibs.pathops import ContainerPath
 from lightkube.utils.quantity import parse_quantity
-from ops import Container
+from ops import Container, pebble
+
+logger = logging.getLogger(__name__)
 
 _BYTES_PER_MIB = 1024 * 1024
 CGROUP_MEMORY_MAX_PATH = "/sys/fs/cgroup/memory.max"
 MEMINFO_PATH = "/proc/meminfo"
+
+
+class MemoryDetectionError(Exception):
+    """Raised when the memory available to a workload container cannot be determined."""
 
 
 def quantity_to_mib(memory: str) -> int:
@@ -34,16 +41,32 @@ def container_memory_mib(container: Container) -> int:
     the whole node.
 
     Only cgroup v2 is supported, as Kubernetes has deprecated cgroup v1.
+
+    Raises:
+        MemoryDetectionError: if neither the limit of the container nor the memory of the node
+            can be read.
     """
     try:
         limit = ContainerPath(CGROUP_MEMORY_MAX_PATH, container=container).read_text().strip()
         if limit != "max":
             return int(limit) // _BYTES_PER_MIB
-    except (OSError, ValueError):
-        pass
+        logger.warning(
+            "The workload container has no memory limit, so the memory of the whole node is used. "
+            "Set one with `juju deploy --constraints mem=<size>`."
+        )
+    except (OSError, ValueError, pebble.ConnectionError) as e:
+        logger.warning(
+            "Cannot read the memory limit of the workload container from %s (cgroup v2 is "
+            "required), so the memory of the whole node is used: %s",
+            CGROUP_MEMORY_MAX_PATH,
+            e,
+        )
     # Unlike the cgroup limit, /proc/meminfo is not namespaced: it is the memory of the node.
-    meminfo = ContainerPath(MEMINFO_PATH, container=container).read_text()
+    try:
+        meminfo = ContainerPath(MEMINFO_PATH, container=container).read_text()
+    except (OSError, pebble.ConnectionError) as e:
+        raise MemoryDetectionError(f"Cannot read {MEMINFO_PATH}: {e}") from e
     match = re.search(r"^MemTotal:\s+(\d+) kB$", meminfo, re.MULTILINE)
     if not match:
-        raise ValueError(f"No MemTotal in {MEMINFO_PATH}.")
+        raise MemoryDetectionError(f"No MemTotal in {MEMINFO_PATH}.")
     return int(match.group(1)) // 1024

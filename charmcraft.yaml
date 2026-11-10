@@ -362,14 +362,18 @@ config:
     memory:
       description: |
         The memory available to otelcol, as a Kubernetes quantity, for example "1Gi" or "500M".
-        If unset, the memory limit of the otelcol container is used. Set that limit with a Juju
-        constraint, for example `juju deploy --constraints mem=1024M`. Without such a limit, the
-        memory of the whole node is used.
+        If unset, the memory limit of the otelcol container is used. This option can only lower
+        it: a higher value is capped to the memory of the container.
         This option does not set a Kubernetes resource limit.
 
         The memory limiter processor is added to all pipelines, unless the "processors" config
         option provides one. Its hard limit is 80% of the memory.
-        Reference: https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor
+        Ref: https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor
+
+        To get a meaningful limit, set a memory limit on the otelcol container with a Juju
+        constraint at deploy time, for example `juju deploy --constraints mem=1024M`. Without it,
+        the container is not limited and the memory of the whole node is used, so otelcol is
+        likely to be killed for lack of memory before the limiter takes action.
       type: string
     debug_exporter_for_logs:
       description: >

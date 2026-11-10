@@ -36,15 +36,13 @@ def otelcol_container(execs):
     ]
 
 
-@pytest.fixture
-def real_container_memory():
-    """Request this fixture to detect the memory of the workload container for real."""
-
-
 @pytest.fixture(autouse=True)
 def container_memory(request):
-    """Stub the detection of the memory of the workload container, which has 1 GiB by default."""
-    if "real_container_memory" in request.fixturenames:
+    """Stub the detection of the memory of the workload container, which has 1 GiB by default.
+
+    Mark a test with `real_container_memory` to detect the memory of the container for real.
+    """
+    if request.node.get_closest_marker("real_container_memory"):
         yield None
         return
     with patch("src.charm.container_memory_mib", return_value=1024) as stub:

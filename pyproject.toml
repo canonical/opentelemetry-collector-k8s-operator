@@ -6,40 +6,41 @@ version = "0.0"
 requires-python = "~=3.14.0"
 
 dependencies = [
-  "ops[tracing]>=3.8.0", # 3.8.0 fixes the "_WebsocketWriter" finalizer warnings (canonical/operator#2547)
-  "pyyaml",
-  "urllib3",
-  "jsonschema",
-  "cryptography",
-  "lightkube>=0.11",
-  "cosl",
-  "pydantic",
-  "charmlibs-pathops",
-  "charmed-service-mesh-helpers>=0.2.0", # istio-beacon lib requirement"lightkube-extensions@git+https://github.com/canonical/lightkube-extensions.git@main", # istio-beacon lib requirement,
-  "lightkube-extensions", # istio-beacon lib requirement
-  "charmlibs-interfaces-otlp",
-  "charmlibs-interfaces-certificate_transfer"
+    "ops[tracing]>=3.8.0",                       # 3.8.0 fixes the "_WebsocketWriter" finalizer warnings (canonical/operator#2547)
+    "pyyaml",
+    "urllib3",
+    "jsonschema",
+    "cryptography",
+    "lightkube>=0.11",
+    "cosl",
+    "pydantic",
+    "charmlibs-pathops",
+    "charmed-service-mesh-helpers>=0.2.0",       # istio-beacon lib requirement"lightkube-extensions@git+https://github.com/canonical/lightkube-extensions.git@main", # istio-beacon lib requirement,
+    "lightkube-extensions",                      # istio-beacon lib requirement
+    "charmlibs-interfaces-otlp",
+    "charmlibs-interfaces-certificate_transfer",
 ]
 
 [project.optional-dependencies]
 dev = [
-  # Linting
-  "ruff",
-  "codespell",
-  # Static
-  "pyright",
-  # Unit
-  "pytest",
-  "coverage[toml]",
-  # Integration
-  "juju<=3.3.0,>=3.0",
-  "websockets<14.0",
-  "minio",
-  "ops[testing]",
-  "sh",
-  "jubilant",
-  "tenacity",
-  "pytest-asyncio",
+    # Linting
+    "ruff",
+    "codespell",
+    # Static
+    "pyright",
+    # Unit
+    "pytest",
+    "coverage[toml]",
+    # Integration
+    "juju<=3.3.0,>=3.0",
+    "websockets<14.0",
+    "minio",
+    "ops[testing]",
+    "sh",
+    "jubilant",
+    "tenacity",
+    "pytest-asyncio",
+    "pytest-mock>=3.17.0",
 ]
 
 # Testing tools configuration
@@ -48,12 +49,7 @@ branch = true
 
 [tool.coverage.report]
 show_missing = true
-omit = [
-    "lib/charms/*",
-    "lib/charms/**/*",
-    "tests/*",
-    "tests/**/*",
-]
+omit = ["lib/charms/*", "lib/charms/**/*", "tests/*", "tests/**/*"]
 
 # Linting tools configuration
 [tool.ruff]
@@ -66,19 +62,22 @@ select = ["E", "W", "F", "C", "N", "R", "D"]
 # Ignore D107 Missing docstring in __init__
 ignore = ["W505", "E501", "D107", "C901", "N818", "RET504"]
 # D100, D101, D102, D103: Ignore missing docstrings in tests
-per-file-ignores = {"tests/*" = ["D100","D101","D102","D103"]}
+per-file-ignores = { "tests/*" = ["D100", "D101", "D102", "D103"] }
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
 [tool.pyright]
 extraPaths = ["src", "lib"]
-pythonVersion = "3.12"
+pythonVersion = "3.14"
 pythonPlatform = "All"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "--tb=native --verbose --capture=no --log-cli-level=INFO"
+markers = [
+    "real_container_memory: detect the memory of the workload container instead of stubbing it",
+]
 
 [tool.codespell]
 skip = ".git,.tox,build,venv*"

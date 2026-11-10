@@ -29,9 +29,7 @@ INGRESS_IP_MATCHER: Final[str] = "ClientIP(`0.0.0.0/0`)"
 INTERNAL_LOGS_FILTER_ID: Final[str] = "internal-telemetry-loop-breaker"
 INTERNAL_TELEMETRY_SERVICE_NAME: Final[str] = "otelcol-internal"
 NON_LOOPING_EXPORTER_PREFIXES: Final[tuple] = ("nop", "debug")
-# Hard limit of the memory_limiter, as a percentage of the memory available to otelcol. Below 100%
-# because the limit only covers the heap, and the kernel kills the pod if the rest of the process
-# (e.g. the Go runtime) does not fit. The processor's default spike limit (20% of the hard limit)
-# is kept. For example, with 1000 MiB the hard limit is 800 MiB, and data is refused above 640 MiB.
-# Similar to the 80% in the upstream docs: https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor#configuration
+# The memory_limiter's hard limit, as a percentage of the memory available to otelcol. The limiter
+# only counts heap memory, so the rest is headroom for other memory the process needs.
+# Ref: https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor
 MEMORY_LIMITER_PERCENTAGE: Final[int] = 80

@@ -110,7 +110,7 @@ def test_send_otlp(ctx, otelcol_container):
 
     # AND WHEN any event executes the reconciler
     with ctx(ctx.on.update_status(), state=state) as mgr:
-        remote_endpoints = send_otlp(mgr.charm, OtlpProvider(mgr.charm))
+        remote_endpoints = send_otlp(mgr.charm)
 
     # THEN the returned endpoints are filtered accordingly
     assert {k: v.model_dump() for k, v in remote_endpoints.items()} == {
@@ -450,17 +450,18 @@ def test_staging_skipped_without_file_consumer(
                 ),
             },
             {"ScrapeEndpointAlert"},
-            # `send_otlp` currently only forwards rules from bundled SRC dirs and `OtlpProvider`
-            # (i.e. `receive-otlp`). It does not pick up rules from `metrics-endpoint` or
-            # `receive-loki-logs` upstreams, so they never reach downstream OTLP collectors.
-            # This `xfail` documents the desired behavior; once `send_otlp` is taught to include
-            # those sources, drop `marks=` to flip this back to a passing assertion.
+            # `forward_otlp_rules` currently only forwards rules from bundled SRC dirs and
+            # `OtlpProvider` (i.e. `receive-otlp`). It does not pick up rules from
+            # `metrics-endpoint` or `receive-loki-logs` upstreams, so they never reach downstream
+            # OTLP collectors. This `xfail` documents the desired behavior; once
+            # `forward_otlp_rules` is taught to include those sources, drop `marks=` to flip this
+            # back to a passing assertion.
             # `strict=False` because the `forward_rules=False` row trivially passes today
             # (nothing flows in or out), so it would XPASS and noise up the run.
             marks=pytest.mark.xfail(
                 reason=(
-                    "send_otlp does not forward rules received over metrics-endpoint or "
-                    "receive-loki-logs; tracked separately."
+                    "forward_otlp_rules does not forward rules received over metrics-endpoint "
+                    "or receive-loki-logs; tracked separately."
                 ),
                 strict=False,
             ),
