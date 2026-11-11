@@ -75,6 +75,9 @@ pythonPlatform = "All"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "--tb=native --verbose --capture=no --log-cli-level=INFO"
+markers = [
+    "real_container_memory: detect the memory of the workload container instead of stubbing it",
+]
 
 [tool.codespell]
 skip = ".git,.tox,build,venv*"

@@ -6,18 +6,15 @@
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional, cast
+import warnings
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from charmlibs.pathops import ContainerPath
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiProvider
-from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
-    KubernetesComputeResourcesPatch,
-    adjust_resource_requirements,
-)
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointConsumer
 from cosl import JujuTopology, MandatoryRelationPairs
-from lightkube.models.core_v1 import ResourceRequirements
-from ops import BlockedStatus, CharmBase, Container, StatusBase, main
+from ops import BlockedStatus, CharmBase, Container, main
+from ops.jujucontext import JujuContext
 from ops.model import ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import APIError, CheckDict, ExecDict, HttpDict, Layer
 
@@ -36,6 +33,7 @@ from constants import (
     SERVER_CERT_PRIVATE_KEY_PATH,
     SERVICE_NAME,
 )
+from utils import MemoryDetectionError, container_memory_mib, quantity_to_mib
 
 logger = logging.getLogger(__name__)
 
@@ -290,15 +288,14 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             initialization and the event emission.
         """
         container = self.unit.get_container(self._container_name)
-        self.resources_patch = KubernetesComputeResourcesPatch(
-            self,
-            container_name=self._container_name,
-            resource_reqs_func=self._resource_reqs_from_config,
-        )
-        resources_patch_status: StatusBase = self.resources_patch.get_status()
-        if not isinstance(resources_patch_status, ActiveStatus):
-            self.unit.status = resources_patch_status
-            return
+
+        if JujuContext.from_environ().hook_name == "config-changed" and self.config.get("cpu"):
+            warnings.warn(
+                "The 'cpu' config option is deprecated and has no effect; "
+                "use Juju constraints instead, e.g. `juju deploy --constraints cpu-power=500`.",
+                DeprecationWarning,
+                stacklevel=1,
+            )
 
         insecure_skip_verify = cast(bool, self.config.get("tls_insecure_skip_verify"))
         integrations.cleanup(self.charm_dir.absolute())
@@ -424,9 +421,11 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if self._incoming_profiles:
             config_manager.add_profile_ingestion()
             integrations.receive_profiles(self, otelcol_address)
-        if profiling_endpoints := integrations.send_profiles(self):
+        profiling_endpoints = integrations.send_profiles(self)
+        if profiling_endpoints:
             config_manager.add_profile_forwarding(profiling_endpoints)
-        if self._incoming_profiles or integrations.send_profiles(self):
+        profiles_enabled = bool(self._incoming_profiles or profiling_endpoints)
+        if profiles_enabled:
             feature_gates = "service.profilesSupport"
 
         # Tracing setup
@@ -465,6 +464,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Add custom processors from Juju config
         if custom_processors := cast(str, self.config.get("processors")):
             config_manager.add_custom_processors(custom_processors)
+
+        # Add the default memory limiter, unless the processors config option provides one
+        available_memory_mib, memory_problem = self._available_memory_mib(container)
+        if available_memory_mib is not None:
+            config_manager.add_default_memory_limiter(
+                available_memory_mib, profiles=profiles_enabled
+            )
 
         # Push the config and deploy/update
         container.push(CONFIG_PATH, config_manager.config.build(), make_dirs=True)
@@ -518,6 +524,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 "itself once the CA issues a certificate for the Kubernetes Service name.",
                 self.service_fqdn,
             )
+
+        # Invalid memory config, or undetectable memory
+        if memory_problem:
+            self.unit.status = BlockedStatus(memory_problem)
 
         # Mandatory relation pairs
         missing_relations = _get_missing_mandatory_relations(self)
@@ -752,13 +762,44 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """Check if any send-otlp relation reported invalid alert rules."""
         return integrations.has_invalid_otlp_rules(self)
 
-    def _resource_reqs_from_config(self) -> ResourceRequirements:
-        limits = {
-            "cpu": self.model.config.get("cpu"),
-            "memory": self.model.config.get("memory"),
-        }
-        requests = {"cpu": "0.25", "memory": "200Mi"}
-        return adjust_resource_requirements(limits, requests, adhere_to_requests=True)
+    def _available_memory_mib(self, container: Container) -> Tuple[Optional[int], Optional[str]]:
+        """Return the memory available to otelcol in MiB, and a blocked status message, if any.
+
+        The memory is None if it cannot be determined, in which case the message says why.
+
+        The memory config option takes precedence over the memory detected in the container, but
+        it is capped by it: otelcol cannot use more than its container has, so a limit above that
+        would never trigger.
+        """
+        try:
+            detected = container_memory_mib(container)
+        except MemoryDetectionError as e:
+            logger.error("Cannot detect the memory available to otelcol: %s", e)
+            detected = None
+
+        memory = cast(Optional[str], self.config.get("memory"))
+        if not memory:
+            if detected is None:
+                return None, "Cannot detect the memory of otelcol: set the memory config option"
+            return detected, None
+
+        try:
+            configured = quantity_to_mib(memory)
+        except ValueError as e:
+            logger.warning("Invalid 'memory' config option: %s", e)
+            if detected is None:
+                return None, "Invalid memory config value and cannot detect memory, see debug-log"
+            return detected, "Invalid memory config value: using the detected memory instead"
+
+        if detected is not None and configured > detected:
+            logger.warning(
+                "The 'memory' config option (%s MiB) is more than the memory available to the "
+                "workload container (%s MiB), which is used instead.",
+                configured,
+                detected,
+            )
+            return detected, None
+        return configured, None
 
     def _validate_cert(self, cert: str) -> bool:
         pem_pattern = r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----"
