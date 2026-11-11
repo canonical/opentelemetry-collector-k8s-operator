@@ -5,7 +5,6 @@ from textwrap import dedent
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ops import ActiveStatus
 from ops.testing import Container, Context, Exec
 
 from src.charm import OpenTelemetryCollectorK8sCharm
@@ -38,16 +37,16 @@ def otelcol_container(execs):
 
 
 @pytest.fixture(autouse=True)
-def k8s_resource_multipatch():
-    with patch.multiple(
-        "charms.observability_libs.v0.kubernetes_compute_resources_patch.KubernetesComputeResourcesPatch",
-        _namespace="test-namespace",
-        _patch=lambda *_a, **_kw: True,
-        is_ready=lambda *_a, **_kw: True,
-        get_status=lambda _: ActiveStatus(),
-    ):
-        with patch("lightkube.core.client.GenericSyncClient", new=MagicMock()):
-            yield
+def container_memory(request):
+    """Stub the detection of the memory of the workload container, which has 1 GiB by default.
+
+    Mark a test with `real_container_memory` to detect the memory of the container for real.
+    """
+    if request.node.get_closest_marker("real_container_memory"):
+        yield None
+        return
+    with patch("src.charm.container_memory_mib", return_value=1024) as stub:
+        yield stub
 
 
 @pytest.fixture
