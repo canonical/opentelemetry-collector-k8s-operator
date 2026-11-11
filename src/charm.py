@@ -525,40 +525,34 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 self.service_fqdn,
             )
 
-        # Blocked statuses: all of them are reported, so that none hides another
-        blocked: List[str] = []
-
         # Invalid memory config, or undetectable memory
         if memory_problem:
-            blocked.append(memory_problem)
+            self.unit.status = BlockedStatus(memory_problem)
 
         # Mandatory relation pairs
         missing_relations = _get_missing_mandatory_relations(self)
         if missing_relations:
-            blocked.append(missing_relations)
+            self.unit.status = BlockedStatus(missing_relations)
 
         # Cyclic OTLP relations
         if integrations.cyclic_otlp_relations_exist(self):
-            blocked.append("cyclic OTLP relations exist")
+            self.unit.status = BlockedStatus("cyclic OTLP relations exist")
 
         # Invalid alert rules
         if self._has_invalid_prometheus_alerts():
-            blocked.append("Invalid Prometheus alerts. See debug-log")
+            self.unit.status = BlockedStatus("Invalid Prometheus alerts. See debug-log")
 
         # Invalid loki alert rules
         if self._has_invalid_loki_alerts():
-            blocked.append("Invalid Loki alerts. See debug-log")
+            self.unit.status = BlockedStatus("Invalid Loki alerts. See debug-log")
 
         # Invalid scrape jobs
         if self._has_invalid_scrape_job():
-            blocked.append("Invalid scrape jobs. See debug-log")
+            self.unit.status = BlockedStatus("Invalid scrape jobs. See debug-log")
 
         # Invalid OTLP alert rules (rejected by the remote `send-otlp` provider)
         if self._has_invalid_otlp_rules():
-            blocked.append("Invalid OTLP alert rules. See debug-log")
-
-        if blocked:
-            self.unit.status = BlockedStatus("; ".join(blocked))
+            self.unit.status = BlockedStatus("Invalid OTLP alert rules. See debug-log")
 
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")

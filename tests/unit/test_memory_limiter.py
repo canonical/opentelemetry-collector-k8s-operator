@@ -9,7 +9,7 @@ import pytest
 import yaml
 from helpers import get_otelcol_file
 from ops import BlockedStatus
-from ops.testing import Container, Mount, Relation, State
+from ops.testing import Container, Mount, State
 
 from config_manager import ConfigManager
 from constants import CONFIG_PATH
@@ -286,21 +286,3 @@ def test_cpu_config_warning_is_only_for_config_changes(ctx, otelcol_container):
     with warnings.catch_warnings():
         warnings.filterwarnings("error", message=".*'cpu'", category=DeprecationWarning)
         ctx.run(ctx.on.update_status(), state_in)
-
-
-def test_invalid_memory_config_is_reported_along_with_other_blocked_reasons(
-    ctx, otelcol_container, container_memory
-):
-    # GIVEN an invalid memory config, and a source relation without a sink
-    container_memory.return_value = 2048
-    state_in = State(
-        containers=otelcol_container,
-        config={"memory": "lots"},
-        relations=[Relation("metrics-endpoint")],
-    )
-    # WHEN any event executes the reconciler
-    state_out = ctx.run(ctx.on.update_status(), state_in)
-    # THEN the status reports both reasons
-    assert isinstance(state_out.unit_status, BlockedStatus)
-    assert "Invalid memory config value" in state_out.unit_status.message
-    assert "] for metrics-endpoint" in state_out.unit_status.message
