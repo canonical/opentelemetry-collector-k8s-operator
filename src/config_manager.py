@@ -114,6 +114,7 @@ class ConfigManager:
         insecure_skip_verify: bool = False,
         queue_size: int = 1000,
         max_elapsed_time_min: int = 5,
+        remote_write_num_consumers: int = 1,
         self_telemetry_host: str = "localhost",
         topology_labels: Optional[Dict[str, str]] = None,
     ):
@@ -138,6 +139,7 @@ class ConfigManager:
         self._insecure_skip_verify = insecure_skip_verify
         self._queue_size = queue_size
         self._max_elapsed_time_min = max_elapsed_time_min
+        self._remote_write_num_consumers = remote_write_num_consumers
         self.config = ConfigBuilder(
             unit_name=self._unit_name,
             global_scrape_interval=global_scrape_interval,
@@ -179,6 +181,7 @@ class ConfigManager:
             "remote_write_queue": {
                 "enabled": True,
                 "queue_size": self._queue_size,
+                "num_consumers": self._remote_write_num_consumers,
             },
             "retry_on_failure": {
                 "max_elapsed_time": f"{self._max_elapsed_time_min}m",

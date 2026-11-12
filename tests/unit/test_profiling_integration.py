@@ -207,3 +207,106 @@ def test_profiling_integration_tls(ctx, otelcol_container, insecure_skip_verify,
         "insecure": False,
         "insecure_skip_verify": insecure_skip_verify,
     }
+
+
+def test_remote_write_num_consumers_default_no_feature_gate(ctx, otelcol_container):
+    """Scenario: num_consumers=1 (default) — no feature gate, num_consumers=1 in config."""
+    remote_units_data = {
+        0: {"remote_write": '{"url": "http://fqdn-0:9090/api/v1/write"}'},
+    }
+    data_sink = Relation(
+        endpoint="send-remote-write",
+        interface="prometheus_remote_write",
+        remote_units_data=remote_units_data,
+    )
+    state_in = State(
+        relations=[data_sink],
+        containers=otelcol_container,
+        config={"remote_write_num_consumers": 1},
+    )
+    state_out = ctx.run(ctx.on.update_status(), state=state_in)
+
+    plan_out = state_out.get_container("otelcol").plan
+    assert "EnableMultipleWorkers" not in plan_out.services[SERVICE_NAME].command
+    assert "--feature-gates" not in plan_out.services[SERVICE_NAME].command
+
+    cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
+    rw_queue = cfg["exporters"]["prometheusremotewrite/send-remote-write/0"]["remote_write_queue"]
+    assert rw_queue["num_consumers"] == 1
+
+
+def test_remote_write_num_consumers_gt1_enables_feature_gate(ctx, otelcol_container):
+    """Scenario: num_consumers=5 — EnableMultipleWorkers gate present, num_consumers=5 in config."""
+    remote_units_data = {
+        0: {"remote_write": '{"url": "http://fqdn-0:9090/api/v1/write"}'},
+    }
+    data_sink = Relation(
+        endpoint="send-remote-write",
+        interface="prometheus_remote_write",
+        remote_units_data=remote_units_data,
+    )
+    state_in = State(
+        relations=[data_sink],
+        containers=otelcol_container,
+        config={"remote_write_num_consumers": 5},
+    )
+    state_out = ctx.run(ctx.on.update_status(), state=state_in)
+
+    plan_out = state_out.get_container("otelcol").plan
+    expected_gate = "exporter.prometheusremotewritexporter.EnableMultipleWorkers"
+    assert (
+        plan_out.services[SERVICE_NAME].command
+        == f"/usr/bin/otelcol --config={CONFIG_PATH} --feature-gates={expected_gate}"
+    )
+    assert (
+        plan_out.checks["valid-config"].exec["command"]
+        == f"otelcol validate --config={CONFIG_PATH} --feature-gates={expected_gate}"
+    )
+
+    cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
+    rw_queue = cfg["exporters"]["prometheusremotewrite/send-remote-write/0"]["remote_write_queue"]
+    assert rw_queue["num_consumers"] == 5
+
+
+def test_remote_write_num_consumers_gt1_with_profiling_combines_gates(ctx, otelcol_container):
+    """Scenario: num_consumers=3 + profiling — both gates combined in correct order."""
+    pyro_url = "my.fqdn.cluster.local:12345"
+    send_profiles = Relation(
+        endpoint="send-profiles",
+        remote_app_data={
+            "otlp_grpc_endpoint_url": json.dumps(pyro_url),
+            "insecure": json.dumps(False),
+        },
+    )
+    remote_units_data = {
+        0: {"remote_write": '{"url": "http://fqdn-0:9090/api/v1/write"}'},
+    }
+    data_sink = Relation(
+        endpoint="send-remote-write",
+        interface="prometheus_remote_write",
+        remote_units_data=remote_units_data,
+    )
+    state_in = State(
+        relations=[send_profiles, data_sink],
+        containers=otelcol_container,
+        config={"remote_write_num_consumers": 3},
+    )
+    state_out = ctx.run(ctx.on.update_status(), state=state_in)
+
+    plan_out = state_out.get_container("otelcol").plan
+    expected_gates = (
+        "service.profilesSupport,"
+        "exporter.prometheusremotewritexporter.EnableMultipleWorkers"
+    )
+    assert (
+        plan_out.services[SERVICE_NAME].command
+        == f"/usr/bin/otelcol --config={CONFIG_PATH} --feature-gates={expected_gates}"
+    )
+    assert (
+        plan_out.checks["valid-config"].exec["command"]
+        == f"otelcol validate --config={CONFIG_PATH} --feature-gates={expected_gates}"
+    )
+
+    cfg = get_otelcol_file(state_out, ctx, CONFIG_PATH)
+    rw_queue = cfg["exporters"]["prometheusremotewrite/send-remote-write/0"]["remote_write_queue"]
+    assert rw_queue["num_consumers"] == 3

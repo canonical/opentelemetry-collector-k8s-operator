@@ -370,15 +370,13 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             insecure_skip_verify=cast(bool, self.config.get("tls_insecure_skip_verify")),
             queue_size=cast(int, self.config.get("queue_size")),
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
+            remote_write_num_consumers=cast(int, self.config.get("remote_write_num_consumers")),
             unit_name=self.unit.name,
             self_telemetry_host=self.unit_fqdn,
             topology_labels=topology_labels,
         )
 
-        # TODO: if/when we support multiple feature gates, make this a list and find out how to
-        #  pass multiple feature gates into the pebble layer command;
-        #  cf: https://github.com/canonical/opentelemetry-collector-k8s-operator/issues/17
-        feature_gates: Optional[str] = None
+        feature_gates: List[str] = []
 
         # OTLP setup
         traefik_ingress = integrations.traefik_ingress_ready(traefik_ingress)
@@ -430,7 +428,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         if profiling_endpoints := integrations.send_profiles(self):
             config_manager.add_profile_forwarding(profiling_endpoints)
         if self._incoming_profiles or integrations.send_profiles(self):
-            feature_gates = "service.profilesSupport"
+            feature_gates.append("service.profilesSupport")
 
         # Tracing setup
         requested_tracing_protocols = integrations.receive_traces(self, otelcol_address)
@@ -460,6 +458,10 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             loki_url=cloud_integrator_data.loki_url,
             tempo_url=cloud_integrator_data.tempo_url,
         )
+        if cast(int, self.config.get("remote_write_num_consumers")) > 1:
+            feature_gates.append(
+                "exporter.prometheusremotewritexporter.EnableMultipleWorkers"
+            )
 
         # Add debug exporters from Juju config
         config_manager.add_debug_exporters(
@@ -546,7 +548,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         # Workload version
         self.unit.set_workload_version(self._otelcol_version or "")
 
-    def _pebble_layer(self, environment: Dict, feature_gates: Optional[str]) -> Layer:
+    def _pebble_layer(self, environment: Dict, feature_gates: List[str]) -> Layer:
         """Construct the Pebble layer configuration.
 
         Args:
@@ -558,7 +560,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """
         otelcol_args = [f"--config={CONFIG_PATH}"]
         if feature_gates:
-            otelcol_args.append(f"--feature-gates={feature_gates}")
+            otelcol_args.append(f"--feature-gates={','.join(feature_gates)}")
 
         layer = Layer(
             {
