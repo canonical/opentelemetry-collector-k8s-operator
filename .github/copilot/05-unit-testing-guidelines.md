@@ -25,7 +25,7 @@ Testing patterns & conventions:
 - For filesystem checks inside containers, use `otelcol.get_filesystem(ctx)` and read files via the test helper.
 
 Mocking Kubernetes & external libs:
-- An autouse fixture `k8s_resource_multipatch` patches `KubernetesComputeResourcesPatch` and `lightkube.core.client.GenericSyncClient` so unit tests don't require k8s.
+- An autouse fixture `container_memory` stubs `container_memory_mib` (1 GiB by default), so unit tests don't need a real workload container. Mark a test with `@pytest.mark.real_container_memory` to detect the memory for real.
 
 What to assert:
 - Focus on: data transformations, relation databag contents, config generation YAML, and method outputs (e.g., `get_remote_otlp_endpoints`).

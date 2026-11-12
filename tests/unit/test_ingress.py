@@ -14,6 +14,7 @@ from ops.testing import Model, PeerRelation, Relation, State
 
 from src.config_builder import Port
 from src.constants import INGRESS_IP_MATCHER
+from src.integrations import _traefik_backend_scheme
 
 FQDN = "otelcol-0.otelcol-endpoints.otel.svc.cluster.local"
 CHARM_NAME = "opentelemetry-collector-k8s"
@@ -124,6 +125,7 @@ def test_traefik_sent_config(ctx, otelcol_container):
     charm_name = CHARM_NAME
     # Traefik must load-balance across all units, so the backend is the K8s Service, not a pod
     backend = service_fqdn(state)
+    transport = f"juju-{state.model.name}-{charm_name}-transport"
     expected_rel_data = {
         "http": {
             "routers": {
@@ -170,29 +172,56 @@ def test_traefik_sent_config(ctx, otelcol_container):
             },
             "services": {
                 f"juju-{state.model.name}-{charm_name}-service-health": {
-                    "loadBalancer": {"servers": [{"url": f"http://{backend}:13133"}]}
+                    "loadBalancer": {
+                        "servers": [{"url": f"http://{backend}:13133"}],
+                        "serversTransport": transport,
+                    }
                 },
                 f"juju-{state.model.name}-{charm_name}-service-jaeger-grpc": {
-                    "loadBalancer": {"servers": [{"url": f"http://{backend}:14250"}]}
+                    "loadBalancer": {
+                        "servers": [{"url": f"h2c://{backend}:14250"}],
+                        "serversTransport": transport,
+                    }
                 },
                 f"juju-{state.model.name}-{charm_name}-service-jaeger-thrift-http": {
-                    "loadBalancer": {"servers": [{"url": f"http://{backend}:14268"}]}
+                    "loadBalancer": {
+                        "servers": [{"url": f"http://{backend}:14268"}],
+                        "serversTransport": transport,
+                    }
                 },
                 f"juju-{state.model.name}-{charm_name}-service-loki-http": {
-                    "loadBalancer": {"servers": [{"url": f"http://{backend}:3500"}]}
+                    "loadBalancer": {
+                        "servers": [{"url": f"http://{backend}:3500"}],
+                        "serversTransport": transport,
+                    }
                 },
                 f"juju-{state.model.name}-{charm_name}-service-metrics": {
-                    "loadBalancer": {"servers": [{"url": f"http://{backend}:8888"}]},
+                    "loadBalancer": {
+                        "servers": [{"url": f"http://{backend}:8888"}],
+                        "serversTransport": transport,
+                    },
                 },
                 f"juju-{state.model.name}-{charm_name}-service-otlp-grpc": {
-                    "loadBalancer": {"servers": [{"url": f"http://{backend}:4317"}]}
+                    "loadBalancer": {
+                        "servers": [{"url": f"h2c://{backend}:4317"}],
+                        "serversTransport": transport,
+                    }
                 },
                 f"juju-{state.model.name}-{charm_name}-service-otlp-http": {
-                    "loadBalancer": {"servers": [{"url": f"http://{backend}:4318"}]}
+                    "loadBalancer": {
+                        "servers": [{"url": f"http://{backend}:4318"}],
+                        "serversTransport": transport,
+                    }
                 },
                 f"juju-{state.model.name}-{charm_name}-service-zipkin": {
-                    "loadBalancer": {"servers": [{"url": f"http://{backend}:9411"}]}
+                    "loadBalancer": {
+                        "servers": [{"url": f"http://{backend}:9411"}],
+                        "serversTransport": transport,
+                    }
                 },
+            },
+            "serversTransports": {
+                transport: {"maxIdleConnsPerHost": 7500}
             },
         },
     }
@@ -204,6 +233,60 @@ def test_traefik_sent_config(ctx, otelcol_container):
     ingress_out = state_out.get_relations(ingress.endpoint)[0]
     assert ingress_out.local_app_data
     assert yaml.safe_load(ingress_out.local_app_data["config"]) == expected_rel_data
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@patch("socket.getfqdn", lambda: FQDN)
+def test_traefik_servers_transport_is_referenced_by_every_service(
+    ctx, otelcol_container, scheme
+):
+    """Scenario: every backend service shares the charm's tuned Traefik transport."""
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": scheme})
+    state = State(relations=[ingress], containers=otelcol_container, leader=True)
+
+    state_out = ctx.run(ctx.on.relation_joined(ingress), state)
+
+    config = yaml.safe_load(
+        state_out.get_relations(ingress.endpoint)[0].local_app_data["config"]
+    )
+    transport = f"juju-{state.model.name}-{CHARM_NAME}-transport"
+
+    # The transport must be defined once, with the idle pool that prevents connection churn.
+    assert config["http"]["serversTransports"] == {
+        transport: {"maxIdleConnsPerHost": 7500}
+    }
+    # Every generated service must use it, including the TLS backend variants.
+    services = config["http"]["services"]
+    assert services
+    assert {
+        service["loadBalancer"]["serversTransport"] for service in services.values()
+    } == {transport}
+
+
+@pytest.mark.parametrize("configured_value", [200, 12345])
+@patch("socket.getfqdn", lambda: FQDN)
+def test_traefik_max_idle_conns_per_host_config_is_applied(
+    ctx, otelcol_container, configured_value
+):
+    """Scenario: the Juju config option overrides the idle pool written to Traefik."""
+    ingress = Relation("ingress", remote_app_data={"external_host": "1.2.3.4", "scheme": "http"})
+    state = State(
+        relations=[ingress],
+        containers=otelcol_container,
+        leader=True,
+        config={"traefik_max_idle_conns_per_host": configured_value},
+    )
+
+    state_out = ctx.run(ctx.on.relation_joined(ingress), state)
+
+    config = yaml.safe_load(
+        state_out.get_relations(ingress.endpoint)[0].local_app_data["config"]
+    )
+    transport = f"juju-{state.model.name}-{CHARM_NAME}-transport"
+    assert (
+        config["http"]["serversTransports"][transport]["maxIdleConnsPerHost"]
+        == configured_value
+    )
 
 
 def test_traefik_ingress_config_middleware_tls(ctx, otelcol_container):
@@ -366,6 +449,25 @@ def traefik_backends(state_out, ingress) -> set:
     }
 
 
+def expected_traefik_backends(host: str, tls: bool) -> set:
+    """Return the schemes each port should use when Traefik dials ``host``."""
+    return {
+        f"{_traefik_backend_scheme(port, tls)}://{host}:{port.value}" for port in Port
+    }
+
+
+@pytest.mark.parametrize("tls", [False, True])
+@pytest.mark.parametrize("port", list(Port))
+def test_traefik_backend_scheme(port, tls):
+    """The per-port scheme table is the independent oracle for the generated config."""
+    plaintext = {Port.health, Port.metrics, Port.zipkin}
+    grpc = {Port.otlp_grpc, Port.jaeger_grpc}
+    expected = "http"
+    if port not in plaintext:
+        expected = "https" if tls else ("h2c" if port in grpc else "http")
+    assert _traefik_backend_scheme(port, tls) == expected
+
+
 @patch("socket.getfqdn", new=lambda *args: FQDN)
 def test_traefik_backend_waits_for_a_certificate_covering_the_service_name(ctx, otelcol_container):
     """Scenario: a TLS otelcol refreshed from a revision that only asked for the pod name.
@@ -390,10 +492,9 @@ def test_traefik_backend_waits_for_a_certificate_covering_the_service_name(ctx, 
     with issued_certificate(IssuedCertificate("otelcol-0", frozenset({FQDN}))):
         state_out = ctx.run(ctx.on.update_status(), state)
 
-    # THEN Traefik is pointed at the pod, over HTTPS, so hostname verification still succeeds
-    assert traefik_backends(state_out, ingress) == {
-        f"https://{FQDN}:{port.value}" for port in Port
-    }
+    # THEN Traefik is pointed at the pod, using each port's actual scheme, so hostname
+    # verification still succeeds
+    assert traefik_backends(state_out, ingress) == expected_traefik_backends(FQDN, tls=True)
 
     # AND the charm says why scaling is not distributing anything yet
     assert state_out.unit_status.name == "waiting"
@@ -404,10 +505,16 @@ def test_traefik_backend_waits_for_a_certificate_covering_the_service_name(ctx, 
         state_out = ctx.run(ctx.on.update_status(), state)
 
     # THEN Traefik load-balances across all units via the K8s Service
-    assert traefik_backends(state_out, ingress) == {
-        f"https://{service}:{port.value}" for port in Port
-    }
+    assert traefik_backends(state_out, ingress) == expected_traefik_backends(service, tls=True)
     assert state_out.unit_status.name == "active"
+
+    # AND the TLS backend services still use the tuned transport
+    config = yaml.safe_load(state_out.get_relation(ingress.id).local_app_data["config"])
+    transport = f"juju-{state.model.name}-{CHARM_NAME}-transport"
+    assert {
+        service["loadBalancer"]["serversTransport"]
+        for service in config["http"]["services"].values()
+    } == {transport}
 
 
 def test_traefik_backend_scheme_matches_tls_on_the_hook_it_becomes_ready(ctx, otelcol_container):
@@ -425,7 +532,5 @@ def test_traefik_backend_scheme_matches_tls_on_the_hook_it_becomes_ready(ctx, ot
     with issued_certificate(IssuedCertificate("otelcol-0", frozenset({FQDN, service}))):
         state_out = ctx.run(ctx.on.relation_changed(ssc), state)
 
-    # THEN Traefik is told to speak HTTPS to the backend, not HTTP
-    assert traefik_backends(state_out, ingress) == {
-        f"https://{service}:{port.value}" for port in Port
-    }
+    # THEN Traefik is told to speak HTTPS to TLS-capable receivers, not HTTP
+    assert traefik_backends(state_out, ingress) == expected_traefik_backends(service, tls=True)

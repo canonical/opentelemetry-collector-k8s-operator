@@ -7,7 +7,7 @@ import yaml
 from charmlibs.interfaces.otlp import OtlpEndpoint
 
 from config_builder import Component, ConfigBuilder, Port
-from constants import CUSTOM_COMPONENT_ID, FILE_STORAGE_DIRECTORY
+from constants import CUSTOM_COMPONENT_ID, FILE_STORAGE_DIRECTORY, MEMORY_LIMITER_PERCENTAGE
 from integrations import ProfilingEndpoint
 
 logger = logging.getLogger(__name__)
@@ -136,6 +136,7 @@ class ConfigManager:
                 telemetry so logs from multiple otelcol apps/units are distinguishable in Loki
         """
         self._unit_name = unit_name
+        self._custom_processor_types: set[str] = set()
         self._insecure_skip_verify = insecure_skip_verify
         self._queue_size = queue_size
         self._max_elapsed_time_min = max_elapsed_time_min
@@ -619,6 +620,47 @@ class ConfigManager:
                 pipelines=[f"traces/{self._unit_name}"],
             )
 
+    @property
+    def _has_custom_memory_limiter(self) -> bool:
+        """Whether the 'processors' config option provides a memory limiter."""
+        return "memory_limiter" in self._custom_processor_types
+
+    def add_default_memory_limiter(self, total_memory_mib: int, profiles: bool = False) -> None:
+        """Add the default memory limiter processor, unless a custom one is configured.
+
+        https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor
+
+        Call this after `add_custom_processors`.
+
+        Args:
+            total_memory_mib: the memory available to otelcol, in MiB.
+            profiles: whether a profiles pipeline is configured, and needs a limiter too.
+        """
+        if self._has_custom_memory_limiter:
+            return
+
+        pipelines = [
+            f"metrics/{self._unit_name}",
+            f"logs/{self._unit_name}",
+            f"traces/{self._unit_name}",
+        ]
+        if profiles:
+            pipelines.append(f"profiles/{self._unit_name}")
+
+        self.config.add_component(
+            Component.processor,
+            f"memory_limiter/{self._unit_name}",
+            {
+                "check_interval": "1s",
+                # The processor requires a positive limit
+                "limit_mib": max(1, total_memory_mib * MEMORY_LIMITER_PERCENTAGE // 100),
+            },
+            pipelines=pipelines,
+            # The limiter must apply backpressure before any other processor consumes the data
+            # https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor#best-practices
+            first=True,
+        )
+
     def add_custom_processors(self, processors_raw: str) -> None:
         """Add custom processors from Juju configuration.
 
@@ -626,6 +668,8 @@ class ConfigManager:
         the OpenTelemetry Collector configuration.
         """
         for processor_name, processor_config in yaml.safe_load(processors_raw).items():
+            processor_type = processor_name.split("/")[0]
+            self._custom_processor_types.add(processor_type)
             self.config.add_component(
                 Component.processor,
                 f"{processor_name}/{self._unit_name}/{CUSTOM_COMPONENT_ID}",
@@ -635,6 +679,8 @@ class ConfigManager:
                     f"logs/{self._unit_name}",
                     f"traces/{self._unit_name}",
                 ],
+                # A memory limiter only protects otelcol if it runs before any other processor
+                first=processor_type == "memory_limiter",
             )
 
     def update_jobs_with_cert_paths(
@@ -715,7 +761,9 @@ class ConfigManager:
 
             for config_type, config in config_block.items():
                 if config_type not in Component:
-                    logger.warning("wrong component type '%s' in external config, skipping", config_type)
+                    logger.warning(
+                        "wrong component type '%s' in external config, skipping", config_type
+                    )
                     continue
 
                 for name, cnf in config.items():
@@ -724,6 +772,11 @@ class ConfigManager:
                         Component(config_type),
                         comp_name,
                         cnf,
-                        pipelines=[f"{getattr(p, 'value', p)}/{self._unit_name}" for p in configs["pipelines"]],
+                        pipelines=[
+                            f"{getattr(p, 'value', p)}/{self._unit_name}"
+                            for p in configs["pipelines"]
+                        ],
                     )
-                    logger.debug("component type: '%s', name: '%s' added to config", config_type, comp_name)
+                    logger.debug(
+                        "component type: '%s', name: '%s' added to config", config_type, comp_name
+                    )
