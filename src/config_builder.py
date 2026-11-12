@@ -63,9 +63,7 @@ class Port(int, Enum):
 # Ports whose components do not expose a "protocols" section and therefore never receive TLS
 # from _add_tls_to_all_receivers. Keep this list in sync with that method: Traefik must keep
 # speaking plaintext to these ports even when the rest of otelcol serves TLS.
-TLS_INCAPABLE_PORTS: Final[frozenset[Port]] = frozenset(
-    {Port.health, Port.metrics, Port.zipkin}
-)
+TLS_INCAPABLE_PORTS: Final[frozenset[Port]] = frozenset({Port.health, Port.metrics, Port.zipkin})
 
 
 @unique
@@ -315,6 +313,7 @@ class ConfigBuilder:
         name: str,
         config: Dict[str, Any],
         pipelines: Optional[List[str]] = None,
+        first: bool = False,
     ) -> None:
         """Add a component to the configuration.
 
@@ -327,10 +326,12 @@ class ConfigBuilder:
             pipelines: List of pipeline types ('logs', 'metrics', 'traces') to add
                      this component to. If None, the component is defined but not
                      added to any pipeline.
+            first: Whether to put the component first, rather than last, in each pipeline.
+                     This matters for processors, which run in order.
         """
         self._config[component.value][name] = config
         if pipelines:
-            self._add_to_pipeline(name, component, pipelines)
+            self._add_to_pipeline(name, component, pipelines, first=first)
 
     def add_extension(self, name: str, extension_config: Dict[str, Any]):
         """Add an extension to the config.
@@ -363,7 +364,9 @@ class ConfigBuilder:
         # https://opentelemetry.io/docs/collector/internal-telemetry
         self._config["service"]["telemetry"][category] = telem_config
 
-    def _add_to_pipeline(self, name: str, component: Component, pipelines: List[str]):
+    def _add_to_pipeline(
+        self, name: str, component: Component, pipelines: List[str], first: bool = False
+    ):
         """Add a pipeline component to the service::pipelines config.
 
         Args:
@@ -371,21 +374,17 @@ class ConfigBuilder:
             component: Type of the component (receiver, processor, etc.)
             pipelines: List of pipeline types ('logs', 'metrics', 'traces') to add
                      the component to
+            first: Whether to put the component first, rather than last, in each pipeline.
         """
-        # Create the pipeline dict key chain if it doesn't exist
         for pipeline in pipelines:
-            self._config["service"]["pipelines"].setdefault(
-                pipeline,
-                {
-                    component.value: [name],
-                },
+            components = (
+                self._config["service"]["pipelines"]
+                .setdefault(pipeline, {})
+                .setdefault(component.value, [])
             )
             # Add to pipeline if it doesn't exist in the list already
-            if name not in self._config["service"]["pipelines"][pipeline].setdefault(
-                component.value,
-                [],
-            ):
-                self._config["service"]["pipelines"][pipeline][component.value].append(name)
+            if name not in components:
+                components.insert(0 if first else len(components), name)
 
     def _add_missing_nop_exporters(self):
         """Add nopexporter(s) to any pipeline that has no exporters.

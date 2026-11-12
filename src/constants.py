@@ -29,3 +29,7 @@ INGRESS_IP_MATCHER: Final[str] = "ClientIP(`0.0.0.0/0`)"
 INTERNAL_LOGS_FILTER_ID: Final[str] = "internal-telemetry-loop-breaker"
 INTERNAL_TELEMETRY_SERVICE_NAME: Final[str] = "otelcol-internal"
 NON_LOOPING_EXPORTER_PREFIXES: Final[tuple] = ("nop", "debug")
+# The memory_limiter's hard limit, as a percentage of the memory available to otelcol. The limiter
+# only counts heap memory, so the rest is headroom for other memory the process needs.
+# Ref: https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor
+MEMORY_LIMITER_PERCENTAGE: Final[int] = 80
