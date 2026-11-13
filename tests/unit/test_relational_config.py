@@ -40,7 +40,7 @@ def test_negative_remote_write_num_consumers_is_blocked(ctx, otelcol_container):
     assert state_out.unit_status.name == "blocked"
     assert (
         state_out.unit_status.message
-        == "The remote_write_num_consumers config must be greater than or equal to 0."
+        == "The remote_write_num_consumers config must be greater than or equal to 1."
     )
 
 
