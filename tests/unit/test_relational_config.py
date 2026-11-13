@@ -29,6 +29,21 @@ def test_no_relations(ctx, otelcol_container):
     check_valid_pipelines(cfg)
 
 
+def test_negative_remote_write_num_consumers_is_blocked(ctx, otelcol_container):
+    state_in = State(
+        containers=otelcol_container,
+        config={"remote_write_num_consumers": -1},
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state_in)
+
+    assert state_out.unit_status.name == "blocked"
+    assert (
+        state_out.unit_status.message
+        == "The remote_write_num_consumers config must be greater than or equal to 0."
+    )
+
+
 def test_loki_exporter(ctx, otelcol_container):
     """Scenario: Fan-out logging architecture."""
     # GIVEN a relation to multiple Loki units

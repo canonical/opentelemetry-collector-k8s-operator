@@ -349,6 +349,12 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 )
                 return
 
+        if cast(int, self.config.get("remote_write_num_consumers")) < 0:
+            self.unit.status = BlockedStatus(
+                "The remote_write_num_consumers config must be greater than or equal to 0."
+            )
+            return
+
         # Create the config manager
         topology = JujuTopology.from_charm(self)
         topology_labels = {
