@@ -312,6 +312,16 @@ config:
       description: |
         Maximum number of incoming batches of metrics, logs, traces the queue can accept.
         Ref: https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/exporterhelper/README.md#configuration
+    remote_write_num_consumers:
+      type: int
+      default: 1
+      description: |
+        Number of parallel workers sending data via the prometheusremotewrite exporter.
+        The default of 1 preserves in-order delivery. Values greater than 1 enable the
+        exporter.prometheusremotewritexporter.EnableMultipleWorkers feature gate, which
+        allows out-of-order writes — the remote-write backend must accept out-of-order
+        samples (e.g. Mimir requires out_of_order_time_window; VictoriaMetrics accepts
+        them by default).
     tracing_sampling_rate_charm:
       description: >
         This property defines the percentage of charm traces that are sent to the tracing backend.
