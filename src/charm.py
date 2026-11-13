@@ -349,9 +349,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 )
                 return
 
-        if cast(int, self.config.get("remote_write_num_consumers")) < 0:
+        if cast(int, self.config.get("remote_write_num_consumers")) < 1:
             self.unit.status = BlockedStatus(
-                "The remote_write_num_consumers config must be greater than or equal to 0."
+                "The remote_write_num_consumers config must be greater than or equal to 1."
             )
             return
 
