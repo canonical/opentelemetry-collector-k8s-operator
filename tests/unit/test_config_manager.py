@@ -215,7 +215,7 @@ def test_add_remote_write():
         "retry_on_failure": {
             "max_elapsed_time": "5m",
         },
-        "remote_write_queue": {"enabled": True, "queue_size": 1000},
+        "remote_write_queue": {"enabled": True, "queue_size": 1000, "num_consumers": 1},
     }
     config_manager.add_remote_write(
         endpoints=[{"url": "http://192.168.1.244/cos-prometheus-0/api/v1/write"}],
