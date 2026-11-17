@@ -28,6 +28,7 @@ from constants import (
     CONFIG_PATH,
     EXTERNAL_CONFIG_SECRETS_DIR,
     RECV_CA_CERT_FOLDER_PATH,
+    REMOTE_WRITE_MULTIPLE_WORKERS_COUNT,
     SERVER_CA_CERT_PATH,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
@@ -349,12 +350,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
                 )
                 return
 
-        if cast(int, self.config.get("remote_write_num_consumers")) < 1:
-            self.unit.status = BlockedStatus(
-                "The remote_write_num_consumers config must be greater than or equal to 1."
-            )
-            return
-
         # Create the config manager
         topology = JujuTopology.from_charm(self)
         topology_labels = {
@@ -364,6 +359,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             "juju_application": topology.application,
             "juju_unit": topology.unit,
         }
+        remote_write_multiple_workers = cast(
+            bool, self.config.get("remote_write_multiple_workers")
+        )
         config_manager = ConfigManager(
             global_scrape_interval=global_configs["global_scrape_interval"],
             global_scrape_timeout=global_configs["global_scrape_timeout"],
@@ -371,7 +369,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             insecure_skip_verify=cast(bool, self.config.get("tls_insecure_skip_verify")),
             queue_size=cast(int, self.config.get("queue_size")),
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
-            remote_write_num_consumers=cast(int, self.config.get("remote_write_num_consumers")),
+            remote_write_num_consumers=(
+                REMOTE_WRITE_MULTIPLE_WORKERS_COUNT if remote_write_multiple_workers else 1
+            ),
             unit_name=self.unit.name,
             self_telemetry_host=self.unit_fqdn,
             topology_labels=topology_labels,
@@ -413,6 +413,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
         remote_write_endpoints = integrations.send_remote_write(self)
         config_manager.add_remote_write(remote_write_endpoints)
+        if remote_write_endpoints and remote_write_multiple_workers:
+            feature_gates.append("exporter.prometheusremotewritexporter.EnableMultipleWorkers")
 
         # External-config setup
         self.external_configs, self.external_secret_files = integrations.receive_external_configs(
@@ -457,10 +459,6 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             loki_url=cloud_integrator_data.loki_url,
             tempo_url=cloud_integrator_data.tempo_url,
         )
-        if cast(int, self.config.get("remote_write_num_consumers")) > 1:
-            feature_gates.append(
-                "exporter.prometheusremotewritexporter.EnableMultipleWorkers"
-            )
 
         # Add debug exporters from Juju config
         config_manager.add_debug_exporters(
