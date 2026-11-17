@@ -322,7 +322,7 @@ config:
         exporter.prometheusremotewritexporter.EnableMultipleWorkers feature gate.
         This lifts the single-in-flight-request throughput cap, but allows out-of-order
         writes: the remote-write backend must accept out-of-order samples (e.g. Mimir
-        requires out_of_order_time_window; VictoriaMetrics accepts them by default).
+        requires out_of_order_time_window).
         The default of false preserves in-order delivery with a single worker.
     tracing_sampling_rate_charm:
       description: >

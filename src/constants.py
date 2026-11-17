@@ -29,9 +29,6 @@ INGRESS_IP_MATCHER: Final[str] = "ClientIP(`0.0.0.0/0`)"
 INTERNAL_LOGS_FILTER_ID: Final[str] = "internal-telemetry-loop-breaker"
 INTERNAL_TELEMETRY_SERVICE_NAME: Final[str] = "otelcol-internal"
 NON_LOOPING_EXPORTER_PREFIXES: Final[tuple] = ("nop", "debug")
-# Number of parallel workers for the prometheusremotewrite exporter when the
-# `remote_write_multiple_workers` option is enabled. One worker (in-order delivery) is the
-# default, so this must be greater than 1 for the option to have any effect.
 REMOTE_WRITE_MULTIPLE_WORKERS_COUNT: Final[int] = 5
 # The memory_limiter's hard limit, as a percentage of the memory available to otelcol. The limiter
 # only counts heap memory, so the rest is headroom for other memory the process needs.
