@@ -28,6 +28,7 @@ from constants import (
     CONFIG_PATH,
     EXTERNAL_CONFIG_SECRETS_DIR,
     RECV_CA_CERT_FOLDER_PATH,
+    REMOTE_WRITE_MULTIPLE_WORKERS_COUNT,
     SERVER_CA_CERT_PATH,
     SERVER_CERT_PATH,
     SERVER_CERT_PRIVATE_KEY_PATH,
@@ -358,6 +359,9 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             "juju_application": topology.application,
             "juju_unit": topology.unit,
         }
+        remote_write_multiple_workers = cast(
+            bool, self.config.get("remote_write_multiple_workers")
+        )
         config_manager = ConfigManager(
             global_scrape_interval=global_configs["global_scrape_interval"],
             global_scrape_timeout=global_configs["global_scrape_timeout"],
@@ -365,15 +369,15 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             insecure_skip_verify=cast(bool, self.config.get("tls_insecure_skip_verify")),
             queue_size=cast(int, self.config.get("queue_size")),
             max_elapsed_time_min=cast(int, self.config.get("max_elapsed_time_min")),
+            remote_write_num_consumers=(
+                REMOTE_WRITE_MULTIPLE_WORKERS_COUNT if remote_write_multiple_workers else 1
+            ),
             unit_name=self.unit.name,
             self_telemetry_host=self.unit_fqdn,
             topology_labels=topology_labels,
         )
 
-        # TODO: if/when we support multiple feature gates, make this a list and find out how to
-        #  pass multiple feature gates into the pebble layer command;
-        #  cf: https://github.com/canonical/opentelemetry-collector-k8s-operator/issues/17
-        feature_gates: Optional[str] = None
+        feature_gates: List[str] = []
 
         # OTLP setup
         traefik_ingress = integrations.traefik_ingress_ready(traefik_ingress)
@@ -409,6 +413,8 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         config_manager.add_prometheus_scrape_jobs(metrics_consumer_jobs)
         remote_write_endpoints = integrations.send_remote_write(self)
         config_manager.add_remote_write(remote_write_endpoints)
+        if remote_write_endpoints and remote_write_multiple_workers:
+            feature_gates.append("exporter.prometheusremotewritexporter.EnableMultipleWorkers")
 
         # External-config setup
         self.external_configs, self.external_secret_files = integrations.receive_external_configs(
@@ -426,7 +432,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
             config_manager.add_profile_forwarding(profiling_endpoints)
         profiles_enabled = bool(self._incoming_profiles or profiling_endpoints)
         if profiles_enabled:
-            feature_gates = "service.profilesSupport"
+            feature_gates.append("service.profilesSupport")
 
         # Tracing setup
         requested_tracing_protocols = integrations.receive_traces(self, otelcol_address)
@@ -579,7 +585,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         integrations.forward_otlp_rules(self, otlp_provider)
         integrations.forward_dashboards(self)
 
-    def _pebble_layer(self, environment: Dict, feature_gates: Optional[str]) -> Layer:
+    def _pebble_layer(self, environment: Dict, feature_gates: List[str]) -> Layer:
         """Construct the Pebble layer configuration.
 
         Args:
@@ -591,7 +597,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         """
         otelcol_args = [f"--config={CONFIG_PATH}"]
         if feature_gates:
-            otelcol_args.append(f"--feature-gates={feature_gates}")
+            otelcol_args.append(f"--feature-gates={','.join(feature_gates)}")
 
         layer = Layer(
             {
