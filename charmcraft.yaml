@@ -312,6 +312,18 @@ config:
       description: |
         Maximum number of incoming batches of metrics, logs, traces the queue can accept.
         Ref: https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/exporterhelper/README.md#configuration
+    remote_write_multiple_workers:
+      type: boolean
+      default: false
+      description: |
+        Send metrics over the `send-remote-write` relation with multiple parallel workers
+        instead of one. When enabled, the charm sets the prometheusremotewrite exporter's
+        remote_write_queue.num_consumers to 5 and enables the
+        exporter.prometheusremotewritexporter.EnableMultipleWorkers feature gate.
+        This lifts the single-in-flight-request throughput cap, but allows out-of-order
+        writes: the remote-write backend must accept out-of-order samples (e.g. Mimir
+        requires out_of_order_time_window).
+        The default of false preserves in-order delivery with a single worker.
     tracing_sampling_rate_charm:
       description: >
         This property defines the percentage of charm traces that are sent to the tracing backend.
