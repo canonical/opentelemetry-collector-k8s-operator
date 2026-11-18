@@ -259,6 +259,62 @@ def metrics_rules(metrics_consumer: MetricsEndpointConsumer, charm: CharmBase) -
     return alert_rules
 
 
+def peer_unit_names(charm: CharmBase) -> List[str]:
+    """Return the name of this unit and of every other unit of the application, sorted.
+
+    The `peers` relation is the source of the application's scale that does not shell out
+    to `goal-state`, which hard-fails in some models; see
+    `OpenTelemetryCollectorK8sCharm._joined_units`.
+    """
+    peers = charm.model.get_relation("peers")
+    names = {charm.unit.name}
+    if peers:
+        names.update(unit.name for unit in peers.units)
+    return sorted(names)
+
+
+def _scrape_job_owner(job: Dict, unit_names: List[str]) -> str:
+    """Return the unit that owns `job`, by rendezvous (highest-random-weight) hashing.
+
+    Every unit computes the same ranking from the same inputs, so no coordination or shared
+    state is needed. Rendezvous hashing only moves about ``1/n`` of the jobs when a unit
+    joins or leaves, whereas ``hash(key) % n`` remaps almost every job on any scale change,
+    which would stop most targets being scraped until every unit had reconciled.
+    """
+    key = hashlib.sha256(json.dumps(job, sort_keys=True, default=str).encode()).digest()
+    return max(unit_names, key=lambda unit: hashlib.sha256(key + unit.encode()).digest())
+
+
+def shard_scrape_jobs(charm: CharmBase, jobs: List[Dict]) -> List[Dict]:
+    """Keep only the scrape jobs this unit owns, spreading the rest over its peers.
+
+    Every otelcol unit builds the same Prometheus receiver config from the same relation
+    data, so without sharding each of ``n`` units scrapes every target and remote-writes
+    ``n`` identical copies of every series. The duplicates arrive on independent schedules,
+    so a later copy can carry an older timestamp and the backend rejects it (Mimir's
+    ``err-mimir-sample-out-of-order``). Assigning every job to exactly one unit keeps each
+    target scraped once.
+
+    The owners are recomputed from the peer relation on every reconcile, so the assignment
+    follows units as they join and leave. With a single unit every job is kept unchanged.
+
+    Sharding is per job, not per target: the wildcard targets of a related application are
+    already expanded into one job per scraped unit by the `prometheus_scrape` library, so
+    the common case is distributed evenly.
+    """
+    unit_names = peer_unit_names(charm)
+    if len(unit_names) < 2:
+        return jobs
+    mine = [job for job in jobs if _scrape_job_owner(job, unit_names) == charm.unit.name]
+    logger.debug(
+        "sharded %d scrape job(s) over %d units; this unit owns %d",
+        len(jobs),
+        len(unit_names),
+        len(mine),
+    )
+    return mine
+
+
 def scrape_metrics(charm: CharmBase) -> List:
     """Integrate with other charms via the metrics-endpoint relation endpoint.
 
@@ -269,14 +325,16 @@ def scrape_metrics(charm: CharmBase) -> List:
     rules is comparatively expensive (proportional to the number of relations) and does not
     affect otelcol's own config, so it is handled separately by `stage_metrics_alert_rules`.
 
+    The jobs are sharded over the units of this application (see `shard_scrape_jobs`) so that
+    each target is scraped by exactly one unit rather than by all of them.
+
     Returns:
-        A list consisting of all the static scrape configurations
-        for each related `MetricsEndpointProvider` that has specified
-        its scrape targets.
+        A list consisting of the static scrape configurations this unit should scrape, drawn
+        from every related `MetricsEndpointProvider` that has specified its scrape targets.
     """
     metrics_consumer = MetricsEndpointConsumer(charm)
     charm.__setattr__("metrics_consumer", metrics_consumer)
-    return metrics_consumer.jobs()
+    return shard_scrape_jobs(charm, metrics_consumer.jobs())
 
 
 def stage_metrics_alert_rules(charm: CharmBase) -> None:

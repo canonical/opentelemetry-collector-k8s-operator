@@ -252,8 +252,7 @@ class OpenTelemetryCollectorK8sCharm(CharmBase):
         (https://github.com/juju/juju/issues/23212). Counting the peers avoids the hook
         command altogether.
         """
-        peers = self.model.get_relation("peers")
-        return len(peers.units) + 1 if peers else 1
+        return len(integrations.peer_unit_names(self))
 
     def internal_host(self, container: Container) -> str:
         """Return the in-cluster address that remote charms should use to reach this app.
