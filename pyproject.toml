@@ -43,6 +43,9 @@ dev = [
     "pytest-mock>=3.17.0",
 ]
 
+[tool.uv.sources]
+charmlibs-interfaces-otlp = { git = "https://github.com/sinapah/charmlibs", branch = "feat/otlp-validate-alert-rules-one-group-at-a-time", subdirectory = "interfaces/otlp" }
+
 # Testing tools configuration
 [tool.coverage.run]
 branch = true
