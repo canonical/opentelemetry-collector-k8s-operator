@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = "==3.14.*"
 
 [[package]]
@@ -274,15 +274,15 @@ wheels = [
 
 [[package]]
 name = "charmlibs-interfaces-otlp"
-version = "0.5.0"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cosl" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3f/52/42f01198ae391dfffbcd27cc4dc031e6189d2be299e37b18f56e16d237e8/charmlibs_interfaces_otlp-0.5.0.tar.gz", hash = "sha256:a2a963f32235afe8ffac17f04ad15e6da6dadd0f00aeaf687387214e33fde987", size = 55341, upload-time = "2026-04-30T20:57:28.407Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/66/50/8847288a594c4d01de0f0e8e5f53209eab7ce64c6ce0180d758325b1a4b5/charmlibs_interfaces_otlp-0.6.0.tar.gz", hash = "sha256:17622c234c69ca1f30de2a2c829de58a72eaef2c312c8f3bc55c6cad7c274fb4", size = 56374, upload-time = "2026-11-26T13:24:28.386Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/aa/4d/a2b6398e3072f452ee7e247e093a3bcc3483147a408e78c2f5d562df2a8e/charmlibs_interfaces_otlp-0.5.0-py3-none-any.whl", hash = "sha256:9719475bd8cc8b1a7f9a14c8565686c77e8b9c643ca7759cb63ef8783d964e06", size = 12562, upload-time = "2026-04-30T20:57:26.836Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/af/5939ebed6950f9f24ac391d0103b49f29688cdf4476a34a40cefb79488d8/charmlibs_interfaces_otlp-0.6.0-py3-none-any.whl", hash = "sha256:74f02ec74356c79812bba1c86974ff582bb860c3f055568f1683482f9b28c33b", size = 12701, upload-time = "2026-11-26T13:24:27.361Z" },
 ]
 
 [[package]]
@@ -358,7 +358,7 @@ wheels = [
 
 [[package]]
 name = "cosl"
-version = "1.11.3"
+version = "1.12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "diskcache" },
@@ -368,9 +368,9 @@ dependencies = [
     { name = "tenacity" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bc/65/67246330fbd9f723004251ac933db9a99ee9a08447c00d66c6f75c3ee0e7/cosl-1.11.3.tar.gz", hash = "sha256:4ff7df6fbec733318aacd064c230690aaa6a7a21f6fdcf9c8f180bfaeabffb83", size = 185552, upload-time = "2026-10-09T19:24:44.757Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/f4/0362e434cba597a6afe53d0333411922ded7034481dbcf6f95631ecafbd5/cosl-1.12.1.tar.gz", hash = "sha256:9126f4d239ba83c0a36e3e06209a0f1df00484626797f8d12f5336a92e709afc", size = 189445, upload-time = "2026-11-25T20:10:32.846Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/b3/888f9baa3e71d0e3560eefc83afb09e3b1978f120c024f922bc464d6ae69/cosl-1.11.3-py3-none-any.whl", hash = "sha256:5e808110ff0337cc0448bb3aa69e7656de7933a481651f84a2b8681ccd915eab", size = 47026, upload-time = "2026-10-09T19:24:43.442Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/da/7947147e805308e9e2334256cc54f293175f87689fbf642ce69df106b160/cosl-1.12.1-py3-none-any.whl", hash = "sha256:b939004e0eaf4c5af4e28329309a7999a4204e45f6fb94704f66679898da7e2a", size = 47660, upload-time = "2026-11-25T20:10:31.903Z" },
 ]
 
 [[package]]
