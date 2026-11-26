@@ -275,10 +275,14 @@ wheels = [
 [[package]]
 name = "charmlibs-interfaces-otlp"
 version = "0.6.0"
-source = { git = "https://github.com/sinapah/charmlibs?subdirectory=interfaces%2Fotlp&branch=feat%2Fotlp-validate-alert-rules-one-group-at-a-time#179c16caa61b4a4b554d429f3efeaae9906edb54" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cosl" },
     { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/66/50/8847288a594c4d01de0f0e8e5f53209eab7ce64c6ce0180d758325b1a4b5/charmlibs_interfaces_otlp-0.6.0.tar.gz", hash = "sha256:17622c234c69ca1f30de2a2c829de58a72eaef2c312c8f3bc55c6cad7c274fb4", size = 56374, upload-time = "2026-11-26T13:24:28.386Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/af/5939ebed6950f9f24ac391d0103b49f29688cdf4476a34a40cefb79488d8/charmlibs_interfaces_otlp-0.6.0-py3-none-any.whl", hash = "sha256:74f02ec74356c79812bba1c86974ff582bb860c3f055568f1683482f9b28c33b", size = 12701, upload-time = "2026-11-26T13:24:27.361Z" },
 ]
 
 [[package]]
@@ -955,7 +959,7 @@ dev = [
 requires-dist = [
     { name = "charmed-service-mesh-helpers", specifier = ">=0.2.0" },
     { name = "charmlibs-interfaces-certificate-transfer" },
-    { name = "charmlibs-interfaces-otlp", git = "https://github.com/sinapah/charmlibs?subdirectory=interfaces%2Fotlp&branch=feat%2Fotlp-validate-alert-rules-one-group-at-a-time" },
+    { name = "charmlibs-interfaces-otlp" },
     { name = "charmlibs-pathops" },
     { name = "codespell", marker = "extra == 'dev'" },
     { name = "cosl" },
