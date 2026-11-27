@@ -4,11 +4,13 @@
 """Feature: otelcol always protects itself from running out of memory."""
 
 import warnings
+from unittest.mock import patch
 
+import httpx
 import pytest
 import yaml
 from helpers import get_otelcol_file
-from ops import BlockedStatus
+from ops import ActiveStatus, BlockedStatus
 from ops.testing import Container, Mount, State
 
 from config_manager import ConfigManager
@@ -264,6 +266,23 @@ def test_container_memory_is_read_from_the_container(
     state_out = ctx.run(ctx.on.update_status(), State(containers=[container]))
     # THEN the limit is based on the memory of the container
     assert _limit_mib(get_otelcol_file(state_out, ctx, CONFIG_PATH)) == int(0.8 * expected_mib)
+
+
+@pytest.mark.parametrize("event_name", ["config_changed", "update_status"])
+@pytest.mark.real_container_memory
+def test_resource_handling_does_not_require_the_kubernetes_api(ctx, container_with_files, event_name):
+    # GIVEN a workload container with 512 MiB and a Kubernetes API that times out
+    container = container_with_files("536870912\n", NODE_MEMINFO)
+    with patch.object(
+        httpx.Client, "send", side_effect=httpx.ReadTimeout("The read operation timed out")
+    ) as send:
+        # WHEN the charm reconciles its resource configuration
+        state_out = ctx.run(getattr(ctx.on, event_name)(), State(containers=[container]))
+    # THEN no Kubernetes API request is needed, and the charm remains active
+    send.assert_not_called()
+    assert state_out.unit_status == ActiveStatus()
+    assert state_out.get_container("otelcol").services["otelcol"].is_running()
+    assert _limit_mib(get_otelcol_file(state_out, ctx, CONFIG_PATH)) == int(0.8 * 512)
 
 
 def test_cpu_config_is_deprecated_and_ignored(ctx, otelcol_container):

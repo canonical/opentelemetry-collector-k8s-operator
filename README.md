@@ -31,6 +31,19 @@ You can "recreate the world" with a dedicated charm action,
 juju run otelcol/0 reconcile
 ```
 
+### Resource limits and Kubernetes API availability
+
+The charm reads available memory from the workload container rather than querying or
+patching Kubernetes resources. Set the container's memory limit with Juju's `mem`
+constraint; the charm's `memory` configuration option controls the collector's memory
+limiter, not the Kubernetes resource limit.
+
+Older revisions using `kubernetes_compute_resources_patch` could fail a hook when the
+Kubernetes API timed out during resource-status checks. That dependency is no longer
+used, so this resource-handling path does not require the API to be available. This
+avoids the reported timeout without hiding permanent API errors behind a waiting
+status, but does not resolve Kubernetes outages or failures in other integrations.
+
 
 ## Sample deployment scenario
 
